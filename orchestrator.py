@@ -323,17 +323,31 @@ class Orchestrator:
         tasks = self._gather_tasks()
         if not tasks:
             dc = self.config.discovery
-            any_enabled = (
-                dc.enable_test_failures or dc.enable_lint_errors
-                or dc.enable_todos or dc.enable_coverage
-                or dc.enable_claude_ideas or dc.enable_quality_review
-            )
-            if not any_enabled and not self.feedback.get_pending_feedback():
+            enabled_methods = []
+            if dc.enable_test_failures:
+                enabled_methods.append("test_failures")
+            if dc.enable_lint_errors:
+                enabled_methods.append("lint_errors")
+            if dc.enable_todos:
+                enabled_methods.append("todos")
+            if dc.enable_coverage:
+                enabled_methods.append("coverage")
+            if dc.enable_claude_ideas:
+                enabled_methods.append("claude_ideas")
+            if dc.enable_quality_review:
+                enabled_methods.append("quality_review")
+            has_feedback = bool(self.feedback.get_pending_feedback())
+            if not enabled_methods and not has_feedback:
                 logger.warning(
                     "No tasks found: no discovery methods enabled and no pending feedback"
                 )
             else:
-                logger.info("No actionable tasks found (all may have been recently attempted), sleeping...")
+                logger.info(
+                    "No actionable tasks found (all may have been recently attempted). "
+                    "Enabled methods: %s, pending feedback: %s",
+                    ", ".join(enabled_methods) if enabled_methods else "none",
+                    "yes" if has_feedback else "no",
+                )
             return
 
         is_batch = len(tasks) > 1 and self.config.orchestrator.batch_mode

@@ -145,3 +145,23 @@ class TestSafetyGuard:
         # Neither file exists on disk, but normpath match should still detect it
         with pytest.raises(SafetyError, match="Protected files"):
             guard.check_protected_files(["./main.py"])
+
+    def test_check_protected_files_samefile_false_skips_realpath(self, guard, tmp_path):
+        """When samefile returns False, realpath fallback should be skipped."""
+        guard.config.target_dir = str(tmp_path)
+        # Create the changed file and all protected files so samefile can be used
+        (tmp_path / "changed.py").write_text("# changed\n")
+        for p in guard.config.safety.protected_files:
+            (tmp_path / p).write_text("# protected\n")
+        # Track whether realpath is called
+        original_realpath = os.path.realpath
+        realpath_calls = []
+
+        def tracking_realpath(p):
+            realpath_calls.append(p)
+            return original_realpath(p)
+
+        with patch("safety.os.path.realpath", side_effect=tracking_realpath):
+            guard.check_protected_files(["changed.py"])
+        # samefile returned False for all protected files, so realpath should not be called
+        assert len(realpath_calls) == 0

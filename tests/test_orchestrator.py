@@ -208,6 +208,23 @@ class TestOrchestrator:
             orch._cycle()
         assert any("no discovery methods enabled" in r.message for r in caplog.records)
 
+    def test_no_tasks_logs_enabled_methods(self, orch, caplog):
+        """When discovery methods are enabled but no actionable tasks, log which methods are enabled."""
+        import logging
+        orch.discovery.discover_all.return_value = []
+        orch.feedback.get_pending_feedback = MagicMock(return_value=[])
+        orch.config.discovery.enable_test_failures = True
+        orch.config.discovery.enable_lint_errors = False
+        orch.config.discovery.enable_todos = True
+        orch.config.discovery.enable_coverage = False
+        orch.config.discovery.enable_claude_ideas = True
+        orch.config.discovery.enable_quality_review = False
+        with caplog.at_level(logging.INFO):
+            orch._cycle()
+        info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        assert any("test_failures" in m and "todos" in m and "claude_ideas" in m for m in info_messages)
+        assert any("pending feedback: no" in m for m in info_messages)
+
 
 @pytest.fixture
 def batch_config(tmp_path):

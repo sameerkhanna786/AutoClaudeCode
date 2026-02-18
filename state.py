@@ -87,7 +87,8 @@ class StateManager:
                     if attempt < len(retry_delays) - 1:
                         time.sleep(delay)
             if not replaced:
-                raise last_err  # guaranteed non-None: loop ran at least once and every iteration raised
+                assert last_err is not None  # loop ran at least once and every iteration set last_err
+                raise last_err
             self._cache = records
             self._cache_mtime = self.history_file.stat().st_mtime
         except Exception:

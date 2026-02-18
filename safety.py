@@ -106,7 +106,10 @@ class SafetyGuard:
                             break
                     except OSError:
                         pass
-                # Fall back to realpath + normpath comparison
+                    else:
+                        # samefile returned False — paths are definitively different
+                        continue
+                # Fall back to realpath + normpath comparison (e.g. when file doesn't exist yet)
                 if os.path.normpath(os.path.realpath(changed_path)) == os.path.normpath(os.path.realpath(protected_path)):
                     violations.append(f)
                     break
