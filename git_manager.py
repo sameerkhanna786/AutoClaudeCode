@@ -31,6 +31,10 @@ class GitManager:
             check=check,
         )
 
+    def capture_worktree_state(self) -> set:
+        """Return the set of currently modified/untracked files (before Claude runs)."""
+        return set(self.get_changed_files())
+
     def create_snapshot(self) -> Snapshot:
         """Record current HEAD hash as a snapshot for potential rollback."""
         result = self._run("rev-parse", "HEAD")
@@ -54,9 +58,12 @@ class GitManager:
         self._run("clean", "-fd")
         logger.info("Working tree cleaned")
 
-    def commit(self, message: str) -> str:
-        """Stage all changes and commit. Returns the new commit hash."""
-        self._run("add", "-A")
+    def commit(self, message: str, files: Optional[List[str]] = None) -> str:
+        """Stage specified files (or all if none given) and commit. Returns the new commit hash."""
+        if files:
+            self._run("add", "--", *files)
+        else:
+            self._run("add", "-A")
         self._run("commit", "-m", message)
         result = self._run("rev-parse", "HEAD")
         commit_hash = result.stdout.strip()
@@ -88,6 +95,11 @@ class GitManager:
                     files.add(line.strip())
 
         return sorted(files)
+
+    def get_new_changed_files(self, pre_existing: set) -> List[str]:
+        """Return files changed since the snapshot, excluding pre-existing dirty files."""
+        current = set(self.get_changed_files())
+        return sorted(current - pre_existing)
 
     def is_clean(self) -> bool:
         """Check if the working tree is clean (no changes or untracked files)."""

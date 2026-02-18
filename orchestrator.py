@@ -186,6 +186,7 @@ class Orchestrator:
 
         # 6. Record git snapshot
         snapshot = self.git.create_snapshot()
+        pre_existing_files = self.git.capture_worktree_state()
 
         # 7. Invoke Claude (with optional plan-then-execute)
         total_cost = 0.0
@@ -243,7 +244,7 @@ class Orchestrator:
             return
 
         # 8. Check changed files
-        changed_files = self.git.get_changed_files()
+        changed_files = self.git.get_new_changed_files(pre_existing_files)
         if not changed_files:
             logger.info("No files changed by Claude, skipping")
             self.state.record_cycle(CycleRecord(
@@ -295,7 +296,7 @@ class Orchestrator:
         if validation.passed:
             # 10. Commit
             commit_msg = f"[auto] {task.source}: {task.description[:80]}"
-            commit_hash = self.git.commit(commit_msg)
+            commit_hash = self.git.commit(commit_msg, files=changed_files)
             logger.info("Cycle succeeded: %s", commit_msg)
 
             # Push to remote if configured

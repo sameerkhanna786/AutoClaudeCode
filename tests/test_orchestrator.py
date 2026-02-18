@@ -39,7 +39,9 @@ def orch(config):
 
         mock_git = MockGit.return_value
         mock_git.create_snapshot.return_value = Snapshot(commit_hash="a" * 40)
+        mock_git.capture_worktree_state.return_value = set()
         mock_git.get_changed_files.return_value = ["fix.py"]
+        mock_git.get_new_changed_files.return_value = ["fix.py"]
         mock_git.is_clean.return_value = True
         mock_git.commit.return_value = "b" * 40
 
@@ -96,18 +98,18 @@ class TestOrchestrator:
         orch.git.commit.assert_not_called()
 
     def test_no_files_changed(self, orch):
-        orch.git.get_changed_files.return_value = []
+        orch.git.get_new_changed_files.return_value = []
         orch._cycle()
         orch.git.commit.assert_not_called()
 
     def test_protected_file_violation_causes_rollback(self, orch):
-        orch.git.get_changed_files.return_value = ["main.py", "fix.py"]
+        orch.git.get_new_changed_files.return_value = ["main.py", "fix.py"]
         orch._cycle()
         orch.git.rollback.assert_called_once()
         orch.git.commit.assert_not_called()
 
     def test_protected_file_nested_path_causes_rollback(self, orch):
-        orch.git.get_changed_files.return_value = ["src/main.py", "fix.py"]
+        orch.git.get_new_changed_files.return_value = ["src/main.py", "fix.py"]
         orch._cycle()
         orch.git.rollback.assert_called_once()
         orch.git.commit.assert_not_called()

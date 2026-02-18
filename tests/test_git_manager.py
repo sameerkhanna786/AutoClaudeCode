@@ -61,3 +61,34 @@ class TestGitManager:
         Path(tmp_git_repo, "README.md").write_text("changed")
         gm.rollback()
         assert gm.is_clean() is True
+
+    def test_commit_only_specified_files(self, tmp_git_repo):
+        gm = GitManager(tmp_git_repo)
+        Path(tmp_git_repo, "wanted.txt").write_text("keep me")
+        Path(tmp_git_repo, "unwanted.txt").write_text("leave me alone")
+        commit_hash = gm.commit("commit only wanted", files=["wanted.txt"])
+        assert len(commit_hash) == 40
+        # unwanted.txt should still be untracked
+        changed = gm.get_changed_files()
+        assert "unwanted.txt" in changed
+        assert "wanted.txt" not in changed
+
+    def test_get_new_changed_files(self, tmp_git_repo):
+        gm = GitManager(tmp_git_repo)
+        # Create a pre-existing untracked file
+        Path(tmp_git_repo, "pre_existing.txt").write_text("old stuff")
+        pre_existing = gm.capture_worktree_state()
+        assert "pre_existing.txt" in pre_existing
+        # Simulate Claude creating a new file
+        Path(tmp_git_repo, "new_file.txt").write_text("claude wrote this")
+        new_files = gm.get_new_changed_files(pre_existing)
+        assert "new_file.txt" in new_files
+        assert "pre_existing.txt" not in new_files
+
+    def test_commit_all_when_no_files_specified(self, tmp_git_repo):
+        gm = GitManager(tmp_git_repo)
+        Path(tmp_git_repo, "file_a.txt").write_text("a")
+        Path(tmp_git_repo, "file_b.txt").write_text("b")
+        commit_hash = gm.commit("commit everything")
+        assert len(commit_hash) == 40
+        assert gm.is_clean() is True
