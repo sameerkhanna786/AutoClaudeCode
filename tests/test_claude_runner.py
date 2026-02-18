@@ -52,7 +52,7 @@ class TestParseJsonResponse:
 
     def test_invalid_json_raises(self, runner):
         stdout = "{not valid json}"
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(ValueError, match="No JSON"):
             runner._parse_json_response(stdout)
 
     def test_json_with_trailing_output(self, runner):
@@ -78,8 +78,28 @@ class TestParseJsonResponse:
 
     def test_incomplete_json_raises(self, runner):
         stdout = '{"result": "Done"'
-        with pytest.raises(ValueError, match="No complete JSON"):
+        with pytest.raises(ValueError, match="No JSON"):
             runner._parse_json_response(stdout)
+
+    def test_json_with_array_of_objects(self, runner):
+        stdout = '{"result": "Done", "items": [{"a": 1}, {"b": 2}]}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["items"] == [{"a": 1}, {"b": 2}]
+
+    def test_json_with_unicode_escape_quote(self, runner):
+        stdout = '{"result": "value with \\u0022quoted\\u0022 text"}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == 'value with "quoted" text'
+
+    def test_json_with_deeply_nested_structure(self, runner):
+        stdout = '{"a": {"b": {"c": {"d": [1, 2, {"e": 3}]}}}}\ntrailing\n'
+        data = runner._parse_json_response(stdout)
+        assert data["a"]["b"]["c"]["d"] == [1, 2, {"e": 3}]
+
+    def test_json_with_braces_in_banner(self, runner):
+        stdout = 'Info: config={debug: true}\n{"result": "Done"}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
 
 
 class TestRun:

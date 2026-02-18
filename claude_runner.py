@@ -45,38 +45,23 @@ class ClaudeRunner:
 
         The CLI may print banner/info lines before the actual JSON,
         and log/warning lines after it. We extract only the first
-        balanced top-level JSON object.
+        valid top-level JSON object.
         """
-        start = stdout.find("{")
-        if start == -1:
-            raise ValueError("No JSON object found in Claude CLI output")
+        decoder = json.JSONDecoder()
+        idx = 0
+        while idx < len(stdout):
+            start = stdout.find("{", idx)
+            if start == -1:
+                break
+            try:
+                obj, end = decoder.raw_decode(stdout, start)
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                pass
+            idx = start + 1
 
-        # Walk the string to find the matching closing brace,
-        # respecting string literals so inner braces are ignored.
-        depth = 0
-        in_string = False
-        escape = False
-        for i in range(start, len(stdout)):
-            ch = stdout[i]
-            if escape:
-                escape = False
-                continue
-            if ch == "\\" and in_string:
-                escape = True
-                continue
-            if ch == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return json.loads(stdout[start:i + 1])
-
-        raise ValueError("No complete JSON object found in Claude CLI output")
+        raise ValueError("No JSON object found in Claude CLI output")
 
     def run(self, prompt: str, working_dir: Optional[str] = None) -> ClaudeResult:
         """Run Claude CLI with the given prompt and return parsed result."""
