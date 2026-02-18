@@ -318,7 +318,18 @@ class Orchestrator:
         # 2-5. Gather tasks
         tasks = self._gather_tasks()
         if not tasks:
-            logger.info("No tasks found, sleeping...")
+            dc = self.config.discovery
+            any_enabled = (
+                dc.enable_test_failures or dc.enable_lint_errors
+                or dc.enable_todos or dc.enable_coverage
+                or dc.enable_claude_ideas or dc.enable_quality_review
+            )
+            if not any_enabled and not self.feedback.get_pending_feedback():
+                logger.warning(
+                    "No tasks found: no discovery methods enabled and no pending feedback"
+                )
+            else:
+                logger.info("No actionable tasks found (all may have been recently attempted), sleeping...")
             return
 
         is_batch = len(tasks) > 1 and self.config.orchestrator.batch_mode

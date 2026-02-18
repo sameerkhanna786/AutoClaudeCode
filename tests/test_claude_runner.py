@@ -138,6 +138,12 @@ class TestParseJsonResponse:
         data = runner._parse_json_response(stdout)
         assert data["result"] == "Done"
 
+    def test_multiline_json_with_multi_line_preceding_text(self, runner):
+        stdout = 'Banner line 1\nBanner line 2\nMore text {\n  "result": "Done",\n  "cost_usd": 0.01\n}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+        assert data["cost_usd"] == 0.01
+
 
 class TestRun:
     @patch("claude_runner.subprocess.run")

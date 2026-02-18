@@ -293,7 +293,9 @@ class TaskDiscovery:
                 if line.strip().startswith("{"):
                     try:
                         data = json.loads("\n".join(lines[i:]))
-                        if isinstance(data, dict) and "result" in data:
+                        if (isinstance(data, dict)
+                                and "result" in data
+                                and isinstance(data.get("result"), str)):
                             result_text = data["result"]
                             break
                     except (json.JSONDecodeError, TypeError):

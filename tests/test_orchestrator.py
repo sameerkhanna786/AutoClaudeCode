@@ -193,6 +193,21 @@ class TestOrchestrator:
         # Should not call mark_failed since source_file is None
         orch.feedback.mark_failed.assert_not_called()
 
+    def test_no_tasks_logs_warning_when_discovery_disabled(self, orch, caplog):
+        """When no discovery methods are enabled, should log a warning."""
+        import logging
+        orch.discovery.discover_all.return_value = []
+        orch.feedback.get_pending_feedback = MagicMock(return_value=[])
+        orch.config.discovery.enable_test_failures = False
+        orch.config.discovery.enable_lint_errors = False
+        orch.config.discovery.enable_todos = False
+        orch.config.discovery.enable_coverage = False
+        orch.config.discovery.enable_claude_ideas = False
+        orch.config.discovery.enable_quality_review = False
+        with caplog.at_level(logging.WARNING):
+            orch._cycle()
+        assert any("no discovery methods enabled" in r.message for r in caplog.records)
+
 
 @pytest.fixture
 def batch_config(tmp_path):

@@ -103,8 +103,8 @@ class SafetyGuard:
                         violations.append(f)
                         break
                 except OSError:
-                    # File doesn't exist; fall back to normpath comparison
-                    if os.path.normpath(f) == os.path.normpath(p):
+                    # File doesn't exist; fall back to realpath + normpath comparison
+                    if os.path.normpath(os.path.realpath(changed_path)) == os.path.normpath(os.path.realpath(protected_path)):
                         violations.append(f)
                         break
         if violations:

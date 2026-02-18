@@ -262,7 +262,7 @@ class TestBatchCycleRecord:
         assert state_mgr.get_task_failure_count("Address TODO in bar.py", "lint") == 0
 
     def test_save_history_retries_on_replace_failure(self, state_mgr):
-        """_save_history should retry os.replace and succeed on a subsequent attempt."""
+        """_save_history should retry os.replace with increasing delays."""
         call_count = 0
         original_replace = os.replace
 
@@ -283,8 +283,10 @@ class TestBatchCycleRecord:
 
         # Should have retried and eventually succeeded
         assert call_count == 3
-        # Should have slept between retries
+        # Should have slept between retries with exponential backoff
         assert mock_sleep.call_count == 2
+        assert mock_sleep.call_args_list[0][0][0] == 0.1
+        assert mock_sleep.call_args_list[1][0][0] == 0.5
         # Data should be persisted correctly
         data = json.loads(Path(state_mgr.history_file).read_text())
         assert len(data) == 1

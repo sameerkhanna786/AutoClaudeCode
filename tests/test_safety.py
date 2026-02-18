@@ -130,3 +130,11 @@ class TestSafetyGuard:
         guard.acquire_lock()
         assert guard._lock_fd is not None
         guard.release_lock()
+
+    def test_check_protected_files_symlink(self, guard, tmp_path):
+        """Symlinks to protected files should be detected."""
+        guard.config.target_dir = str(tmp_path)
+        (tmp_path / "main.py").write_text("# protected\n")
+        (tmp_path / "link_to_main.py").symlink_to(tmp_path / "main.py")
+        with pytest.raises(SafetyError, match="Protected files"):
+            guard.check_protected_files(["link_to_main.py"])

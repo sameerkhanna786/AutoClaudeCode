@@ -245,3 +245,39 @@ class TestTaskDiscovery:
         tasks = discovery._discover_claude_ideas()
         assert len(tasks) == 1
         assert "input validation" in tasks[0].description.lower()
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_non_string_result(self, mock_run, discovery):
+        """If the JSON 'result' field is not a string, it should be ignored."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"result": 42}',
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert tasks == []
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_null_result(self, mock_run, discovery):
+        """If the JSON 'result' field is null, it should be ignored."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"result": null}',
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert tasks == []
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_unexpected_json_structure(self, mock_run, discovery):
+        """If JSON is a list instead of an object, it should be handled gracefully."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='[{"result": "IDEA: something"}]',
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert tasks == []
