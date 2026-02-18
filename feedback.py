@@ -88,7 +88,11 @@ class FeedbackManager:
                 dst = self.done_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
 
-        shutil.move(str(src), str(dst))
+        try:
+            shutil.move(str(src), str(dst))
+        except OSError as e:
+            logger.warning("Failed to move %s to %s: %s", src, dst, e)
+            return
         logger.info("Marked feedback as done: %s → %s", src.name, dst.name)
 
     def mark_failed(self, source_file: str) -> None:
@@ -107,5 +111,9 @@ class FeedbackManager:
                 dst = self.failed_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
 
-        shutil.move(str(src), str(dst))
+        try:
+            shutil.move(str(src), str(dst))
+        except OSError as e:
+            logger.warning("Failed to move %s to %s: %s", src, dst, e)
+            return
         logger.info("Marked feedback as failed: %s → %s", src.name, dst.name)

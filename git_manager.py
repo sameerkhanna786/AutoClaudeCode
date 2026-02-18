@@ -19,9 +19,25 @@ class Snapshot:
 class GitManager:
     def __init__(self, repo_dir: str):
         self.repo_dir = repo_dir
+        self._repo_validated = False
+
+    def _validate_repo(self) -> None:
+        """Validate that repo_dir is a git repository (cached after first success)."""
+        if self._repo_validated:
+            return
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=self.repo_dir,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Not a git repository: {self.repo_dir}")
+        self._repo_validated = True
 
     def _run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         """Run a git command in the repo directory."""
+        self._validate_repo()
         cmd = ["git"] + list(args)
         return subprocess.run(
             cmd,

@@ -27,6 +27,17 @@ _COMMENT_PREFIXES = {
 # Regex to match string literals (double-quoted and single-quoted, with escapes)
 _STRING_LITERAL_RE = re.compile(r'''"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*' '''.strip())
 
+MAX_TASK_DESCRIPTION_LENGTH = 2000
+
+
+def _sanitize_description(desc: str) -> str:
+    """Sanitize a task description: strip, collapse newlines, and truncate."""
+    desc = desc.strip()
+    desc = desc.replace("\n", " ").replace("\r", " ")
+    if len(desc) > MAX_TASK_DESCRIPTION_LENGTH:
+        desc = desc[:MAX_TASK_DESCRIPTION_LENGTH] + "..."
+    return desc
+
 
 def _extract_comment_text(line: str, ext: str) -> Optional[str]:
     """Strip string literals from *line*, then return the comment body if a
@@ -62,6 +73,9 @@ class Task:
     source: str  # "test_failure", "lint", "todo", "coverage", "quality", "feedback"
     source_file: Optional[str] = None  # file path for feedback tasks
     line_number: Optional[int] = None
+
+    def __post_init__(self):
+        self.description = _sanitize_description(self.description)
 
 
 class TaskDiscovery:
@@ -304,17 +318,20 @@ class TaskDiscovery:
             pass
 
         # Extract IDEA lines
+        MIN_IDEA_LENGTH = 10
         tasks = []
         for line in result_text.split("\n"):
             line = line.strip()
             if line.upper().startswith("IDEA:"):
                 desc = line[5:].strip()
-                if desc:
+                if desc and len(desc) >= MIN_IDEA_LENGTH:
                     tasks.append(Task(
                         description=desc,
                         priority=4,
                         source="claude_idea",
                     ))
+                elif desc:
+                    logger.debug("Skipping short IDEA line: %r", desc)
 
         logger.info("Claude discovered %d improvement ideas", len(tasks))
         return tasks[:5]

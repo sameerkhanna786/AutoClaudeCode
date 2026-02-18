@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -25,6 +26,9 @@ class ClaudeResult:
 
 
 class ClaudeRunner:
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [2, 8, 32]
+
     def __init__(self, config: Config):
         self.config = config
 
@@ -100,35 +104,62 @@ class ClaudeRunner:
         logger.info("Running Claude CLI in %s", cwd)
         logger.debug("Command: %s", " ".join(cmd))
 
-        try:
-            proc = subprocess.run(
-                cmd,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=self.config.claude.timeout_seconds,
-            )
-        except subprocess.TimeoutExpired:
-            return ClaudeResult(
-                success=False,
-                error=f"Claude CLI timed out after {self.config.claude.timeout_seconds}s",
-            )
-        except FileNotFoundError:
-            return ClaudeResult(
-                success=False,
-                error=f"Claude CLI command not found: {self.config.claude.command}",
-            )
-        except OSError as e:
-            return ClaudeResult(
-                success=False,
-                error=f"Failed to run Claude CLI: {e}",
-            )
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.config.claude.timeout_seconds,
+                )
+            except subprocess.TimeoutExpired:
+                if attempt < self.MAX_RETRIES:
+                    delay = self.RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "Claude CLI timed out (attempt %d/%d), retrying in %ds",
+                        attempt + 1, self.MAX_RETRIES + 1, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                return ClaudeResult(
+                    success=False,
+                    error=f"Claude CLI timed out after {self.config.claude.timeout_seconds}s",
+                )
+            except FileNotFoundError:
+                return ClaudeResult(
+                    success=False,
+                    error=f"Claude CLI command not found: {self.config.claude.command}",
+                )
+            except OSError as e:
+                if attempt < self.MAX_RETRIES:
+                    delay = self.RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "Claude CLI OS error (attempt %d/%d): %s, retrying in %ds",
+                        attempt + 1, self.MAX_RETRIES + 1, e, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                return ClaudeResult(
+                    success=False,
+                    error=f"Failed to run Claude CLI: {e}",
+                )
 
-        if proc.returncode != 0:
-            return ClaudeResult(
-                success=False,
-                error=f"Claude CLI exited with code {proc.returncode}: {proc.stderr.strip()}",
-            )
+            if proc.returncode != 0:
+                if attempt < self.MAX_RETRIES:
+                    delay = self.RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "Claude CLI exited with code %d (attempt %d/%d), retrying in %ds",
+                        proc.returncode, attempt + 1, self.MAX_RETRIES + 1, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                return ClaudeResult(
+                    success=False,
+                    error=f"Claude CLI exited with code {proc.returncode}: {proc.stderr.strip()}",
+                )
+
+            break
 
         try:
             data = self._parse_json_response(proc.stdout)

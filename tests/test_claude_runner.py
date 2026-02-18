@@ -216,3 +216,107 @@ class TestRun:
         result = runner.run("Fix the bug")
         assert result.success is False
         assert "parse" in result.error.lower()
+
+
+class TestRetryLogic:
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_retry_on_timeout(self, mock_run, mock_sleep, runner):
+        """Retries on TimeoutExpired, succeeds on third attempt."""
+        mock_run.side_effect = [
+            subprocess.TimeoutExpired(cmd="claude", timeout=300),
+            subprocess.TimeoutExpired(cmd="claude", timeout=300),
+            MagicMock(
+                returncode=0,
+                stdout='{"result": "Done", "cost_usd": 0.01}',
+                stderr="",
+            ),
+        ]
+        result = runner.run("Fix the bug")
+        assert result.success is True
+        assert result.result_text == "Done"
+        assert mock_run.call_count == 3
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_any_call(2)
+        mock_sleep.assert_any_call(8)
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_retry_on_nonzero_exit(self, mock_run, mock_sleep, runner):
+        """Retries on non-zero exit code, succeeds on third attempt."""
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="rate limited"),
+            MagicMock(returncode=1, stdout="", stderr="rate limited"),
+            MagicMock(
+                returncode=0,
+                stdout='{"result": "Fixed", "cost_usd": 0.02}',
+                stderr="",
+            ),
+        ]
+        result = runner.run("Fix the bug")
+        assert result.success is True
+        assert result.result_text == "Fixed"
+        assert mock_run.call_count == 3
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_no_retry_on_file_not_found(self, mock_run, mock_sleep, runner):
+        """FileNotFoundError is not retryable — returns immediately."""
+        mock_run.side_effect = FileNotFoundError()
+        result = runner.run("Fix the bug")
+        assert result.success is False
+        assert "not found" in result.error
+        assert mock_run.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_no_retry_on_json_parse_failure(self, mock_run, mock_sleep, runner):
+        """JSON parse failure is not retryable — CLI ran fine, output was bad."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Not JSON at all",
+            stderr="",
+        )
+        result = runner.run("Fix the bug")
+        assert result.success is False
+        assert "parse" in result.error.lower()
+        assert mock_run.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_all_retries_exhausted(self, mock_run, mock_sleep, runner):
+        """All retries exhausted returns failure."""
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=300)
+        result = runner.run("Fix the bug")
+        assert result.success is False
+        assert "timed out" in result.error
+        assert mock_run.call_count == 4  # 1 initial + 3 retries
+        assert mock_sleep.call_count == 3
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_retry_delays_are_exponential(self, mock_run, mock_sleep, runner):
+        """Verify exponential backoff delays: 2, 8, 32."""
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=300)
+        runner.run("Fix the bug")
+        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        assert delays == [2, 8, 32]
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_retry_on_os_error(self, mock_run, mock_sleep, runner):
+        """Retries on OSError, succeeds on second attempt."""
+        mock_run.side_effect = [
+            OSError("Connection reset"),
+            MagicMock(
+                returncode=0,
+                stdout='{"result": "Done", "cost_usd": 0.01}',
+                stderr="",
+            ),
+        ]
+        result = runner.run("Fix the bug")
+        assert result.success is True
+        assert mock_run.call_count == 2
+        mock_sleep.assert_called_once_with(2)

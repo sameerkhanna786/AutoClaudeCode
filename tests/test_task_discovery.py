@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from config_schema import Config
-from task_discovery import Task, TaskDiscovery
+from task_discovery import Task, TaskDiscovery, MAX_TASK_DESCRIPTION_LENGTH
 
 
 @pytest.fixture
@@ -281,3 +281,70 @@ class TestTaskDiscovery:
         )
         tasks = discovery._discover_claude_ideas()
         assert tasks == []
+
+
+class TestTaskDescriptionValidation:
+    def test_task_description_truncation(self):
+        """Descriptions longer than MAX_TASK_DESCRIPTION_LENGTH are truncated."""
+        long_desc = "x" * (MAX_TASK_DESCRIPTION_LENGTH + 500)
+        task = Task(description=long_desc, priority=1, source="test")
+        assert len(task.description) == MAX_TASK_DESCRIPTION_LENGTH + 3  # +3 for "..."
+        assert task.description.endswith("...")
+
+    def test_task_description_newline_replacement(self):
+        """Newlines in descriptions are replaced with spaces."""
+        task = Task(description="line one\nline two\nline three", priority=1, source="test")
+        assert "\n" not in task.description
+        assert task.description == "line one line two line three"
+
+    def test_task_description_whitespace_stripped(self):
+        """Leading/trailing whitespace is stripped."""
+        task = Task(description="  hello world  ", priority=1, source="test")
+        assert task.description == "hello world"
+
+    def test_task_description_short_preserved(self):
+        """Short descriptions are preserved as-is (after strip)."""
+        task = Task(description="Fix the bug", priority=2, source="test_failure")
+        assert task.description == "Fix the bug"
+
+
+class TestClaudeIdeasMinLength:
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_skips_short_descriptions(self, mock_run, discovery):
+        """IDEA lines with descriptions shorter than 10 chars are skipped."""
+        discovery.config.discovery.enable_claude_ideas = True
+        ideas = "IDEA: fix\nIDEA: Add comprehensive input validation to config loader"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=f'{{"result": "{ideas}"}}',
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 1
+        assert "comprehensive" in tasks[0].description.lower()
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_skips_empty_idea_lines(self, mock_run, discovery):
+        """IDEA lines with no description or only whitespace are skipped."""
+        discovery.config.discovery.enable_claude_ideas = True
+        ideas = "IDEA: \\nIDEA:\\nIDEA:   "
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=f'{{"result": "{ideas}"}}',
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert tasks == []
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_accepts_long_enough_descriptions(self, mock_run, discovery):
+        """IDEA lines with descriptions >= 10 chars are accepted."""
+        discovery.config.discovery.enable_claude_ideas = True
+        ideas = "IDEA: Add retries to API calls"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=f'{{"result": "{ideas}"}}',
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 1
