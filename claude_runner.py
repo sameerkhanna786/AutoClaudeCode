@@ -43,22 +43,40 @@ class ClaudeRunner:
     def _parse_json_response(self, stdout: str) -> Dict[str, Any]:
         """Parse JSON from Claude CLI output.
 
-        The CLI may print banner/info lines before the actual JSON.
-        We find the first line starting with '{' and parse from there.
+        The CLI may print banner/info lines before the actual JSON,
+        and log/warning lines after it. We extract only the first
+        balanced top-level JSON object.
         """
-        lines = stdout.strip().split("\n")
-        json_start = None
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped.startswith("{"):
-                json_start = i
-                break
-
-        if json_start is None:
+        start = stdout.find("{")
+        if start == -1:
             raise ValueError("No JSON object found in Claude CLI output")
 
-        json_text = "\n".join(lines[json_start:])
-        return json.loads(json_text)
+        # Walk the string to find the matching closing brace,
+        # respecting string literals so inner braces are ignored.
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(stdout)):
+            ch = stdout[i]
+            if escape:
+                escape = False
+                continue
+            if ch == "\\" and in_string:
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return json.loads(stdout[start:i + 1])
+
+        raise ValueError("No complete JSON object found in Claude CLI output")
 
     def run(self, prompt: str, working_dir: Optional[str] = None) -> ClaudeResult:
         """Run Claude CLI with the given prompt and return parsed result."""

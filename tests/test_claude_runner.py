@@ -55,6 +55,32 @@ class TestParseJsonResponse:
         with pytest.raises(json.JSONDecodeError):
             runner._parse_json_response(stdout)
 
+    def test_json_with_trailing_output(self, runner):
+        stdout = '{"result": "Done"}\nSome warning log\nAnother line\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+
+    def test_json_with_banner_and_trailing_output(self, runner):
+        stdout = 'Banner\n{"result": "Done"}\nTrailing log\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+
+    def test_json_with_nested_braces(self, runner):
+        stdout = '{"result": "Done", "meta": {"key": "val"}}\nlog line\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+        assert data["meta"] == {"key": "val"}
+
+    def test_json_with_braces_in_strings(self, runner):
+        stdout = '{"result": "Fixed {thing}"}\nwarning\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Fixed {thing}"
+
+    def test_incomplete_json_raises(self, runner):
+        stdout = '{"result": "Done"'
+        with pytest.raises(ValueError, match="No complete JSON"):
+            runner._parse_json_response(stdout)
+
 
 class TestRun:
     @patch("claude_runner.subprocess.run")
