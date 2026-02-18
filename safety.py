@@ -97,8 +97,8 @@ class SafetyGuard:
 
     def check_protected_files(self, changed_files: List[str]) -> None:
         """Ensure no protected files have been modified."""
-        protected = set(self.config.safety.protected_files)
-        violations = [f for f in changed_files if f in protected]
+        protected_basenames = {os.path.basename(p) for p in self.config.safety.protected_files}
+        violations = [f for f in changed_files if os.path.basename(f) in protected_basenames]
         if violations:
             raise SafetyError(
                 f"Protected files modified: {', '.join(violations)}"
