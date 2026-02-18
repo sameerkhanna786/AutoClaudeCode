@@ -23,7 +23,7 @@ class TestTaskDiscovery:
         with patch.object(discovery, "_discover_test_failures", return_value=[]):
             with patch.object(discovery, "_discover_lint_errors", return_value=[]):
                 tasks = discovery.discover_all()
-                # Should find at least one task from the todo-comment scanner
+                # Verify the planted marker comment in app.py is discovered
                 assert any(t.source == "todo" for t in tasks)
 
     @patch("task_discovery.subprocess.run")
