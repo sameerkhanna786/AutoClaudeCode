@@ -105,6 +105,58 @@ class TestTaskDiscovery:
         assert tasks[0].source == "quality"
         assert "big.py" in tasks[0].description
 
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_success(self, mock_run, discovery):
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"result": "IDEA: Add input validation to the config loader\\nIDEA: Add retry logic to Claude runner\\nSome other text"}',
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 2
+        assert all(t.priority == 4 for t in tasks)
+        assert all(t.source == "claude_idea" for t in tasks)
+        assert "input validation" in tasks[0].description.lower()
+        assert "retry" in tasks[1].description.lower()
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_timeout(self, mock_run, discovery):
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=120)
+        tasks = discovery._discover_claude_ideas()
+        assert tasks == []
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_failure(self, mock_run, discovery):
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
+        tasks = discovery._discover_claude_ideas()
+        assert tasks == []
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_no_ideas(self, mock_run, discovery):
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"result": "The codebase looks great, no improvements needed."}',
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert tasks == []
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_caps_at_five(self, mock_run, discovery):
+        discovery.config.discovery.enable_claude_ideas = True
+        ideas = "\n".join(f"IDEA: Improvement {i}" for i in range(10))
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=f'{{"result": "{ideas}"}}',
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) <= 5
+
     def test_discover_todos_ignores_string_literals(self, discovery, tmp_path):
         """TODO inside a string literal should not be detected."""
         (tmp_path / "strings.py").write_text('x = "# TODO: not a comment"\n')

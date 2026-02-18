@@ -12,7 +12,7 @@ orchestrator:
   loop_interval_seconds: 30
   max_changed_files: 20
   self_improve: true
-  push_after_commit: true
+  push_after_commit: false
   plan_changes: true
 
 validation:
@@ -29,6 +29,7 @@ discovery:
   enable_todos: true
   enable_coverage: false
   enable_quality_review: false
+  enable_claude_ideas: true
   todo_patterns:
     - TODO
     - FIXME

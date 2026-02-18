@@ -86,6 +86,9 @@ class TaskDiscovery:
         if dc.enable_coverage:
             tasks.extend(self._discover_coverage_gaps())
 
+        if dc.enable_claude_ideas:
+            tasks.extend(self._discover_claude_ideas())
+
         if dc.enable_quality_review:
             tasks.extend(self._discover_quality_issues())
 
@@ -237,6 +240,78 @@ class TaskDiscovery:
                         ))
 
         return tasks[:20]  # Cap TODO tasks
+
+    def _discover_claude_ideas(self) -> List[Task]:
+        """Use Claude to analyze the codebase and suggest improvement ideas.
+
+        Invokes Claude CLI in read-only analysis mode with a low max-turns
+        to keep cost down. Parses the response for actionable improvement tasks.
+        """
+        cc = self.config.claude
+        prompt = (
+            "Analyze the codebase in the current directory. Identify up to 5 concrete, "
+            "actionable improvements. Focus on:\n"
+            "- Bug risks or edge cases that could cause failures\n"
+            "- Missing error handling\n"
+            "- Performance improvements\n"
+            "- Code clarity or maintainability improvements\n"
+            "- Missing tests for important functionality\n"
+            "- Design improvements\n\n"
+            "For each improvement, output EXACTLY one line in this format:\n"
+            "IDEA: <one-sentence description of the improvement>\n\n"
+            "Do NOT make any changes. Do NOT run git commands. Only analyze and output IDEA lines."
+        )
+
+        cmd = [
+            cc.command, "-p", prompt,
+            "--model", cc.model,
+            "--max-turns", "5",
+            "--output-format", "json",
+        ]
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=self.target_dir,
+                capture_output=True,
+                text=True,
+                timeout=min(cc.timeout_seconds, 120),
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            logger.warning("Claude idea discovery failed: %s", e)
+            return []
+
+        if proc.returncode != 0:
+            logger.warning("Claude idea discovery exited with code %d", proc.returncode)
+            return []
+
+        # Parse JSON response to get result text
+        result_text = proc.stdout
+        try:
+            lines = result_text.strip().split("\n")
+            for i, line in enumerate(lines):
+                if line.strip().startswith("{"):
+                    data = json.loads("\n".join(lines[i:]))
+                    result_text = data.get("result", "")
+                    break
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Extract IDEA lines
+        tasks = []
+        for line in result_text.split("\n"):
+            line = line.strip()
+            if line.upper().startswith("IDEA:"):
+                desc = line[5:].strip()
+                if desc:
+                    tasks.append(Task(
+                        description=desc,
+                        priority=4,
+                        source="claude_idea",
+                    ))
+
+        logger.info("Claude discovered %d improvement ideas", len(tasks))
+        return tasks[:5]
 
     def _discover_coverage_gaps(self) -> List[Task]:
         """Discover files with low test coverage (optional, requires pytest-cov)."""
