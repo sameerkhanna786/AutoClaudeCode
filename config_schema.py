@@ -12,7 +12,7 @@ import yaml
 
 @dataclass
 class ClaudeConfig:
-    model: str = "sonnet"
+    model: str = "opus"
     max_turns: int = 25
     timeout_seconds: int = 300
     command: str = "claude"
@@ -23,11 +23,13 @@ class OrchestratorConfig:
     loop_interval_seconds: int = 30
     max_changed_files: int = 20
     self_improve: bool = False
+    push_after_commit: bool = False
+    plan_changes: bool = False
 
 
 @dataclass
 class ValidationConfig:
-    test_command: str = "python -m pytest tests/ -x -q"
+    test_command: str = "python3 -m pytest tests/ -x -q"
     lint_command: str = ""
     build_command: str = ""
     test_timeout: int = 120

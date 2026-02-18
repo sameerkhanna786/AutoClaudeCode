@@ -63,6 +63,15 @@ class GitManager:
         logger.info("Committed: %s — %s", commit_hash[:8], message)
         return commit_hash
 
+    def push(self) -> bool:
+        """Push current branch to origin. Returns True on success."""
+        result = self._run("push", check=False)
+        if result.returncode == 0:
+            logger.info("Pushed to remote")
+            return True
+        logger.warning("Push failed: %s", result.stderr.strip())
+        return False
+
     def get_changed_files(self) -> List[str]:
         """Return list of changed/untracked files relative to repo root."""
         # Staged changes

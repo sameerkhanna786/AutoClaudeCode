@@ -12,11 +12,11 @@ class TestConfigDefaults:
     def test_default_config_has_expected_values(self):
         config = Config()
         assert config.target_dir == "."
-        assert config.claude.model == "sonnet"
+        assert config.claude.model == "opus"
         assert config.claude.max_turns == 25
         assert config.orchestrator.loop_interval_seconds == 30
         assert config.safety.max_consecutive_failures == 5
-        assert config.validation.test_command == "python -m pytest tests/ -x -q"
+        assert config.validation.test_command == "python3 -m pytest tests/ -x -q"
 
     def test_default_protected_files(self):
         config = Config()
@@ -33,7 +33,7 @@ class TestLoadConfig:
     def test_load_config_none_returns_defaults(self):
         config = load_config(None)
         assert config.target_dir == "."
-        assert config.claude.model == "sonnet"
+        assert config.claude.model == "opus"
 
     def test_load_config_missing_file_returns_defaults(self):
         config = load_config("/nonexistent/path.yaml")

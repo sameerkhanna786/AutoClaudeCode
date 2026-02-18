@@ -37,6 +37,35 @@ INSTRUCTIONS:
 - If the task is unclear or impossible, make your best effort and explain what you did.
 """
 
+CLAUDE_PLAN_TEMPLATE = """\
+You are working on the project in the current directory.
+
+TASK: {task_description}
+
+INSTRUCTIONS:
+- Analyze the codebase and create a detailed plan to complete this task.
+- Do NOT make any changes yet. Only output a plan.
+- List the files you would modify and what changes you would make.
+- Do NOT modify these protected files: {protected_files}
+- Be specific about the changes (function names, line numbers, etc.).
+"""
+
+CLAUDE_EXECUTE_TEMPLATE = """\
+You are working on the project in the current directory.
+
+TASK: {task_description}
+
+PLAN TO EXECUTE:
+{plan}
+
+INSTRUCTIONS:
+- Execute the plan above by making the described changes.
+- Do NOT run git commands (add, commit, push). The orchestrator handles git.
+- Do NOT modify these protected files: {protected_files}
+- Focus on correctness. Run tests if available.
+- Stick to the plan. Do not deviate unless the plan has an obvious error.
+"""
+
 
 class Orchestrator:
     def __init__(self, config: Config):
@@ -64,6 +93,23 @@ class Orchestrator:
         protected = ", ".join(self.config.safety.protected_files)
         return CLAUDE_PROMPT_TEMPLATE.format(
             task_description=task.description,
+            protected_files=protected,
+        )
+
+    def _build_plan_prompt(self, task: Task) -> str:
+        """Build a planning-only prompt for a task."""
+        protected = ", ".join(self.config.safety.protected_files)
+        return CLAUDE_PLAN_TEMPLATE.format(
+            task_description=task.description,
+            protected_files=protected,
+        )
+
+    def _build_execute_prompt(self, task: Task, plan: str) -> str:
+        """Build an execution prompt with a pre-approved plan."""
+        protected = ", ".join(self.config.safety.protected_files)
+        return CLAUDE_EXECUTE_TEMPLATE.format(
+            task_description=task.description,
+            plan=plan,
             protected_files=protected,
         )
 
@@ -141,9 +187,46 @@ class Orchestrator:
         # 6. Record git snapshot
         snapshot = self.git.create_snapshot()
 
-        # 7. Invoke Claude
-        prompt = self._build_prompt(task)
-        claude_result = self.claude.run(prompt, working_dir=self.config.target_dir)
+        # 7. Invoke Claude (with optional plan-then-execute)
+        total_cost = 0.0
+        total_duration = 0.0
+
+        if self.config.orchestrator.plan_changes:
+            # Phase 1: Plan
+            plan_prompt = self._build_plan_prompt(task)
+            plan_result = self.claude.run(plan_prompt, working_dir=self.config.target_dir)
+            total_cost += plan_result.cost_usd
+            total_duration += plan_result.duration_seconds
+
+            if not plan_result.success:
+                logger.warning("Claude planning failed: %s", plan_result.error)
+                self.git.rollback(snapshot)
+                self.state.record_cycle(CycleRecord(
+                    timestamp=time.time(),
+                    task_description=task.description,
+                    task_type=task.source,
+                    success=False,
+                    cost_usd=total_cost,
+                    duration_seconds=total_duration,
+                    error=f"Planning failed: {plan_result.error}",
+                ))
+                return
+
+            # Clean any accidental changes from planning phase
+            self.git.rollback(snapshot)
+
+            logger.info("Plan created, auto-accepting and executing...")
+
+            # Phase 2: Execute the plan
+            exec_prompt = self._build_execute_prompt(task, plan_result.result_text)
+            claude_result = self.claude.run(exec_prompt, working_dir=self.config.target_dir)
+            total_cost += claude_result.cost_usd
+            total_duration += claude_result.duration_seconds
+        else:
+            prompt = self._build_prompt(task)
+            claude_result = self.claude.run(prompt, working_dir=self.config.target_dir)
+            total_cost = claude_result.cost_usd
+            total_duration = claude_result.duration_seconds
 
         if not claude_result.success:
             logger.warning("Claude failed: %s", claude_result.error)
@@ -153,8 +236,8 @@ class Orchestrator:
                 task_description=task.description,
                 task_type=task.source,
                 success=False,
-                cost_usd=claude_result.cost_usd,
-                duration_seconds=claude_result.duration_seconds,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
                 error=claude_result.error,
             ))
             return
@@ -168,8 +251,8 @@ class Orchestrator:
                 task_description=task.description,
                 task_type=task.source,
                 success=False,
-                cost_usd=claude_result.cost_usd,
-                duration_seconds=claude_result.duration_seconds,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
                 error="No files changed",
             ))
             return
@@ -184,8 +267,8 @@ class Orchestrator:
                 task_description=task.description,
                 task_type=task.source,
                 success=False,
-                cost_usd=claude_result.cost_usd,
-                duration_seconds=claude_result.duration_seconds,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
                 error=str(e),
             ))
             return
@@ -200,8 +283,8 @@ class Orchestrator:
                 task_description=task.description,
                 task_type=task.source,
                 success=False,
-                cost_usd=claude_result.cost_usd,
-                duration_seconds=claude_result.duration_seconds,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
                 error=syntax_err,
             ))
             return
@@ -215,6 +298,10 @@ class Orchestrator:
             commit_hash = self.git.commit(commit_msg)
             logger.info("Cycle succeeded: %s", commit_msg)
 
+            # Push to remote if configured
+            if self.config.orchestrator.push_after_commit:
+                self.git.push()
+
             # Mark feedback as done if applicable
             if task.source == "feedback" and task.source_file:
                 self.feedback.mark_done(task.source_file)
@@ -225,8 +312,8 @@ class Orchestrator:
                 task_type=task.source,
                 success=True,
                 commit_hash=commit_hash,
-                cost_usd=claude_result.cost_usd,
-                duration_seconds=claude_result.duration_seconds,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
                 validation_summary=validation.summary,
             ))
         else:
@@ -238,8 +325,8 @@ class Orchestrator:
                 task_description=task.description,
                 task_type=task.source,
                 success=False,
-                cost_usd=claude_result.cost_usd,
-                duration_seconds=claude_result.duration_seconds,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
                 validation_summary=validation.summary,
                 error="Validation failed",
             ))

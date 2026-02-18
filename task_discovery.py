@@ -158,8 +158,10 @@ class TaskDiscovery:
         if not patterns:
             return []
 
-        # Build a regex pattern
-        pattern = re.compile(r"\b(" + "|".join(re.escape(p) for p in patterns) + r")\b.*", re.IGNORECASE)
+        # Build a regex that only matches TODO/FIXME/HACK in comment lines
+        keyword_pat = r"\b(" + "|".join(re.escape(p) for p in patterns) + r")\b"
+        comment_pattern = re.compile(r"(#|//|/\*).*" + keyword_pat, re.IGNORECASE)
+        keyword_re = re.compile(keyword_pat, re.IGNORECASE)
 
         target = Path(self.target_dir)
         for root, dirs, files in os.walk(target):
@@ -179,7 +181,9 @@ class TaskDiscovery:
                     continue
 
                 for i, line in enumerate(content.split("\n"), 1):
-                    match = pattern.search(line)
+                    if not comment_pattern.search(line):
+                        continue
+                    match = keyword_re.search(line)
                     if match:
                         comment = line.strip()
                         if len(comment) > 120:

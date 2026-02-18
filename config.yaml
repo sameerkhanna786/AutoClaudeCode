@@ -3,7 +3,7 @@
 target_dir: "."
 
 claude:
-  model: sonnet
+  model: opus
   max_turns: 25
   timeout_seconds: 300
   command: claude
@@ -11,10 +11,12 @@ claude:
 orchestrator:
   loop_interval_seconds: 30
   max_changed_files: 20
-  self_improve: false
+  self_improve: true
+  push_after_commit: true
+  plan_changes: true
 
 validation:
-  test_command: "python -m pytest tests/ -x -q"
+  test_command: "python3 -m pytest tests/ -x -q"
   lint_command: ""
   build_command: ""
   test_timeout: 120

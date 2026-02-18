@@ -22,7 +22,7 @@ class TestBuildCommand:
         assert "-p" in cmd
         assert "Fix the bug" in cmd
         assert "--model" in cmd
-        assert "sonnet" in cmd
+        assert "opus" in cmd
         assert "--max-turns" in cmd
         assert "25" in cmd
         assert "--output-format" in cmd
