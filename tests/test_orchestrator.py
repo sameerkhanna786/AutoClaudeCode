@@ -358,3 +358,23 @@ class TestBatchMode:
         assert "todo" in msg
         assert "Fix bug in foo.py" in msg
         assert "Address TODO" in msg
+
+    def test_batch_mode_no_plan_uses_batch_prompt(self, orch_batch):
+        """When batch_mode=True and plan_changes=False, all tasks should be
+        included in a single-shot batch prompt (not just the first one)."""
+        orch_batch.config.orchestrator.plan_changes = False
+        # With plan_changes=False, only one Claude call should happen
+        orch_batch.claude.run.side_effect = None
+        orch_batch.claude.run.return_value = ClaudeResult(
+            success=True, result_text="Done", cost_usd=0.05, duration_seconds=10.0,
+        )
+        orch_batch._cycle()
+        # Should have been called exactly once (no plan phase)
+        assert orch_batch.claude.run.call_count == 1
+        prompt = orch_batch.claude.run.call_args[0][0]
+        # All three task descriptions should appear in the prompt
+        assert "Fix bug in foo.py" in prompt
+        assert "Address TODO in bar.py" in prompt
+        assert "Improve error handling" in prompt
+        # Should use the batch prompt template, not the single-task template
+        assert "batch of tasks" in prompt

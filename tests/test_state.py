@@ -260,3 +260,32 @@ class TestBatchCycleRecord:
         assert state_mgr.get_task_failure_count("Address TODO in bar.py") == 1
         assert state_mgr.get_task_failure_count("Address TODO in bar.py", "todo") == 1
         assert state_mgr.get_task_failure_count("Address TODO in bar.py", "lint") == 0
+
+    def test_save_history_retries_on_replace_failure(self, state_mgr):
+        """_save_history should retry os.replace and succeed on a subsequent attempt."""
+        call_count = 0
+        original_replace = os.replace
+
+        def failing_replace(src, dst):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise OSError("file is locked")
+            return original_replace(src, dst)
+
+        with patch("state.os.replace", side_effect=failing_replace):
+            with patch("state.time.sleep") as mock_sleep:
+                state_mgr.record_cycle(CycleRecord(
+                    timestamp=time.time(),
+                    task_description="Retry test",
+                    success=True,
+                ))
+
+        # Should have retried and eventually succeeded
+        assert call_count == 3
+        # Should have slept between retries
+        assert mock_sleep.call_count == 2
+        # Data should be persisted correctly
+        data = json.loads(Path(state_mgr.history_file).read_text())
+        assert len(data) == 1
+        assert data[0]["task_description"] == "Retry test"

@@ -291,10 +291,14 @@ class TaskDiscovery:
             lines = result_text.strip().split("\n")
             for i, line in enumerate(lines):
                 if line.strip().startswith("{"):
-                    data = json.loads("\n".join(lines[i:]))
-                    result_text = data.get("result", "")
-                    break
-        except (json.JSONDecodeError, TypeError):
+                    try:
+                        data = json.loads("\n".join(lines[i:]))
+                        if isinstance(data, dict) and "result" in data:
+                            result_text = data["result"]
+                            break
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+        except Exception:
             pass
 
         # Extract IDEA lines

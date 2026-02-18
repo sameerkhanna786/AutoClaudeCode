@@ -229,3 +229,19 @@ class TestTaskDiscovery:
         discovery._discover_claude_ideas()
         call_args = mock_run.call_args
         assert call_args[1]["timeout"] == 240
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_ignores_unrelated_json(self, mock_run, discovery):
+        """If a line contains valid JSON without a 'result' field, parsing
+        should continue and find the correct JSON later."""
+        discovery.config.discovery.enable_claude_ideas = True
+        # First line is unrelated JSON, second line has the actual result
+        stdout = '{"status": "ok"}\n{"result": "IDEA: Add input validation"}'
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=stdout,
+            stderr="",
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 1
+        assert "input validation" in tasks[0].description.lower()

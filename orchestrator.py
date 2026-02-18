@@ -110,6 +110,22 @@ INSTRUCTIONS:
 - Make ALL changes in this single session. This is a comprehensive revamp, not incremental.
 """
 
+BATCH_PROMPT_TEMPLATE = """\
+You are working on the project in the current directory.
+
+You have been given a batch of tasks to address in a single comprehensive change.
+
+TASKS:
+{task_list}
+
+INSTRUCTIONS:
+- Make the minimal changes needed to complete ALL tasks above.
+- Do NOT run git commands (add, commit, push). The orchestrator handles git.
+- Do NOT modify these protected files: {protected_files}
+- Focus on correctness. Run tests if available.
+- If a task is unclear or impossible, make your best effort and explain what you did.
+"""
+
 
 class Orchestrator:
     def __init__(self, config: Config):
@@ -218,6 +234,15 @@ class Orchestrator:
         return BATCH_EXECUTE_TEMPLATE.format(
             task_list=task_list,
             plan=plan,
+            protected_files=protected,
+        )
+
+    def _build_batch_prompt(self, tasks: List[Task]) -> str:
+        """Build a single-shot prompt for batch tasks (no plan phase)."""
+        protected = ", ".join(self.config.safety.protected_files)
+        task_list = self._format_task_list(tasks)
+        return BATCH_PROMPT_TEMPLATE.format(
+            task_list=task_list,
             protected_files=protected,
         )
 
@@ -353,7 +378,10 @@ class Orchestrator:
             total_cost += claude_result.cost_usd
             total_duration += claude_result.duration_seconds
         else:
-            prompt = self._build_prompt(tasks[0])
+            if is_batch:
+                prompt = self._build_batch_prompt(tasks)
+            else:
+                prompt = self._build_prompt(tasks[0])
             claude_result = self.claude.run(prompt, working_dir=self.config.target_dir)
             total_cost = claude_result.cost_usd
             total_duration = claude_result.duration_seconds
