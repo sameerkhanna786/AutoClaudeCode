@@ -14,6 +14,9 @@ orchestrator:
   self_improve: true
   push_after_commit: false
   plan_changes: true
+  max_feedback_retries: 3
+  max_tasks_per_cycle: 10
+  batch_mode: true
 
 validation:
   test_command: "python3 -m pytest tests/ -x -q"
@@ -30,6 +33,8 @@ discovery:
   enable_coverage: false
   enable_quality_review: false
   enable_claude_ideas: true
+  discovery_model: sonnet
+  discovery_timeout: 180
   todo_patterns:
     - TODO
     - FIXME
@@ -57,6 +62,7 @@ paths:
   history_file: state/history.json
   lock_file: state/lock.pid
   backup_dir: state/backups
+  feedback_failed_dir: feedback/failed
 
 logging:
   level: INFO

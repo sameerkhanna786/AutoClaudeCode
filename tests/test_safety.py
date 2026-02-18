@@ -28,8 +28,11 @@ class TestSafetyGuard:
     def test_acquire_and_release_lock(self, guard):
         guard.acquire_lock()
         assert guard._lock_fd is not None
+        assert guard.lock_path.exists()
         guard.release_lock()
         assert guard._lock_fd is None
+        # Lock file should persist after release (close releases flock)
+        assert guard.lock_path.exists()
 
     def test_double_lock_fails(self, guard, tmp_path, default_config, state_mgr):
         guard.acquire_lock()
@@ -118,3 +121,12 @@ class TestSafetyGuard:
 
     def test_post_claude_checks(self, guard):
         guard.post_claude_checks(["foo.py"])  # Should not raise
+
+    def test_lock_reacquire_after_release(self, guard):
+        """Lock can be re-acquired after release even though file persists."""
+        guard.acquire_lock()
+        guard.release_lock()
+        # File persists, but lock should be re-acquirable
+        guard.acquire_lock()
+        assert guard._lock_fd is not None
+        guard.release_lock()

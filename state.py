@@ -27,6 +27,8 @@ class CycleRecord:
     duration_seconds: float = 0.0
     validation_summary: str = ""
     error: str = ""
+    task_descriptions: List[str] = field(default_factory=list)
+    task_types: List[str] = field(default_factory=list)
 
 
 class StateManager:
@@ -104,8 +106,11 @@ class StateManager:
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
         for r in records:
-            if r.get("timestamp", 0) >= cutoff and r.get("task_description") == task_description:
-                return True
+            if r.get("timestamp", 0) >= cutoff:
+                if r.get("task_description") == task_description:
+                    return True
+                if task_description in r.get("task_descriptions", []):
+                    return True
         return False
 
     def get_cycle_count_last_hour(self) -> int:
@@ -132,4 +137,19 @@ class StateManager:
             if r.get("success", False):
                 break
             count += 1
+        return count
+
+    def get_task_failure_count(self, task_description: str, task_type: str = "") -> int:
+        """Return the number of failed attempts for a specific task."""
+        records = self._load_history()
+        count = 0
+        for r in records:
+            if r.get("success", False):
+                continue
+            match = (r.get("task_description") == task_description
+                     or task_description in r.get("task_descriptions", []))
+            if match and (not task_type
+                          or r.get("task_type") == task_type
+                          or task_type in r.get("task_types", [])):
+                count += 1
         return count

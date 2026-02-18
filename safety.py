@@ -46,15 +46,10 @@ class SafetyGuard:
         """Release the file lock."""
         if self._lock_fd is not None:
             try:
-                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
                 os.close(self._lock_fd)
             except OSError:
                 pass
             self._lock_fd = None
-            try:
-                self.lock_path.unlink(missing_ok=True)
-            except OSError:
-                pass
 
     def check_disk_space(self) -> None:
         """Ensure sufficient disk space is available."""
@@ -120,10 +115,13 @@ class SafetyGuard:
     def check_file_count(self, changed_files: List[str]) -> None:
         """Ensure number of changed files is within limit."""
         limit = self.config.orchestrator.max_changed_files
-        if len(changed_files) > limit:
+        count = len(changed_files)
+        if count > limit:
             raise SafetyError(
-                f"Too many files changed: {len(changed_files)} (limit: {limit})"
+                f"Too many files changed: {count} (limit: {limit})"
             )
+        if count > limit * 0.8:
+            logger.warning("Changed file count (%d) approaching limit (%d)", count, limit)
 
     def pre_flight_checks(self) -> None:
         """Run all pre-cycle safety checks."""

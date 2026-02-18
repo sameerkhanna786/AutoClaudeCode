@@ -197,3 +197,35 @@ class TestTaskDiscovery:
         discovery.config.discovery.max_todo_tasks = 2
         tasks = discovery._discover_todos()
         assert len(tasks) == 2
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_uses_discovery_model(self, mock_run, discovery):
+        """Claude idea discovery should use discovery_model, not claude.model."""
+        discovery.config.discovery.enable_claude_ideas = True
+        discovery.config.discovery.discovery_model = "haiku"
+        discovery.config.claude.model = "opus"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"result": "IDEA: Test improvement"}',
+            stderr="",
+        )
+        discovery._discover_claude_ideas()
+        call_args = mock_run.call_args
+        cmd = call_args[0][0]
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "haiku"
+
+    @patch("task_discovery.subprocess.run")
+    def test_discover_claude_ideas_uses_discovery_timeout(self, mock_run, discovery):
+        """Claude idea discovery should use discovery_timeout, not claude.timeout_seconds."""
+        discovery.config.discovery.enable_claude_ideas = True
+        discovery.config.discovery.discovery_timeout = 240
+        discovery.config.claude.timeout_seconds = 300
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"result": "IDEA: Test"}',
+            stderr="",
+        )
+        discovery._discover_claude_ideas()
+        call_args = mock_run.call_args
+        assert call_args[1]["timeout"] == 240

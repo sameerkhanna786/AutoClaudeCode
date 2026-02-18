@@ -82,3 +82,62 @@ class TestLoadConfig:
         f.write_text("unknown_key: value\nclaude:\n  model: haiku\n")
         config = load_config(str(f))
         assert config.claude.model == "haiku"
+
+
+class TestNewConfigFields:
+    def test_discovery_model_default(self):
+        config = Config()
+        assert config.discovery.discovery_model == "sonnet"
+
+    def test_discovery_timeout_default(self):
+        config = Config()
+        assert config.discovery.discovery_timeout == 180
+
+    def test_max_feedback_retries_default(self):
+        config = Config()
+        assert config.orchestrator.max_feedback_retries == 3
+
+    def test_feedback_failed_dir_default(self):
+        config = Config()
+        assert config.paths.feedback_failed_dir == "feedback/failed"
+
+    def test_discovery_model_override(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text("discovery:\n  discovery_model: haiku\n  discovery_timeout: 300\n")
+        config = load_config(str(f))
+        assert config.discovery.discovery_model == "haiku"
+        assert config.discovery.discovery_timeout == 300
+
+    def test_max_feedback_retries_override(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text("orchestrator:\n  max_feedback_retries: 5\n")
+        config = load_config(str(f))
+        assert config.orchestrator.max_feedback_retries == 5
+
+    def test_feedback_failed_dir_override(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text("paths:\n  feedback_failed_dir: custom/failed\n")
+        config = load_config(str(f))
+        assert config.paths.feedback_failed_dir == "custom/failed"
+
+
+class TestBatchConfigFields:
+    def test_max_tasks_per_cycle_default(self):
+        config = Config()
+        assert config.orchestrator.max_tasks_per_cycle == 10
+
+    def test_batch_mode_default(self):
+        config = Config()
+        assert config.orchestrator.batch_mode is True
+
+    def test_max_tasks_per_cycle_override(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text("orchestrator:\n  max_tasks_per_cycle: 5\n")
+        config = load_config(str(f))
+        assert config.orchestrator.max_tasks_per_cycle == 5
+
+    def test_batch_mode_override(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text("orchestrator:\n  batch_mode: false\n")
+        config = load_config(str(f))
+        assert config.orchestrator.batch_mode is False

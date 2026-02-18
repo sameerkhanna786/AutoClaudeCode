@@ -264,7 +264,7 @@ class TaskDiscovery:
 
         cmd = [
             cc.command, "-p", prompt,
-            "--model", cc.model,
+            "--model", self.config.discovery.discovery_model,
             "--max-turns", "5",
             "--output-format", "json",
         ]
@@ -275,7 +275,7 @@ class TaskDiscovery:
                 cwd=self.target_dir,
                 capture_output=True,
                 text=True,
-                timeout=min(cc.timeout_seconds, 120),
+                timeout=self.config.discovery.discovery_timeout,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
             logger.warning("Claude idea discovery failed: %s", e)

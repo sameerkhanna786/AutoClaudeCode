@@ -13,6 +13,7 @@ from task_discovery import Task
 def fb_mgr(tmp_path, default_config):
     default_config.paths.feedback_dir = str(tmp_path / "feedback")
     default_config.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+    default_config.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
     return FeedbackManager(default_config)
 
 
@@ -96,3 +97,34 @@ class TestFeedbackManager:
     def test_extract_priority_with_number(self, fb_mgr):
         assert fb_mgr._extract_priority("05-task.md") == 5
         assert fb_mgr._extract_priority("1-urgent.txt") == 1
+
+    def test_mark_failed(self, fb_mgr):
+        fb_dir = Path(fb_mgr.feedback_dir)
+        failed_dir = Path(fb_mgr.failed_dir)
+        task_file = fb_dir / "broken.md"
+        task_file.write_text("Broken task")
+
+        fb_mgr.mark_failed(str(task_file))
+        assert not task_file.exists()
+        assert (failed_dir / "broken.md").exists()
+
+    def test_mark_failed_avoids_overwrite(self, fb_mgr):
+        fb_dir = Path(fb_mgr.feedback_dir)
+        failed_dir = Path(fb_mgr.failed_dir)
+
+        # Put a file in failed already
+        (failed_dir / "broken.md").write_text("old")
+
+        task_file = fb_dir / "broken.md"
+        task_file.write_text("new")
+
+        fb_mgr.mark_failed(str(task_file))
+        assert not task_file.exists()
+        assert (failed_dir / "broken_1.md").exists()
+
+    def test_mark_failed_nonexistent(self, fb_mgr):
+        # Should not raise
+        fb_mgr.mark_failed("/nonexistent/file.md")
+
+    def test_failed_dir_created(self, fb_mgr):
+        assert Path(fb_mgr.failed_dir).exists()

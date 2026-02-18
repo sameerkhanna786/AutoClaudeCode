@@ -19,11 +19,13 @@ class FeedbackManager:
         self.config = config
         self.feedback_dir = Path(config.paths.feedback_dir)
         self.done_dir = Path(config.paths.feedback_done_dir)
+        self.failed_dir = Path(config.paths.feedback_failed_dir)
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
         self.feedback_dir.mkdir(parents=True, exist_ok=True)
         self.done_dir.mkdir(parents=True, exist_ok=True)
+        self.failed_dir.mkdir(parents=True, exist_ok=True)
 
     def get_pending_feedback(self) -> List[Task]:
         """Read pending feedback files and return them as Tasks.
@@ -88,3 +90,22 @@ class FeedbackManager:
 
         shutil.move(str(src), str(dst))
         logger.info("Marked feedback as done: %s → %s", src.name, dst.name)
+
+    def mark_failed(self, source_file: str) -> None:
+        """Move a feedback file to the failed/ directory after exceeding retries."""
+        src = Path(source_file)
+        if not src.exists():
+            return
+
+        dst = self.failed_dir / src.name
+        # Avoid overwriting existing failed files
+        if dst.exists():
+            stem = dst.stem
+            suffix = dst.suffix
+            counter = 1
+            while dst.exists():
+                dst = self.failed_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+
+        shutil.move(str(src), str(dst))
+        logger.info("Marked feedback as failed: %s → %s", src.name, dst.name)

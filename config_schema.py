@@ -25,6 +25,9 @@ class OrchestratorConfig:
     self_improve: bool = False
     push_after_commit: bool = False
     plan_changes: bool = False
+    max_feedback_retries: int = 3
+    max_tasks_per_cycle: int = 10
+    batch_mode: bool = True
 
 
 @dataclass
@@ -50,6 +53,8 @@ class DiscoveryConfig:
         "__pycache__", ".git", "node_modules", ".venv", "venv",
     ])
     max_todo_tasks: int = 20
+    discovery_model: str = "sonnet"
+    discovery_timeout: int = 180
 
 
 @dataclass
@@ -70,6 +75,7 @@ class PathsConfig:
     history_file: str = "state/history.json"
     lock_file: str = "state/lock.pid"
     backup_dir: str = "state/backups"
+    feedback_failed_dir: str = "feedback/failed"
 
 
 @dataclass

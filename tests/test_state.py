@@ -166,3 +166,97 @@ class TestStateManager:
             state_mgr.get_consecutive_failures()
             # None of these should have triggered a file read
             mock_read.assert_not_called()
+
+    def test_get_task_failure_count_empty(self, state_mgr):
+        assert state_mgr.get_task_failure_count("anything") == 0
+
+    def test_get_task_failure_count_counts_failures(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug", task_type="feedback", success=False,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug", task_type="feedback", success=False,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug", task_type="feedback", success=True,
+        ))
+        assert state_mgr.get_task_failure_count("Fix bug") == 2
+
+    def test_get_task_failure_count_filters_by_type(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug", task_type="feedback", success=False,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug", task_type="test_failure", success=False,
+        ))
+        assert state_mgr.get_task_failure_count("Fix bug", "feedback") == 1
+        assert state_mgr.get_task_failure_count("Fix bug", "test_failure") == 1
+        assert state_mgr.get_task_failure_count("Fix bug") == 2
+
+    def test_get_task_failure_count_ignores_other_tasks(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Task A", task_type="feedback", success=False,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Task B", task_type="feedback", success=False,
+        ))
+        assert state_mgr.get_task_failure_count("Task A", "feedback") == 1
+
+
+class TestBatchCycleRecord:
+    def test_batch_record_stores_descriptions(self, state_mgr):
+        record = CycleRecord(
+            timestamp=time.time(),
+            task_description="Fix bug in foo.py",
+            task_type="test_failure",
+            success=True,
+            task_descriptions=["Fix bug in foo.py", "Address TODO in bar.py"],
+            task_types=["test_failure", "todo"],
+        )
+        state_mgr.record_cycle(record)
+        data = json.loads(Path(state_mgr.history_file).read_text())
+        assert len(data) == 1
+        assert data[0]["task_descriptions"] == ["Fix bug in foo.py", "Address TODO in bar.py"]
+        assert data[0]["task_types"] == ["test_failure", "todo"]
+
+    def test_was_recently_attempted_checks_batch_descriptions(self, state_mgr):
+        record = CycleRecord(
+            timestamp=time.time(),
+            task_description="Fix bug in foo.py",
+            task_type="test_failure",
+            task_descriptions=["Fix bug in foo.py", "Address TODO in bar.py"],
+            task_types=["test_failure", "todo"],
+        )
+        state_mgr.record_cycle(record)
+        assert state_mgr.was_recently_attempted("Fix bug in foo.py") is True
+        assert state_mgr.was_recently_attempted("Address TODO in bar.py") is True
+        assert state_mgr.was_recently_attempted("Unrelated task") is False
+
+    def test_backward_compat_old_records(self, state_mgr):
+        """Old records without list fields still work correctly."""
+        old_record = {
+            "timestamp": time.time(),
+            "task_description": "Legacy task",
+            "task_type": "test_failure",
+            "success": False,
+        }
+        Path(state_mgr.history_file).write_text(json.dumps([old_record]))
+        assert state_mgr.was_recently_attempted("Legacy task") is True
+        assert state_mgr.get_task_failure_count("Legacy task") == 1
+
+    def test_get_task_failure_count_checks_batch(self, state_mgr):
+        record = CycleRecord(
+            timestamp=time.time(),
+            task_description="Fix bug in foo.py",
+            task_type="test_failure",
+            success=False,
+            task_descriptions=["Fix bug in foo.py", "Address TODO in bar.py"],
+            task_types=["test_failure", "todo"],
+        )
+        state_mgr.record_cycle(record)
+        assert state_mgr.get_task_failure_count("Address TODO in bar.py") == 1
+        assert state_mgr.get_task_failure_count("Address TODO in bar.py", "todo") == 1
+        assert state_mgr.get_task_failure_count("Address TODO in bar.py", "lint") == 0

@@ -170,3 +170,73 @@ def test_full_cycle_rollback_on_bad_fix(integration_repo):
     history = json.loads((integration_repo / "state" / "history.json").read_text())
     assert len(history) == 1
     assert history[0]["success"] is False
+
+
+def test_full_batch_cycle(integration_repo):
+    """Simulate a batch cycle: discover multiple tasks, Claude fixes them all, validate, commit."""
+    repo = str(integration_repo)
+
+    config = Config()
+    config.target_dir = repo
+    config.validation.test_command = f"python3 -m pytest {repo}/tests/ -x -q"
+    config.validation.lint_command = ""
+    config.validation.build_command = ""
+    config.paths.history_file = str(integration_repo / "state" / "history.json")
+    config.paths.lock_file = str(integration_repo / "state" / "lock.pid")
+    config.paths.feedback_dir = str(integration_repo / "feedback")
+    config.paths.feedback_done_dir = str(integration_repo / "feedback" / "done")
+    config.paths.backup_dir = str(integration_repo / "state" / "backups")
+    config.orchestrator.batch_mode = True
+    config.orchestrator.plan_changes = True
+    config.orchestrator.max_tasks_per_cycle = 10
+
+    orch = Orchestrator(config)
+
+    call_count = [0]
+
+    def mock_claude_run(prompt, working_dir=None):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # Planning phase: return a plan (no file changes)
+            return ClaudeResult(
+                success=True,
+                result_text="Plan: fix app.py to use + instead of -",
+                cost_usd=0.02,
+                duration_seconds=3.0,
+            )
+        else:
+            # Execution phase: fix the file
+            app_path = Path(repo) / "app.py"
+            app_path.write_text(
+                'def add(a, b):\n'
+                '    return a + b\n'
+            )
+            return ClaudeResult(
+                success=True,
+                result_text="Executed batch plan",
+                cost_usd=0.05,
+                duration_seconds=8.0,
+            )
+
+    orch.claude.run = mock_claude_run
+
+    orch._cycle()
+
+    # Verify the fix was committed
+    result = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=repo, capture_output=True, text=True, check=True,
+    )
+    assert "[auto]" in result.stdout
+
+    # Verify the file is fixed
+    app_content = (integration_repo / "app.py").read_text()
+    assert "a + b" in app_content
+
+    # Verify history was recorded with batch fields
+    history = json.loads((integration_repo / "state" / "history.json").read_text())
+    assert len(history) == 1
+    assert history[0]["success"] is True
+    assert "task_descriptions" in history[0]
+    assert isinstance(history[0]["task_descriptions"], list)
+    assert len(history[0]["task_descriptions"]) > 0
