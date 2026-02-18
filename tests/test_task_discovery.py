@@ -104,3 +104,36 @@ class TestTaskDiscovery:
         assert len(tasks) == 1
         assert tasks[0].source == "quality"
         assert "big.py" in tasks[0].description
+
+    def test_discover_todos_ignores_string_literals(self, discovery, tmp_path):
+        """TODO inside a string literal should not be detected."""
+        (tmp_path / "strings.py").write_text('x = "# TODO: not a comment"\n')
+        tasks = discovery._discover_todos()
+        assert tasks == []
+
+    def test_discover_todos_js_comments(self, discovery, tmp_path):
+        """// comments in JS files should be detected."""
+        (tmp_path / "app.js").write_text("// TODO: fix this\n")
+        tasks = discovery._discover_todos()
+        assert len(tasks) == 1
+        assert "TODO" in tasks[0].description
+
+    def test_discover_todos_block_comment_prefix(self, discovery, tmp_path):
+        """/* FIXME ... */ in Java files should be detected."""
+        (tmp_path / "App.java").write_text("/* FIXME: broken */\n")
+        tasks = discovery._discover_todos()
+        assert len(tasks) == 1
+        assert "FIXME" in tasks[0].description
+
+    def test_discover_todos_in_string_not_matched_js(self, discovery, tmp_path):
+        """TODO inside a JS string literal should not be detected."""
+        (tmp_path / "app.js").write_text('const s = "// TODO: fake";\n')
+        tasks = discovery._discover_todos()
+        assert tasks == []
+
+    def test_discover_todos_real_comment_after_code(self, discovery, tmp_path):
+        """An inline comment after code should still be detected."""
+        (tmp_path / "code.py").write_text("x = 1  # TODO: real comment\n")
+        tasks = discovery._discover_todos()
+        assert len(tasks) == 1
+        assert "TODO" in tasks[0].description

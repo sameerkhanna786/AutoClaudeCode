@@ -15,6 +15,45 @@ from config_schema import Config
 
 logger = logging.getLogger(__name__)
 
+# Map file extensions to their comment prefix styles
+_COMMENT_PREFIXES = {
+    ".py": ("#",), ".rb": ("#",),
+    ".js": ("//", "/*"), ".ts": ("//", "/*"),
+    ".jsx": ("//", "/*"), ".tsx": ("//", "/*"),
+    ".go": ("//", "/*"), ".rs": ("//", "/*"),
+    ".java": ("//", "/*"),
+}
+
+# Regex to match string literals (double-quoted and single-quoted, with escapes)
+_STRING_LITERAL_RE = re.compile(r'''"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*' '''.strip())
+
+
+def _extract_comment_text(line: str, ext: str) -> Optional[str]:
+    """Strip string literals from *line*, then return the comment body if a
+    comment prefix for *ext* is found.  Returns ``None`` when no comment is
+    detected."""
+    prefixes = _COMMENT_PREFIXES.get(ext)
+    if not prefixes:
+        return None
+
+    # Remove string literals so that a '#' or '//' inside a string is ignored
+    stripped = _STRING_LITERAL_RE.sub("", line)
+
+    # Find the earliest comment prefix in the stripped line
+    earliest_pos = None
+    earliest_prefix = None
+    for pfx in prefixes:
+        pos = stripped.find(pfx)
+        if pos != -1 and (earliest_pos is None or pos < earliest_pos):
+            earliest_pos = pos
+            earliest_prefix = pfx
+
+    if earliest_pos is None:
+        return None
+
+    # Return the text after the comment prefix
+    return stripped[earliest_pos + len(earliest_prefix):]
+
 
 @dataclass
 class Task:
@@ -158,9 +197,7 @@ class TaskDiscovery:
         if not patterns:
             return []
 
-        # Build a regex that only matches TODO/FIXME/HACK in comment lines
         keyword_pat = r"\b(" + "|".join(re.escape(p) for p in patterns) + r")\b"
-        comment_pattern = re.compile(r"(#|//|/\*).*" + keyword_pat, re.IGNORECASE)
         keyword_re = re.compile(keyword_pat, re.IGNORECASE)
 
         target = Path(self.target_dir)
@@ -169,7 +206,8 @@ class TaskDiscovery:
             dirs[:] = [d for d in dirs if d not in exclude_dirs]
 
             for fname in files:
-                if not fname.endswith((".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".rb")):
+                ext = Path(fname).suffix
+                if ext not in _COMMENT_PREFIXES:
                     continue
 
                 fpath = Path(root) / fname
@@ -181,9 +219,10 @@ class TaskDiscovery:
                     continue
 
                 for i, line in enumerate(content.split("\n"), 1):
-                    if not comment_pattern.search(line):
+                    comment_text = _extract_comment_text(line, ext)
+                    if comment_text is None:
                         continue
-                    match = keyword_re.search(line)
+                    match = keyword_re.search(comment_text)
                     if match:
                         comment = line.strip()
                         if len(comment) > 120:
