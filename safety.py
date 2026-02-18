@@ -97,8 +97,21 @@ class SafetyGuard:
 
     def check_protected_files(self, changed_files: List[str]) -> None:
         """Ensure no protected files have been modified."""
-        protected = {os.path.normpath(p) for p in self.config.safety.protected_files}
-        violations = [f for f in changed_files if os.path.normpath(f) in protected]
+        target_dir = self.config.target_dir
+        violations = []
+        for f in changed_files:
+            changed_path = os.path.join(target_dir, f)
+            for p in self.config.safety.protected_files:
+                protected_path = os.path.join(target_dir, p)
+                try:
+                    if os.path.samefile(changed_path, protected_path):
+                        violations.append(f)
+                        break
+                except OSError:
+                    # File doesn't exist; fall back to normpath comparison
+                    if os.path.normpath(f) == os.path.normpath(p):
+                        violations.append(f)
+                        break
         if violations:
             raise SafetyError(
                 f"Protected files modified: {', '.join(violations)}"
