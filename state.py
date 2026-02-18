@@ -29,6 +29,8 @@ class CycleRecord:
     error: str = ""
     task_descriptions: List[str] = field(default_factory=list)
     task_types: List[str] = field(default_factory=list)
+    batch_size: int = 1
+    task_keys: List[str] = field(default_factory=list)
 
 
 class StateManager:
@@ -116,7 +118,7 @@ class StateManager:
             "Recorded cycle: %s (success=%s)", record.task_description, record.success
         )
 
-    def was_recently_attempted(self, task_description: str, lookback_seconds: int = 3600) -> bool:
+    def was_recently_attempted(self, task_description: str, lookback_seconds: int = 3600, task_key: str = "") -> bool:
         """Check if a task was attempted in the last lookback_seconds."""
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
@@ -125,6 +127,8 @@ class StateManager:
                 if r.get("task_description") == task_description:
                     return True
                 if task_description in r.get("task_descriptions", []):
+                    return True
+                if task_key and task_key in r.get("task_keys", []):
                     return True
         return False
 
@@ -154,7 +158,23 @@ class StateManager:
             count += 1
         return count
 
-    def get_task_failure_count(self, task_description: str, task_type: str = "") -> int:
+    def compute_adaptive_batch_size(self) -> int:
+        """Replay recent history to compute adaptive batch size."""
+        orch = self.config.orchestrator
+        size = orch.initial_batch_size
+        records = self._load_history()
+        recent = records[-orch.adaptive_batch_window:]
+
+        for r in recent:
+            if r.get("success", False):
+                size += orch.batch_grow_step
+            else:
+                size -= orch.batch_shrink_step
+            size = max(orch.min_batch_size, min(orch.max_batch_size, size))
+
+        return size
+
+    def get_task_failure_count(self, task_description: str, task_type: str = "", task_key: str = "") -> int:
         """Return the number of failed attempts for a specific task."""
         records = self._load_history()
         count = 0
@@ -163,6 +183,8 @@ class StateManager:
                 continue
             match = (r.get("task_description") == task_description
                      or task_description in r.get("task_descriptions", []))
+            if not match and task_key:
+                match = task_key in r.get("task_keys", [])
             if match and (not task_type
                           or r.get("task_type") == task_type
                           or task_type in r.get("task_types", [])):

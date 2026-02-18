@@ -33,6 +33,13 @@ class OrchestratorConfig:
     max_tasks_per_cycle: int = 10
     batch_mode: bool = True
     cycle_timeout_seconds: int = 600
+    # Adaptive batch sizing
+    min_batch_size: int = 1
+    max_batch_size: int = 10
+    initial_batch_size: int = 3
+    batch_grow_step: int = 1
+    batch_shrink_step: int = 2
+    adaptive_batch_window: int = 10
 
 
 @dataclass
@@ -149,5 +156,10 @@ def load_config(path: Optional[str] = None) -> Config:
     for section_name, dc_instance in section_map.items():
         if section_name in raw and isinstance(raw[section_name], dict):
             _merge_dataclass(dc_instance, raw[section_name])
+
+    # Legacy migration: max_tasks_per_cycle -> max_batch_size
+    if "orchestrator" in raw and isinstance(raw["orchestrator"], dict):
+        if "max_tasks_per_cycle" in raw["orchestrator"] and "max_batch_size" not in raw["orchestrator"]:
+            config.orchestrator.max_batch_size = config.orchestrator.max_tasks_per_cycle
 
     return config

@@ -242,6 +242,8 @@ def batch_config(tmp_path):
     cfg.orchestrator.batch_mode = True
     cfg.orchestrator.plan_changes = True
     cfg.orchestrator.max_tasks_per_cycle = 10
+    cfg.orchestrator.initial_batch_size = 10
+    cfg.orchestrator.max_batch_size = 10
     return cfg
 
 
@@ -290,13 +292,13 @@ class TestBatchMode:
         assert len(tasks) == 3
 
     def test_gather_tasks_respects_max_cap(self, orch_batch):
-        orch_batch.config.orchestrator.max_tasks_per_cycle = 2
+        orch_batch.state.compute_adaptive_batch_size = MagicMock(return_value=2)
         tasks = orch_batch._gather_tasks()
         assert len(tasks) == 2
 
     def test_gather_tasks_excludes_recently_attempted(self, orch_batch):
         orch_batch.state.was_recently_attempted = MagicMock(
-            side_effect=lambda desc: desc == "Fix bug in foo.py"
+            side_effect=lambda desc, task_key="": desc == "Fix bug in foo.py"
         )
         tasks = orch_batch._gather_tasks()
         assert all(t.description != "Fix bug in foo.py" for t in tasks)
@@ -529,3 +531,32 @@ class TestCycleTimeout:
             result = o._run_claude_with_timeout("test prompt")
             assert result.success is True
             assert result.result_text == "Done"
+
+
+class TestAdaptiveBatchSizing:
+    def test_gather_tasks_uses_adaptive_size(self, orch_batch):
+        orch_batch.state.compute_adaptive_batch_size = MagicMock(return_value=2)
+        tasks = orch_batch._gather_tasks()
+        assert len(tasks) == 2
+        orch_batch.state.compute_adaptive_batch_size.assert_called_once()
+
+    def test_cycle_record_includes_batch_size_and_keys(self, orch_batch):
+        tasks = [
+            Task(description="Fix bug in foo.py", priority=2, source="test_failure"),
+            Task(description="Address TODO in bar.py", priority=3, source="todo",
+                 source_file="bar.py", line_number=5),
+        ]
+        record = orch_batch._make_cycle_record(tasks, success=True)
+        assert record.batch_size == 2
+        assert len(record.task_keys) == 2
+        assert record.task_keys[1] == "todo:bar.py:5"
+
+    def test_gather_tasks_dedup_by_key(self, orch_batch):
+        """Tasks matching by key should be deduped even with different descriptions."""
+        # Make was_recently_attempted return True when key matches
+        def mock_recently_attempted(desc, task_key=""):
+            return task_key == "test_failure:Fix bug in foo.py"
+        orch_batch.state.was_recently_attempted = MagicMock(side_effect=mock_recently_attempted)
+        tasks = orch_batch._gather_tasks()
+        assert all(t.description != "Fix bug in foo.py" for t in tasks)
+        assert len(tasks) == 2

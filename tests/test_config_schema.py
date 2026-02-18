@@ -141,3 +141,49 @@ class TestBatchConfigFields:
         f.write_text("orchestrator:\n  batch_mode: false\n")
         config = load_config(str(f))
         assert config.orchestrator.batch_mode is False
+
+
+class TestAdaptiveBatchConfig:
+    def test_adaptive_batch_defaults(self):
+        config = Config()
+        assert config.orchestrator.initial_batch_size == 3
+        assert config.orchestrator.min_batch_size == 1
+        assert config.orchestrator.max_batch_size == 10
+        assert config.orchestrator.batch_grow_step == 1
+        assert config.orchestrator.batch_shrink_step == 2
+        assert config.orchestrator.adaptive_batch_window == 10
+
+    def test_adaptive_batch_override(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text(
+            "orchestrator:\n"
+            "  min_batch_size: 2\n"
+            "  max_batch_size: 20\n"
+            "  initial_batch_size: 5\n"
+            "  batch_grow_step: 2\n"
+            "  batch_shrink_step: 3\n"
+            "  adaptive_batch_window: 15\n"
+        )
+        config = load_config(str(f))
+        assert config.orchestrator.min_batch_size == 2
+        assert config.orchestrator.max_batch_size == 20
+        assert config.orchestrator.initial_batch_size == 5
+        assert config.orchestrator.batch_grow_step == 2
+        assert config.orchestrator.batch_shrink_step == 3
+        assert config.orchestrator.adaptive_batch_window == 15
+
+    def test_legacy_max_tasks_per_cycle_migrated(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text("orchestrator:\n  max_tasks_per_cycle: 7\n")
+        config = load_config(str(f))
+        assert config.orchestrator.max_batch_size == 7
+
+    def test_legacy_migration_not_applied_when_max_batch_size_set(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text(
+            "orchestrator:\n"
+            "  max_tasks_per_cycle: 7\n"
+            "  max_batch_size: 15\n"
+        )
+        config = load_config(str(f))
+        assert config.orchestrator.max_batch_size == 15

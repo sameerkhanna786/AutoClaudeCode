@@ -311,3 +311,134 @@ class TestBatchCycleRecord:
                     ))
         # Should have attempted all 5 retries
         assert call_count == 5
+
+
+class TestAdaptiveBatchSize:
+    def test_empty_history_returns_initial(self, state_mgr):
+        assert state_mgr.compute_adaptive_batch_size() == 3
+
+    def test_all_successes_grows_to_max(self, state_mgr):
+        now = time.time()
+        for i in range(20):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + i,
+                task_description=f"Task {i}",
+                success=True,
+            ))
+        assert state_mgr.compute_adaptive_batch_size() == 10
+
+    def test_all_failures_shrinks_to_min(self, state_mgr):
+        now = time.time()
+        for i in range(20):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + i,
+                task_description=f"Task {i}",
+                success=False,
+            ))
+        assert state_mgr.compute_adaptive_batch_size() == 1
+
+    def test_mixed_results(self, state_mgr):
+        """Starting from initial=3: +1(S), +1(S), -2(F), +1(S) -> 3+1+1-2+1=4"""
+        now = time.time()
+        results = [True, True, False, True]
+        for i, success in enumerate(results):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + i,
+                task_description=f"Task {i}",
+                success=success,
+            ))
+        assert state_mgr.compute_adaptive_batch_size() == 4
+
+    def test_window_limits_history(self, tmp_path, default_config):
+        """Only the last adaptive_batch_window records should matter."""
+        default_config.paths.history_file = str(tmp_path / "history.json")
+        default_config.orchestrator.adaptive_batch_window = 3
+        mgr = StateManager(default_config)
+
+        now = time.time()
+        # Write 5 failures (old), then 3 successes (recent)
+        for i in range(5):
+            mgr.record_cycle(CycleRecord(
+                timestamp=now + i,
+                task_description=f"Fail {i}",
+                success=False,
+            ))
+        for i in range(3):
+            mgr.record_cycle(CycleRecord(
+                timestamp=now + 5 + i,
+                task_description=f"Success {i}",
+                success=True,
+            ))
+        # Window=3 means only the last 3 (all successes) are considered
+        # initial=3 + 1 + 1 + 1 = 6
+        assert mgr.compute_adaptive_batch_size() == 6
+
+
+class TestKeyBasedDedup:
+    def test_was_recently_attempted_by_key(self, state_mgr):
+        record = CycleRecord(
+            timestamp=time.time(),
+            task_description="Fix error handling in safety.py",
+            task_type="claude_idea",
+            task_keys=["claude_idea:safety.py"],
+        )
+        state_mgr.record_cycle(record)
+        # Different description but same key should match
+        assert state_mgr.was_recently_attempted(
+            "Improve error handling in safety.py",
+            task_key="claude_idea:safety.py",
+        ) is True
+        # Same description, no key match
+        assert state_mgr.was_recently_attempted("Unrelated task") is False
+
+    def test_backward_compat_old_records_no_task_keys(self, state_mgr):
+        """Old records without task_keys field still work correctly."""
+        old_record = {
+            "timestamp": time.time(),
+            "task_description": "Legacy task",
+            "task_type": "test_failure",
+            "success": False,
+        }
+        Path(state_mgr.history_file).write_text(json.dumps([old_record]))
+        assert state_mgr.was_recently_attempted("Legacy task") is True
+        assert state_mgr.was_recently_attempted(
+            "Different desc", task_key="test_failure:foo.py"
+        ) is False
+
+    def test_get_task_failure_count_by_key(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now,
+            task_description="Fix bug version 1",
+            task_type="claude_idea",
+            success=False,
+            task_keys=["claude_idea:safety.py"],
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1,
+            task_description="Fix bug version 2",
+            task_type="claude_idea",
+            success=False,
+            task_keys=["claude_idea:safety.py"],
+        ))
+        # Neither description matches, but key does
+        assert state_mgr.get_task_failure_count(
+            "Fix bug version 3", task_key="claude_idea:safety.py"
+        ) == 2
+
+    def test_get_task_failure_count_by_key_with_type_filter(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now,
+            task_description="Some task",
+            task_type="claude_idea",
+            success=False,
+            task_keys=["claude_idea:safety.py"],
+            task_types=["claude_idea"],
+        ))
+        assert state_mgr.get_task_failure_count(
+            "Different desc", "claude_idea", task_key="claude_idea:safety.py"
+        ) == 1
+        assert state_mgr.get_task_failure_count(
+            "Different desc", "feedback", task_key="claude_idea:safety.py"
+        ) == 0

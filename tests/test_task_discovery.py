@@ -348,3 +348,74 @@ class TestClaudeIdeasMinLength:
         )
         tasks = discovery._discover_claude_ideas()
         assert len(tasks) == 1
+
+
+class TestTaskKey:
+    def test_todo_task_key_with_file_and_line(self):
+        task = Task(description="Address TODO in foo.py:10", priority=3, source="todo",
+                    source_file="foo.py", line_number=10)
+        assert task.task_key == "todo:foo.py:10"
+
+    def test_todo_task_key_with_file_no_line(self):
+        task = Task(description="Address TODO in foo.py", priority=3, source="todo",
+                    source_file="foo.py")
+        assert task.task_key == "todo:foo.py"
+
+    def test_lint_task_key(self):
+        task = Task(description="Fix lint error in foo.py: [F401] unused import",
+                    priority=2, source="lint", source_file="foo.py")
+        assert task.task_key == "lint:foo.py"
+
+    def test_claude_idea_task_key_with_backtick_ref(self):
+        task = Task(description="Improve error handling in `safety.py:98-105` for edge cases",
+                    priority=4, source="claude_idea")
+        assert task.task_key == "claude_idea:safety.py"
+
+    def test_claude_idea_task_key_with_in_ref(self):
+        task = Task(description="Add validation in config_schema.py for negative values",
+                    priority=4, source="claude_idea")
+        assert task.task_key == "claude_idea:config_schema.py"
+
+    def test_claude_idea_task_key_no_file_ref(self):
+        task = Task(description="Improve overall error handling across the codebase",
+                    priority=4, source="claude_idea")
+        assert task.task_key == "claude_idea:Improve overall error handling across the codebase"
+
+    def test_claude_idea_task_key_truncates_at_60(self):
+        long_desc = "A" * 100
+        task = Task(description=long_desc, priority=4, source="claude_idea")
+        assert task.task_key == f"claude_idea:{long_desc[:60]}"
+
+    def test_test_failure_task_key_with_failed_pattern(self):
+        task = Task(description="Fix test failure: FAILED tests/test_foo.py::test_bar - AssertionError",
+                    priority=2, source="test_failure")
+        assert task.task_key == "test_failure:tests/test_foo.py::test_bar"
+
+    def test_test_failure_task_key_with_source_file(self):
+        task = Task(description="Fix test failure", priority=2, source="test_failure",
+                    source_file="tests/test_foo.py")
+        assert task.task_key == "test_failure:tests/test_foo.py"
+
+    def test_feedback_task_key(self):
+        task = Task(description="Fix the login bug", priority=1, source="feedback",
+                    source_file="/tmp/feedback/fix.md")
+        assert task.task_key == "feedback:/tmp/feedback/fix.md"
+
+    def test_coverage_task_key(self):
+        task = Task(description="Improve test coverage for foo.py (currently 30%)",
+                    priority=4, source="coverage", source_file="foo.py")
+        assert task.task_key == "coverage:foo.py"
+
+    def test_coverage_task_key_no_source_file(self):
+        task = Task(description="Improve test coverage for bar.py (currently 20%)",
+                    priority=4, source="coverage")
+        assert task.task_key == "coverage:bar.py"
+
+    def test_quality_task_key(self):
+        task = Task(description="Review big.py (600 lines)", priority=5, source="quality",
+                    source_file="big.py")
+        assert task.task_key == "quality:big.py"
+
+    def test_fallback_task_key(self):
+        task = Task(description="Some generic task", priority=5, source="unknown_source")
+        assert task.task_key == "unknown_source:Some generic task"

@@ -15,7 +15,12 @@ orchestrator:
   push_after_commit: false
   plan_changes: true
   max_feedback_retries: 3
-  max_tasks_per_cycle: 10
+  min_batch_size: 1
+  max_batch_size: 10
+  initial_batch_size: 3
+  batch_grow_step: 1
+  batch_shrink_step: 2
+  adaptive_batch_window: 10
   batch_mode: true
 
 validation:

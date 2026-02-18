@@ -180,13 +180,13 @@ class Orchestrator:
         return tasks[0] if tasks else None
 
     def _gather_tasks(self) -> List[Task]:
-        """Gather all eligible tasks, respecting batch_mode and max_tasks_per_cycle."""
+        """Gather all eligible tasks, respecting batch_mode and adaptive sizing."""
         tasks: List[Task] = []
 
         # Priority 1: developer feedback
         max_retries = self.config.orchestrator.max_feedback_retries
         for task in self.feedback.get_pending_feedback():
-            failure_count = self.state.get_task_failure_count(task.description, "feedback")
+            failure_count = self.state.get_task_failure_count(task.description, "feedback", task_key=task.task_key)
             if failure_count >= max_retries:
                 logger.warning(
                     "Feedback task failed %d times, moving to failed/", failure_count
@@ -194,19 +194,21 @@ class Orchestrator:
                 if task.source_file:
                     self.feedback.mark_failed(task.source_file)
                 continue
-            if not self.state.was_recently_attempted(task.description):
+            if not self.state.was_recently_attempted(task.description, task_key=task.task_key):
                 tasks.append(task)
 
         # Auto-discovered tasks
         discovered = self.discovery.discover_all()
         for task in discovered:
-            if not self.state.was_recently_attempted(task.description):
+            if not self.state.was_recently_attempted(task.description, task_key=task.task_key):
                 tasks.append(task)
 
         if not self.config.orchestrator.batch_mode:
             return tasks[:1]
 
-        return tasks[:self.config.orchestrator.max_tasks_per_cycle]
+        batch_size = self.state.compute_adaptive_batch_size()
+        logger.info("Adaptive batch size: %d", batch_size)
+        return tasks[:batch_size]
 
     def _format_task_list(self, tasks: List[Task]) -> str:
         """Format tasks as a numbered list with source tags."""
@@ -269,6 +271,8 @@ class Orchestrator:
             error=kwargs.get("error", ""),
             task_descriptions=[t.description for t in tasks],
             task_types=[t.source for t in tasks],
+            batch_size=len(tasks),
+            task_keys=[t.task_key for t in tasks],
         )
         return record
 

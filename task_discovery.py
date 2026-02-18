@@ -29,6 +29,15 @@ _STRING_LITERAL_RE = re.compile(r'''"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*' '''.stri
 
 MAX_TASK_DESCRIPTION_LENGTH = 2000
 
+_FILE_REF_RE = re.compile(
+    r'`([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json|md|txt))'
+    r'(?::(\d+))?(?:-\d+)?`'
+)
+_FILE_REF_FALLBACK_RE = re.compile(
+    r'(?:in\s+|for\s+)([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json|md|txt))'
+    r'(?::(\d+))?'
+)
+
 
 def _sanitize_description(desc: str) -> str:
     """Sanitize a task description: strip, collapse newlines, and truncate."""
@@ -76,6 +85,41 @@ class Task:
 
     def __post_init__(self):
         self.description = _sanitize_description(self.description)
+
+    @property
+    def task_key(self) -> str:
+        """Stable dedup key — same underlying issue produces the same key."""
+        if self.source == "todo" and self.source_file:
+            if self.line_number is not None:
+                return f"todo:{self.source_file}:{self.line_number}"
+            return f"todo:{self.source_file}"
+
+        if self.source in ("lint", "test_failure", "quality", "coverage") and self.source_file:
+            return f"{self.source}:{self.source_file}"
+
+        if self.source == "coverage":
+            match = re.search(r'for\s+(\S+)', self.description)
+            if match:
+                return f"coverage:{match.group(1)}"
+
+        if self.source == "claude_idea":
+            match = _FILE_REF_RE.search(self.description)
+            if match:
+                return f"claude_idea:{match.group(1)}"
+            match = _FILE_REF_FALLBACK_RE.search(self.description)
+            if match:
+                return f"claude_idea:{match.group(1)}"
+            return f"claude_idea:{self.description[:60]}"
+
+        if self.source == "feedback" and self.source_file:
+            return f"feedback:{self.source_file}"
+
+        if self.source == "test_failure":
+            match = re.search(r'FAILED\s+(\S+)', self.description)
+            if match:
+                return f"test_failure:{match.group(1)}"
+
+        return f"{self.source}:{self.description}"
 
 
 class TaskDiscovery:
