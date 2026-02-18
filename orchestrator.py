@@ -284,7 +284,11 @@ class Orchestrator:
                         source = full_path.read_text()
                         ast.parse(source, filename=f)
                     except SyntaxError as e:
-                        return f"Syntax error in {f}: {e}"
+                        logger.warning(
+                            "Syntax error in %s at line %s, offset %s: %s",
+                            f, e.lineno, e.offset, e.msg,
+                        )
+                        return f"Syntax error in {f} at line {e.lineno}: {e.msg}"
         return None
 
     def _backup_orchestrator_files(self) -> None:

@@ -393,3 +393,65 @@ class TestBatchMode:
         assert "Improve error handling" in prompt
         # Should use the batch prompt template, not the single-task template
         assert "batch of tasks" in prompt
+
+
+class TestSyntaxCheckFiles:
+    def test_syntax_check_files_reports_line_number(self, tmp_path):
+        """_syntax_check_files should include file name and line number in the error."""
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.orchestrator.self_improve = True
+
+        with patch("orchestrator.GitManager"), \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.Validator"):
+            o = Orchestrator(cfg)
+
+        # Create a .py file with a syntax error on line 3
+        bad_file = tmp_path / "broken.py"
+        bad_file.write_text("x = 1\ny = 2\nz = (\n")
+
+        result = o._syntax_check_files(["broken.py"])
+        assert result is not None
+        assert "broken.py" in result
+        assert "line" in result.lower()
+        # Line number should be present (the error is on line 3 or the EOF)
+        assert "3" in result or "4" in result
+
+    def test_syntax_check_files_logs_warning(self, tmp_path, caplog):
+        """_syntax_check_files should log a warning with file, line, and offset."""
+        import logging
+
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.orchestrator.self_improve = True
+
+        with patch("orchestrator.GitManager"), \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.Validator"):
+            o = Orchestrator(cfg)
+
+        bad_file = tmp_path / "broken.py"
+        bad_file.write_text("def foo(\n")
+
+        with caplog.at_level(logging.WARNING):
+            o._syntax_check_files(["broken.py"])
+
+        assert any(
+            "broken.py" in r.message and "Syntax error" in r.message
+            for r in caplog.records
+        )

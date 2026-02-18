@@ -92,3 +92,50 @@ class TestGitManager:
         commit_hash = gm.commit("commit everything")
         assert len(commit_hash) == 40
         assert gm.is_clean() is True
+
+
+class TestGetChangedFilesErrorHandling:
+    def test_get_changed_files_raises_on_git_failure(self, tmp_git_repo):
+        """When all git commands fail, get_changed_files should raise RuntimeError."""
+        from unittest.mock import patch, MagicMock
+        import subprocess
+
+        gm = GitManager(tmp_git_repo)
+        failed = subprocess.CompletedProcess(
+            args=["git"], returncode=128, stdout="", stderr="fatal: not a git repository"
+        )
+        with patch.object(gm, "_run", return_value=failed):
+            with pytest.raises(RuntimeError, match="All git commands failed"):
+                gm.get_changed_files()
+
+    def test_get_changed_files_warns_on_partial_failure(self, tmp_git_repo, caplog):
+        """When one git command fails but others succeed, result is still returned with a warning."""
+        import logging
+        from unittest.mock import patch, MagicMock
+        import subprocess
+
+        gm = GitManager(tmp_git_repo)
+        # Create a file so there's something to detect
+        Path(tmp_git_repo, "test_file.txt").write_text("content")
+
+        call_count = 0
+        original_run = gm._run
+
+        def partial_fail(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First command (diff --cached) fails
+                return subprocess.CompletedProcess(
+                    args=["git"], returncode=128, stdout="", stderr="simulated failure"
+                )
+            return original_run(*args, **kwargs)
+
+        with patch.object(gm, "_run", side_effect=partial_fail):
+            with caplog.at_level(logging.WARNING):
+                result = gm.get_changed_files()
+
+        # Should still return files from the successful commands
+        assert "test_file.txt" in result
+        # Should have logged a warning about the failed command
+        assert any("failed" in r.message for r in caplog.records)

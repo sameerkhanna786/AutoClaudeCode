@@ -74,18 +74,20 @@ class StateManager:
             with os.fdopen(tmp_fd, "w") as f:
                 json.dump(records, f, indent=2)
             # os.replace can fail on Windows if target is open; retry with backoff
-            last_err: Optional[Exception] = None
             retry_delays = [0.1, 0.5, 1.0]
-            for attempt in range(len(retry_delays)):
+            replaced = False
+            last_err: Optional[OSError] = None
+            for attempt, delay in enumerate(retry_delays):
                 try:
                     os.replace(tmp_path, str(self.history_file))
+                    replaced = True
                     break
                 except OSError as e:
                     last_err = e
                     if attempt < len(retry_delays) - 1:
-                        time.sleep(retry_delays[attempt])
-            else:
-                raise last_err  # type: ignore[misc]
+                        time.sleep(delay)
+            if not replaced:
+                raise last_err  # guaranteed non-None: loop ran at least once and every iteration raised
             self._cache = records
             self._cache_mtime = self.history_file.stat().st_mtime
         except Exception:

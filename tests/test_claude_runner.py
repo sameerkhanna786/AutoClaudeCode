@@ -144,6 +144,28 @@ class TestParseJsonResponse:
         assert data["result"] == "Done"
         assert data["cost_usd"] == 0.01
 
+    def test_json_with_object_literal_in_string_value(self, runner):
+        """JSON with escaped braces and quotes inside string values."""
+        stdout = '{"result": "Use {\\"key\\": \\"val\\"} syntax", "cost_usd": 0.01}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == 'Use {"key": "val"} syntax'
+        assert data["cost_usd"] == 0.01
+
+    def test_multiline_json_with_braces_in_strings(self, runner):
+        """Multiline JSON where string values contain unmatched braces."""
+        stdout = (
+            'Banner\n'
+            '{\n'
+            '  "result": "Fixed {broken} stuff",\n'
+            '  "details": "Replaced { with }",\n'
+            '  "cost_usd": 0.02\n'
+            '}\n'
+        )
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Fixed {broken} stuff"
+        assert data["details"] == "Replaced { with }"
+        assert data["cost_usd"] == 0.02
+
 
 class TestRun:
     @patch("claude_runner.subprocess.run")

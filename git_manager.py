@@ -81,15 +81,32 @@ class GitManager:
 
     def get_changed_files(self) -> List[str]:
         """Return list of changed/untracked files relative to repo root."""
-        # Staged changes
-        staged = self._run("diff", "--cached", "--name-only", check=False)
-        # Unstaged changes
-        unstaged = self._run("diff", "--name-only", check=False)
-        # Untracked files
-        untracked = self._run("ls-files", "--others", "--exclude-standard", check=False)
+        commands = [
+            ("diff", "--cached", "--name-only"),
+            ("diff", "--name-only"),
+            ("ls-files", "--others", "--exclude-standard"),
+        ]
+        results = []
+        any_succeeded = False
+        for cmd_args in commands:
+            result = self._run(*cmd_args, check=False)
+            if result.returncode != 0:
+                logger.warning(
+                    "git %s failed (exit %d): %s",
+                    cmd_args[0], result.returncode, result.stderr.strip(),
+                )
+            else:
+                any_succeeded = True
+                results.append(result.stdout)
+
+        if not any_succeeded:
+            raise RuntimeError(
+                "All git commands failed in get_changed_files; "
+                "cannot determine working tree state"
+            )
 
         files = set()
-        for output in [staged.stdout, unstaged.stdout, untracked.stdout]:
+        for output in results:
             for line in output.strip().split("\n"):
                 if line.strip():
                     files.add(line.strip())

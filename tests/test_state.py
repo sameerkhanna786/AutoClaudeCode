@@ -291,3 +291,17 @@ class TestBatchCycleRecord:
         data = json.loads(Path(state_mgr.history_file).read_text())
         assert len(data) == 1
         assert data[0]["task_description"] == "Retry test"
+
+    def test_save_history_all_retries_fail(self, state_mgr):
+        """_save_history should raise OSError when all retries fail."""
+        def always_fail(src, dst):
+            raise OSError("permanently locked")
+
+        with patch("state.os.replace", side_effect=always_fail):
+            with patch("state.time.sleep"):
+                with pytest.raises(OSError, match="permanently locked"):
+                    state_mgr.record_cycle(CycleRecord(
+                        timestamp=time.time(),
+                        task_description="Doomed task",
+                        success=True,
+                    ))

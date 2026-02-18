@@ -98,15 +98,18 @@ class SafetyGuard:
             changed_path = os.path.join(target_dir, f)
             for p in self.config.safety.protected_files:
                 protected_path = os.path.join(target_dir, p)
-                try:
-                    if os.path.samefile(changed_path, protected_path):
-                        violations.append(f)
-                        break
-                except OSError:
-                    # File doesn't exist; fall back to realpath + normpath comparison
-                    if os.path.normpath(os.path.realpath(changed_path)) == os.path.normpath(os.path.realpath(protected_path)):
-                        violations.append(f)
-                        break
+                # Use samefile when both paths exist (avoids unnecessary exceptions)
+                if os.path.exists(changed_path) and os.path.exists(protected_path):
+                    try:
+                        if os.path.samefile(changed_path, protected_path):
+                            violations.append(f)
+                            break
+                    except OSError:
+                        pass
+                # Fall back to realpath + normpath comparison
+                if os.path.normpath(os.path.realpath(changed_path)) == os.path.normpath(os.path.realpath(protected_path)):
+                    violations.append(f)
+                    break
         if violations:
             raise SafetyError(
                 f"Protected files modified: {', '.join(violations)}"

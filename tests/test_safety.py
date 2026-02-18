@@ -138,3 +138,10 @@ class TestSafetyGuard:
         (tmp_path / "link_to_main.py").symlink_to(tmp_path / "main.py")
         with pytest.raises(SafetyError, match="Protected files"):
             guard.check_protected_files(["link_to_main.py"])
+
+    def test_check_protected_files_nonexistent_file(self, guard, tmp_path):
+        """When a changed file doesn't exist on disk, normpath comparison still catches it."""
+        guard.config.target_dir = str(tmp_path)
+        # Neither file exists on disk, but normpath match should still detect it
+        with pytest.raises(SafetyError, match="Protected files"):
+            guard.check_protected_files(["./main.py"])
