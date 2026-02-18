@@ -79,6 +79,15 @@ class Validator:
                 output=str(e),
                 return_code=-1,
             )
+        except Exception as e:
+            logger.warning("Unexpected error running %s: %s", name, e)
+            return ValidationStep(
+                name=name,
+                command=command,
+                passed=False,
+                output=f"Unexpected error: {e}",
+                return_code=-1,
+            )
 
     def validate(self, working_dir: Optional[str] = None) -> ValidationResult:
         """Run test, lint, build commands sequentially.
@@ -96,7 +105,17 @@ class Validator:
         ]
 
         for name, command, timeout in commands:
-            step = self._run_command(name, command, timeout, cwd)
+            try:
+                step = self._run_command(name, command, timeout, cwd)
+            except Exception as e:
+                logger.warning("Unexpected error during %s validation: %s", name, e)
+                step = ValidationStep(
+                    name=name,
+                    command=command,
+                    passed=False,
+                    output=f"Unexpected error: {e}",
+                    return_code=-1,
+                )
             steps.append(step)
             if not step.passed and command.strip():
                 logger.warning("%s failed (rc=%d)", name, step.return_code)

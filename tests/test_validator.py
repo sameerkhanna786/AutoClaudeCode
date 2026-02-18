@@ -64,3 +64,24 @@ class TestValidator:
         result = v.validate("/tmp")
         assert result.passed is False
         assert len(result.steps) == 2  # tests passed, lint failed, build not run
+
+    @patch("validator.subprocess.run")
+    def test_unexpected_exception_in_run_command(self, mock_run, validator):
+        """Unexpected exceptions from subprocess.run should fail validation, not propagate."""
+        mock_run.side_effect = RuntimeError("unexpected failure")
+        result = validator.validate("/tmp")
+        assert result.passed is False
+        assert result.steps[0].passed is False
+        assert "Unexpected error" in result.steps[0].output
+        assert "unexpected failure" in result.steps[0].output
+        assert result.steps[0].return_code == -1
+
+    @patch("validator.subprocess.run")
+    def test_unexpected_exception_returns_validation_result(self, mock_run, validator):
+        """Validate always returns a ValidationResult, even on unexpected errors."""
+        mock_run.side_effect = MemoryError("out of memory")
+        result = validator.validate("/tmp")
+        assert isinstance(result, ValidationResult)
+        assert result.passed is False
+        assert len(result.steps) == 1
+        assert "out of memory" in result.steps[0].output
