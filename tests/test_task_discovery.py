@@ -189,3 +189,11 @@ class TestTaskDiscovery:
         tasks = discovery._discover_todos()
         assert len(tasks) == 1
         assert "TODO" in tasks[0].description
+
+    def test_discover_todos_respects_max_todo_tasks(self, discovery, tmp_path):
+        """TODO task count should be capped by config.discovery.max_todo_tasks."""
+        lines = "\n".join(f"# TODO: item {i}" for i in range(5))
+        (tmp_path / "many.py").write_text(lines + "\n")
+        discovery.config.discovery.max_todo_tasks = 2
+        tasks = discovery._discover_todos()
+        assert len(tasks) == 2

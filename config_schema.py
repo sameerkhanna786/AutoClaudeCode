@@ -49,6 +49,7 @@ class DiscoveryConfig:
     exclude_dirs: List[str] = field(default_factory=lambda: [
         "__pycache__", ".git", "node_modules", ".venv", "venv",
     ])
+    max_todo_tasks: int = 20
 
 
 @dataclass

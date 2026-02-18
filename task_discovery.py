@@ -239,7 +239,7 @@ class TaskDiscovery:
                             line_number=i,
                         ))
 
-        return tasks[:20]  # Cap TODO tasks
+        return tasks[:self.config.discovery.max_todo_tasks]
 
     def _discover_claude_ideas(self) -> List[Task]:
         """Use Claude to analyze the codebase and suggest improvement ideas.
