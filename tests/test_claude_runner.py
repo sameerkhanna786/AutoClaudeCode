@@ -116,6 +116,28 @@ class TestParseJsonResponse:
         data = runner._parse_json_response(stdout)
         assert data["result"] == "Done"
 
+    def test_json_mid_line_with_prefix_text(self, runner):
+        stdout = 'Some info: {"result": "Done", "cost_usd": 0.01}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+        assert data["cost_usd"] == 0.01
+
+    def test_json_mid_line_with_banner_and_prefix(self, runner):
+        stdout = 'Banner line\nProgress: {"result": "Done"}\nTrailing\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+
+    def test_multiline_json_starting_mid_line(self, runner):
+        stdout = 'Prefix text {\n  "result": "Done",\n  "cost_usd": 0.01\n}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+        assert data["cost_usd"] == 0.01
+
+    def test_mid_line_json_prefers_valid_object(self, runner):
+        stdout = 'bad {stuff\n{"result": "Done"}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+
 
 class TestRun:
     @patch("claude_runner.subprocess.run")

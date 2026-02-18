@@ -47,7 +47,7 @@ class ClaudeRunner:
         and log/warning lines after it. We extract only the first
         valid top-level JSON object.
         """
-        # Strategy 1: Try each line as a complete JSON object.
+        # Strategy 1a: Try each line as a complete JSON object starting with '{'.
         # This handles the common case where the JSON is on its own line.
         for line in stdout.splitlines():
             line = line.strip()
@@ -60,14 +60,28 @@ class ClaudeRunner:
             except json.JSONDecodeError:
                 pass
 
-        # Strategy 2: Fall back to raw_decode for multi-line JSON,
-        # but only at line boundaries to avoid matching nested objects.
+        # Strategy 1b: Try finding JSON mid-line (preceded by text on the same line).
+        for line in stdout.splitlines():
+            line = line.strip()
+            brace_pos = line.find("{")
+            if brace_pos <= 0:
+                continue
+            # Try from each '{' position after the start of the line
+            while brace_pos != -1:
+                candidate = line[brace_pos:]
+                try:
+                    obj = json.loads(candidate)
+                    if isinstance(obj, dict):
+                        return obj
+                except json.JSONDecodeError:
+                    pass
+                brace_pos = line.find("{", brace_pos + 1)
+
+        # Strategy 2: Fall back to raw_decode for multi-line JSON.
+        # Try parsing from any '{' position to handle JSON starting mid-line.
         decoder = json.JSONDecoder()
         for i, ch in enumerate(stdout):
             if ch != "{":
-                continue
-            # Only try positions that start a line (pos 0 or preceded by newline)
-            if i > 0 and stdout[i - 1] != "\n":
                 continue
             try:
                 obj, end = decoder.raw_decode(stdout, i)
