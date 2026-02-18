@@ -101,6 +101,21 @@ class TestParseJsonResponse:
         data = runner._parse_json_response(stdout)
         assert data["result"] == "Done"
 
+    def test_json_after_array_line(self, runner):
+        stdout = '[{"status": "ok"}, {"status": "done"}]\n{"result": "Done"}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+
+    def test_json_after_nested_object_in_banner(self, runner):
+        stdout = 'Progress: {"step": 1, "total": 3}\n{"result": "Done", "cost_usd": 0.01}\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+
+    def test_multiline_json_object(self, runner):
+        stdout = 'Banner\n{\n  "result": "Done",\n  "cost_usd": 0.01\n}\nTrailing\n'
+        data = runner._parse_json_response(stdout)
+        assert data["result"] == "Done"
+
 
 class TestRun:
     @patch("claude_runner.subprocess.run")

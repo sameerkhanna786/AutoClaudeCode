@@ -47,19 +47,34 @@ class ClaudeRunner:
         and log/warning lines after it. We extract only the first
         valid top-level JSON object.
         """
-        decoder = json.JSONDecoder()
-        idx = 0
-        while idx < len(stdout):
-            start = stdout.find("{", idx)
-            if start == -1:
-                break
+        # Strategy 1: Try each line as a complete JSON object.
+        # This handles the common case where the JSON is on its own line.
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line or not line.startswith("{"):
+                continue
             try:
-                obj, end = decoder.raw_decode(stdout, start)
+                obj = json.loads(line)
                 if isinstance(obj, dict):
                     return obj
             except json.JSONDecodeError:
                 pass
-            idx = start + 1
+
+        # Strategy 2: Fall back to raw_decode for multi-line JSON,
+        # but only at line boundaries to avoid matching nested objects.
+        decoder = json.JSONDecoder()
+        for i, ch in enumerate(stdout):
+            if ch != "{":
+                continue
+            # Only try positions that start a line (pos 0 or preceded by newline)
+            if i > 0 and stdout[i - 1] != "\n":
+                continue
+            try:
+                obj, end = decoder.raw_decode(stdout, i)
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                pass
 
         raise ValueError("No JSON object found in Claude CLI output")
 
