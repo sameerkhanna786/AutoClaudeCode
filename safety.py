@@ -153,6 +153,10 @@ class SafetyGuard:
     def check_file_count(self, changed_files: List[str]) -> None:
         """Ensure number of changed files is within limit."""
         limit = self.config.orchestrator.max_changed_files
+        if limit <= 0:
+            raise SafetyError(
+                f"max_changed_files must be positive (got {limit})"
+            )
         count = len(changed_files)
         if count > limit:
             raise SafetyError(

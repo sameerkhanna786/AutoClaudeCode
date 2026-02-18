@@ -74,7 +74,7 @@ class StateManager:
             with os.fdopen(tmp_fd, "w") as f:
                 json.dump(records, f, indent=2)
             # os.replace can fail on Windows if target is open; retry with backoff
-            retry_delays = [0.1, 0.5, 1.0]
+            retry_delays = [0.1, 0.3, 0.9, 2.7, 8.1]
             replaced = False
             last_err: Optional[OSError] = None
             for attempt, delay in enumerate(retry_delays):

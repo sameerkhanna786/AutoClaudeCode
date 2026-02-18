@@ -26,13 +26,13 @@ class ClaudeResult:
 
 
 class ClaudeRunner:
-    MAX_RETRIES = 3
-    RETRY_DELAYS = [2, 8, 32]
-    RATE_LIMIT_BASE_DELAY = 5
-    RATE_LIMIT_MULTIPLIER = 3
 
     def __init__(self, config: Config):
         self.config = config
+        self.max_retries = config.claude.max_retries
+        self.retry_delays = config.claude.retry_delays
+        self.rate_limit_base_delay = config.claude.rate_limit_base_delay
+        self.rate_limit_multiplier = config.claude.rate_limit_multiplier
 
     def _build_command(self, prompt: str) -> List[str]:
         """Build the CLI command list."""
@@ -106,7 +106,7 @@ class ClaudeRunner:
         logger.info("Running Claude CLI in %s", cwd)
         logger.debug("Command: %s", " ".join(cmd))
 
-        for attempt in range(self.MAX_RETRIES + 1):
+        for attempt in range(self.max_retries + 1):
             try:
                 proc = subprocess.run(
                     cmd,
@@ -116,11 +116,11 @@ class ClaudeRunner:
                     timeout=self.config.claude.timeout_seconds,
                 )
             except subprocess.TimeoutExpired:
-                if attempt < self.MAX_RETRIES:
-                    delay = self.RETRY_DELAYS[attempt]
+                if attempt < self.max_retries:
+                    delay = self.retry_delays[min(attempt, len(self.retry_delays) - 1)]
                     logger.warning(
                         "Claude CLI timed out (attempt %d/%d), retrying in %ds",
-                        attempt + 1, self.MAX_RETRIES + 1, delay,
+                        attempt + 1, self.max_retries + 1, delay,
                     )
                     time.sleep(delay)
                     continue
@@ -134,11 +134,11 @@ class ClaudeRunner:
                     error=f"Claude CLI command not found: {self.config.claude.command}",
                 )
             except OSError as e:
-                if attempt < self.MAX_RETRIES:
-                    delay = self.RETRY_DELAYS[attempt]
+                if attempt < self.max_retries:
+                    delay = self.retry_delays[min(attempt, len(self.retry_delays) - 1)]
                     logger.warning(
                         "Claude CLI OS error (attempt %d/%d): %s, retrying in %ds",
-                        attempt + 1, self.MAX_RETRIES + 1, e, delay,
+                        attempt + 1, self.max_retries + 1, e, delay,
                     )
                     time.sleep(delay)
                     continue
@@ -148,19 +148,19 @@ class ClaudeRunner:
                 )
 
             if proc.returncode != 0:
-                if attempt < self.MAX_RETRIES:
+                if attempt < self.max_retries:
                     stderr_lower = proc.stderr.lower()
                     if "rate limit" in stderr_lower or "429" in stderr_lower or "too many requests" in stderr_lower:
-                        delay = self.RATE_LIMIT_BASE_DELAY * (self.RATE_LIMIT_MULTIPLIER ** attempt)
+                        delay = self.rate_limit_base_delay * (self.rate_limit_multiplier ** attempt)
                         logger.warning(
                             "Rate limited (attempt %d/%d), backing off %ds",
-                            attempt + 1, self.MAX_RETRIES + 1, delay,
+                            attempt + 1, self.max_retries + 1, delay,
                         )
                     else:
-                        delay = self.RETRY_DELAYS[attempt]
+                        delay = self.retry_delays[min(attempt, len(self.retry_delays) - 1)]
                         logger.warning(
                             "Claude CLI exited with code %d (attempt %d/%d), retrying in %ds",
-                            proc.returncode, attempt + 1, self.MAX_RETRIES + 1, delay,
+                            proc.returncode, attempt + 1, self.max_retries + 1, delay,
                         )
                     time.sleep(delay)
                     continue

@@ -6,7 +6,7 @@ import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +58,25 @@ class GitManager:
         logger.info("Snapshot created: %s", commit_hash[:8])
         return Snapshot(commit_hash=commit_hash)
 
-    def rollback(self, snapshot: Optional[Snapshot] = None) -> None:
+    def rollback(self, snapshot: Optional[Snapshot] = None, allowed_dirty: Optional[Set[str]] = None) -> None:
         """Discard all working tree changes and untracked files.
 
         If a snapshot is provided and HEAD has moved, reset to that commit.
         Otherwise just clean the working tree.
+
+        If allowed_dirty is provided, verify that all current dirty files are
+        in the allowed set before proceeding.  Raises RuntimeError if
+        unexpected uncommitted files are found, preventing data loss.
         """
+        if allowed_dirty is not None:
+            current_dirty = set(self.get_changed_files())
+            unexpected = current_dirty - allowed_dirty
+            if unexpected:
+                raise RuntimeError(
+                    f"Rollback aborted: unexpected uncommitted files would be lost: "
+                    f"{sorted(unexpected)}"
+                )
+
         if snapshot:
             current = self._run("rev-parse", "HEAD").stdout.strip()
             if current != snapshot.commit_hash:

@@ -160,3 +160,32 @@ class TestCommitEmptyChanges:
             result = gm.commit("nothing to commit", files=["README.md"])
         assert result == ""
         assert any("No staged changes" in r.message for r in caplog.records)
+
+
+class TestRollbackSafety:
+    def test_rollback_raises_on_unexpected_dirty_files(self, tmp_git_repo):
+        """Rollback should raise RuntimeError when unexpected dirty files exist."""
+        gm = GitManager(tmp_git_repo)
+        snap = gm.create_snapshot()
+        # Create unexpected uncommitted files
+        Path(tmp_git_repo, "unexpected.txt").write_text("surprise")
+        Path(tmp_git_repo, "also_unexpected.txt").write_text("another surprise")
+        with pytest.raises(RuntimeError, match="unexpected uncommitted files"):
+            gm.rollback(snap, allowed_dirty=set())
+
+    def test_rollback_with_allowed_dirty_succeeds(self, tmp_git_repo):
+        """Rollback should succeed when all dirty files are in the allowed set."""
+        gm = GitManager(tmp_git_repo)
+        snap = gm.create_snapshot()
+        Path(tmp_git_repo, "expected.txt").write_text("expected change")
+        gm.rollback(snap, allowed_dirty={"expected.txt"})
+        assert gm.is_clean() is True
+
+    def test_rollback_without_allowed_dirty_backward_compat(self, tmp_git_repo):
+        """Rollback without allowed_dirty param should behave as before."""
+        gm = GitManager(tmp_git_repo)
+        snap = gm.create_snapshot()
+        Path(tmp_git_repo, "anything.txt").write_text("any content")
+        gm.rollback(snap)
+        assert gm.is_clean() is True
+        assert not Path(tmp_git_repo, "anything.txt").exists()

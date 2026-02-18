@@ -286,15 +286,19 @@ class TestBatchCycleRecord:
         # Should have slept between retries with exponential backoff
         assert mock_sleep.call_count == 2
         assert mock_sleep.call_args_list[0][0][0] == 0.1
-        assert mock_sleep.call_args_list[1][0][0] == 0.5
+        assert mock_sleep.call_args_list[1][0][0] == 0.3
         # Data should be persisted correctly
         data = json.loads(Path(state_mgr.history_file).read_text())
         assert len(data) == 1
         assert data[0]["task_description"] == "Retry test"
 
     def test_save_history_all_retries_fail(self, state_mgr):
-        """_save_history should raise OSError when all retries fail."""
+        """_save_history should raise OSError when all 5 retries fail."""
+        call_count = 0
+
         def always_fail(src, dst):
+            nonlocal call_count
+            call_count += 1
             raise OSError("permanently locked")
 
         with patch("state.os.replace", side_effect=always_fail):
@@ -305,3 +309,5 @@ class TestBatchCycleRecord:
                         task_description="Doomed task",
                         success=True,
                     ))
+        # Should have attempted all 5 retries
+        assert call_count == 5

@@ -16,6 +16,10 @@ class ClaudeConfig:
     max_turns: int = 25
     timeout_seconds: int = 300
     command: str = "claude"
+    max_retries: int = 3
+    retry_delays: List[int] = field(default_factory=lambda: [2, 8, 32])
+    rate_limit_base_delay: int = 5
+    rate_limit_multiplier: int = 3
 
 
 @dataclass

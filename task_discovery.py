@@ -302,9 +302,26 @@ class TaskDiscovery:
         # Parse JSON response to get result text
         result_text = proc.stdout
         try:
-            lines = result_text.strip().split("\n")
-            for i, line in enumerate(lines):
-                if line.strip().startswith("{"):
+            # Strategy 1: Try each line individually as a complete JSON object
+            for line in result_text.strip().split("\n"):
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    data = json.loads(line)
+                    if (isinstance(data, dict)
+                            and "result" in data
+                            and isinstance(data.get("result"), str)):
+                        result_text = data["result"]
+                        break
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            else:
+                # Strategy 2: Try multi-line JSON joining from each '{'-starting line
+                lines = result_text.strip().split("\n")
+                for i, line in enumerate(lines):
+                    if not line.strip().startswith("{"):
+                        continue
                     try:
                         data = json.loads("\n".join(lines[i:]))
                         if (isinstance(data, dict)
@@ -314,6 +331,21 @@ class TaskDiscovery:
                             break
                     except (json.JSONDecodeError, TypeError):
                         continue
+                else:
+                    # Strategy 3: Use raw_decode to find JSON anywhere in the output
+                    decoder = json.JSONDecoder()
+                    for i, ch in enumerate(result_text):
+                        if ch != "{":
+                            continue
+                        try:
+                            obj, end = decoder.raw_decode(result_text, i)
+                            if (isinstance(obj, dict)
+                                    and "result" in obj
+                                    and isinstance(obj.get("result"), str)):
+                                result_text = obj["result"]
+                                break
+                        except (json.JSONDecodeError, TypeError):
+                            continue
         except Exception:
             pass
 
