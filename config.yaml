@@ -1,0 +1,62 @@
+# Auto Claude Code Configuration
+
+target_dir: "."
+
+claude:
+  model: sonnet
+  max_turns: 25
+  timeout_seconds: 300
+  command: claude
+
+orchestrator:
+  loop_interval_seconds: 30
+  max_changed_files: 20
+  self_improve: false
+
+validation:
+  test_command: "python -m pytest tests/ -x -q"
+  lint_command: ""
+  build_command: ""
+  test_timeout: 120
+  lint_timeout: 60
+  build_timeout: 120
+
+discovery:
+  enable_test_failures: true
+  enable_lint_errors: true
+  enable_todos: true
+  enable_coverage: false
+  enable_quality_review: false
+  todo_patterns:
+    - TODO
+    - FIXME
+    - HACK
+  exclude_dirs:
+    - __pycache__
+    - .git
+    - node_modules
+    - .venv
+    - venv
+
+safety:
+  max_consecutive_failures: 5
+  max_cycles_per_hour: 30
+  max_cost_usd_per_hour: 10.0
+  min_disk_space_mb: 500
+  protected_files:
+    - main.py
+    - config.yaml
+
+paths:
+  feedback_dir: feedback
+  feedback_done_dir: feedback/done
+  state_dir: state
+  history_file: state/history.json
+  lock_file: state/lock.pid
+  backup_dir: state/backups
+
+logging:
+  level: INFO
+  file: state/auto_claude.log
+  max_bytes: 5000000
+  backup_count: 3
