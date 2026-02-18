@@ -320,3 +320,52 @@ class TestRetryLogic:
         assert result.success is True
         assert mock_run.call_count == 2
         mock_sleep.assert_called_once_with(2)
+
+
+class TestRateLimitBackoff:
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_rate_limit_exponential_backoff(self, mock_run, mock_sleep, runner):
+        """Rate limit errors should use exponential backoff (5, 15, 45) not fixed delays."""
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="rate limit exceeded"),
+            MagicMock(returncode=1, stdout="", stderr="rate limit exceeded"),
+            MagicMock(returncode=1, stdout="", stderr="rate limit exceeded"),
+            MagicMock(returncode=1, stdout="", stderr="rate limit exceeded"),
+        ]
+        result = runner.run("Fix the bug")
+        assert result.success is False
+        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        # Exponential: 5 * 3^0 = 5, 5 * 3^1 = 15, 5 * 3^2 = 45
+        assert delays == [5, 15, 45]
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_non_rate_limit_uses_fixed_delays(self, mock_run, mock_sleep, runner):
+        """Non-rate-limit errors should still use the fixed delays (2, 8, 32)."""
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="some other error"),
+            MagicMock(returncode=1, stdout="", stderr="some other error"),
+            MagicMock(returncode=1, stdout="", stderr="some other error"),
+            MagicMock(returncode=1, stdout="", stderr="some other error"),
+        ]
+        result = runner.run("Fix the bug")
+        assert result.success is False
+        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        assert delays == [2, 8, 32]
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.run")
+    def test_rate_limit_429_detected(self, mock_run, mock_sleep, runner):
+        """429 in stderr should trigger rate limit backoff."""
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="HTTP 429 Too Many Requests"),
+            MagicMock(
+                returncode=0,
+                stdout='{"result": "Done", "cost_usd": 0.01}',
+                stderr="",
+            ),
+        ]
+        result = runner.run("Fix the bug")
+        assert result.success is True
+        mock_sleep.assert_called_once_with(5)  # 5 * 3^0 = 5

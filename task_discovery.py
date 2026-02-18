@@ -334,6 +334,24 @@ class TaskDiscovery:
                     logger.debug("Skipping short IDEA line: %r", desc)
 
         logger.info("Claude discovered %d improvement ideas", len(tasks))
+        if not tasks and result_text.strip():
+            # Check if Claude returned analysis results instead of IDEA format
+            lines = [l.strip() for l in result_text.split("\n") if l.strip()]
+            has_analysis_patterns = any(
+                l[0].isdigit() or l.startswith("-") or l.startswith("*") or l.startswith("•")
+                for l in lines
+            )
+            if has_analysis_patterns:
+                logger.warning(
+                    "Claude returned analysis results instead of IDEA format. "
+                    "Response contained %d non-empty lines but no IDEA: prefixed lines.",
+                    len(lines),
+                )
+            else:
+                logger.debug(
+                    "Claude response contained no IDEA lines (%d non-empty lines)",
+                    len(lines),
+                )
         return tasks[:5]
 
     def _discover_coverage_gaps(self) -> List[Task]:

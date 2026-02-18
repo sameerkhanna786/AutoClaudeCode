@@ -472,3 +472,60 @@ class TestSyntaxCheckFiles:
             "broken.py" in r.message and "Syntax error" in r.message
             for r in caplog.records
         )
+
+
+class TestCycleTimeout:
+    def test_cycle_timeout_wraps_claude_call(self, tmp_path):
+        """_run_claude_with_timeout returns a failed result when the timeout fires."""
+        import concurrent.futures
+
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.orchestrator.cycle_timeout_seconds = 1  # very short timeout
+
+        with patch("orchestrator.GitManager"), \
+             patch("orchestrator.ClaudeRunner") as MockClaude, \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.Validator"):
+            o = Orchestrator(cfg)
+            # Make claude.run hang longer than the timeout
+            import threading
+
+            def slow_run(prompt, working_dir=None):
+                time.sleep(10)
+                return ClaudeResult(success=True, result_text="Done")
+
+            o.claude.run = slow_run
+            result = o._run_claude_with_timeout("test prompt")
+            assert result.success is False
+            assert "timeout" in result.error.lower()
+
+    def test_cycle_timeout_success(self, tmp_path):
+        """_run_claude_with_timeout returns the result when the call completes within timeout."""
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.orchestrator.cycle_timeout_seconds = 60
+
+        with patch("orchestrator.GitManager"), \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.Validator"):
+            o = Orchestrator(cfg)
+            o.claude.run = MagicMock(return_value=ClaudeResult(
+                success=True, result_text="Done", cost_usd=0.01, duration_seconds=2.0,
+            ))
+            result = o._run_claude_with_timeout("test prompt")
+            assert result.success is True
+            assert result.result_text == "Done"

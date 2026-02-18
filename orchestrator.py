@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import concurrent.futures
 import logging
 import os
 import shutil
@@ -310,6 +311,26 @@ class Orchestrator:
                 dst = backup_dir / fname
                 shutil.copy2(str(src), str(dst))
 
+    def _run_claude_with_timeout(self, prompt: str) -> ClaudeResult:
+        """Run Claude CLI with a cycle-level timeout safety net.
+
+        Wraps self.claude.run() in a thread pool with a configurable timeout
+        to prevent indefinite hangs even if the subprocess timeout fails.
+        """
+        timeout = self.config.orchestrator.cycle_timeout_seconds
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self.claude.run, prompt, self.config.target_dir)
+            try:
+                return future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    "Claude CLI cycle timeout fired after %ds", timeout,
+                )
+                return ClaudeResult(
+                    success=False,
+                    error=f"Cycle timeout after {timeout}s (Claude CLI hung)",
+                )
+
     def _cycle(self) -> None:
         """Run a single orchestration cycle."""
         # 1. Pre-flight safety checks
@@ -377,7 +398,7 @@ class Orchestrator:
                 plan_prompt = self._build_batch_plan_prompt(tasks)
             else:
                 plan_prompt = self._build_plan_prompt(tasks[0])
-            plan_result = self.claude.run(plan_prompt, working_dir=self.config.target_dir)
+            plan_result = self._run_claude_with_timeout(plan_prompt)
             total_cost += plan_result.cost_usd
             total_duration += plan_result.duration_seconds
 
@@ -403,7 +424,7 @@ class Orchestrator:
                 exec_prompt = self._build_batch_execute_prompt(tasks, plan_result.result_text)
             else:
                 exec_prompt = self._build_execute_prompt(tasks[0], plan_result.result_text)
-            claude_result = self.claude.run(exec_prompt, working_dir=self.config.target_dir)
+            claude_result = self._run_claude_with_timeout(exec_prompt)
             total_cost += claude_result.cost_usd
             total_duration += claude_result.duration_seconds
         else:
@@ -411,7 +432,7 @@ class Orchestrator:
                 prompt = self._build_batch_prompt(tasks)
             else:
                 prompt = self._build_prompt(tasks[0])
-            claude_result = self.claude.run(prompt, working_dir=self.config.target_dir)
+            claude_result = self._run_claude_with_timeout(prompt)
             total_cost = claude_result.cost_usd
             total_duration = claude_result.duration_seconds
 

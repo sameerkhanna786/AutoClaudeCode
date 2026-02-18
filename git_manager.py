@@ -76,10 +76,18 @@ class GitManager:
 
     def commit(self, message: str, files: Optional[List[str]] = None) -> str:
         """Stage specified files (or all if none given) and commit. Returns the new commit hash."""
+        if files is not None and len(files) == 0:
+            logger.warning("commit() called with empty file list, nothing to commit")
+            return ""
         if files:
             self._run("add", "--", *files)
         else:
             self._run("add", "-A")
+        # Verify something is staged
+        staged = self._run("diff", "--cached", "--name-only", check=False)
+        if not staged.stdout.strip():
+            logger.warning("No staged changes after git add, skipping commit")
+            return ""
         self._run("commit", "-m", message)
         result = self._run("rev-parse", "HEAD")
         commit_hash = result.stdout.strip()

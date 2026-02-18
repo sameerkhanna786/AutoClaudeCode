@@ -28,6 +28,8 @@ class ClaudeResult:
 class ClaudeRunner:
     MAX_RETRIES = 3
     RETRY_DELAYS = [2, 8, 32]
+    RATE_LIMIT_BASE_DELAY = 5
+    RATE_LIMIT_MULTIPLIER = 3
 
     def __init__(self, config: Config):
         self.config = config
@@ -147,11 +149,19 @@ class ClaudeRunner:
 
             if proc.returncode != 0:
                 if attempt < self.MAX_RETRIES:
-                    delay = self.RETRY_DELAYS[attempt]
-                    logger.warning(
-                        "Claude CLI exited with code %d (attempt %d/%d), retrying in %ds",
-                        proc.returncode, attempt + 1, self.MAX_RETRIES + 1, delay,
-                    )
+                    stderr_lower = proc.stderr.lower()
+                    if "rate limit" in stderr_lower or "429" in stderr_lower or "too many requests" in stderr_lower:
+                        delay = self.RATE_LIMIT_BASE_DELAY * (self.RATE_LIMIT_MULTIPLIER ** attempt)
+                        logger.warning(
+                            "Rate limited (attempt %d/%d), backing off %ds",
+                            attempt + 1, self.MAX_RETRIES + 1, delay,
+                        )
+                    else:
+                        delay = self.RETRY_DELAYS[attempt]
+                        logger.warning(
+                            "Claude CLI exited with code %d (attempt %d/%d), retrying in %ds",
+                            proc.returncode, attempt + 1, self.MAX_RETRIES + 1, delay,
+                        )
                     time.sleep(delay)
                     continue
                 return ClaudeResult(

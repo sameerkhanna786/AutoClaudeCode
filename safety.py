@@ -34,9 +34,41 @@ class SafetyGuard:
         try:
             fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
+            # Check if the PID in the lock file is still alive
+            stale = False
+            existing_pid_str = ""
+            try:
+                os.lseek(self._lock_fd, 0, os.SEEK_SET)
+                existing_pid_bytes = os.read(self._lock_fd, 64)
+                existing_pid_str = existing_pid_bytes.decode(errors="replace").strip()
+                existing_pid = int(existing_pid_str)
+                os.kill(existing_pid, 0)
+            except (ValueError, ProcessLookupError):
+                stale = True
+            except PermissionError:
+                # Process exists but we can't signal it
+                stale = False
+
             os.close(self._lock_fd)
             self._lock_fd = None
-            raise SafetyError("Another instance is already running (lock file held)")
+
+            if stale:
+                logger.warning(
+                    "Cleaning up stale lock file from dead process (PID %s)",
+                    existing_pid_str,
+                )
+                self.lock_path.unlink(missing_ok=True)
+                # Retry acquisition
+                self._lock_fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR)
+                try:
+                    fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    os.close(self._lock_fd)
+                    self._lock_fd = None
+                    raise SafetyError("Another instance is already running (lock file held)")
+            else:
+                raise SafetyError("Another instance is already running (lock file held)")
+
         # Write our PID
         os.ftruncate(self._lock_fd, 0)
         os.lseek(self._lock_fd, 0, os.SEEK_SET)

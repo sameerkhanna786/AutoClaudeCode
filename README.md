@@ -63,7 +63,7 @@ All settings live in `config.yaml`. Key sections:
 | Section | What it controls |
 |---|---|
 | `claude` | Model (`opus`), max turns, timeout, CLI command |
-| `orchestrator` | Loop interval, self-improve toggle, plan-before-execute, push-after-commit |
+| `orchestrator` | Loop interval, self-improve toggle, plan-before-execute, push-after-commit, cycle timeout |
 | `validation` | Test/lint/build commands and their timeouts |
 | `discovery` | Toggle each discovery strategy, TODO patterns, excluded directories |
 | `safety` | Max consecutive failures, cycles/hour, cost/hour, min disk space, protected files |
@@ -140,6 +140,8 @@ auto_claude_code/
 - **Cost limiting** — configurable max USD per hour (default: $10)
 - **Consecutive failure circuit breaker** — stops after N consecutive failures (default: 5)
 - **Disk space check** — aborts if free space drops below threshold (default: 500 MB)
+- **Stale lock cleanup** — automatically detects and cleans up lock files from crashed processes
+- **Exponential backoff** — rate-limited API requests use exponential backoff for retry delays
 - **Two-layer watchdog** — `main.py` catches import failures and keeps the system running
 
 ## Self-Improvement Mode

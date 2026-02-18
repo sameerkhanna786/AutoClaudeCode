@@ -28,6 +28,7 @@ class OrchestratorConfig:
     max_feedback_retries: int = 3
     max_tasks_per_cycle: int = 10
     batch_mode: bool = True
+    cycle_timeout_seconds: int = 600
 
 
 @dataclass

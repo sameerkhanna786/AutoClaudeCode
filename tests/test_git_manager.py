@@ -139,3 +139,24 @@ class TestGetChangedFilesErrorHandling:
         assert "test_file.txt" in result
         # Should have logged a warning about the failed command
         assert any("failed" in r.message for r in caplog.records)
+
+
+class TestCommitEmptyChanges:
+    def test_commit_empty_file_list(self, tmp_git_repo, caplog):
+        """commit() with files=[] should return empty string without error."""
+        import logging
+        gm = GitManager(tmp_git_repo)
+        with caplog.at_level(logging.WARNING):
+            result = gm.commit("empty commit", files=[])
+        assert result == ""
+        assert any("empty file list" in r.message for r in caplog.records)
+
+    def test_commit_no_staged_changes(self, tmp_git_repo, caplog):
+        """commit() with no actual staged changes should return empty string."""
+        import logging
+        gm = GitManager(tmp_git_repo)
+        # README.md is already committed, staging it again won't create a diff
+        with caplog.at_level(logging.WARNING):
+            result = gm.commit("nothing to commit", files=["README.md"])
+        assert result == ""
+        assert any("No staged changes" in r.message for r in caplog.records)
