@@ -33,6 +33,8 @@ class StateManager:
     def __init__(self, config: Config):
         self.config = config
         self.history_file = Path(config.paths.history_file)
+        self._cache: Optional[List[Dict[str, Any]]] = None
+        self._cache_mtime: float = 0.0
         self._ensure_dir()
 
     def _ensure_dir(self) -> None:
@@ -40,12 +42,22 @@ class StateManager:
 
     def _load_history(self) -> List[Dict[str, Any]]:
         if not self.history_file.exists():
+            self._cache = []
+            self._cache_mtime = 0.0
             return []
         try:
+            current_mtime = self.history_file.stat().st_mtime
+            if self._cache is not None and current_mtime == self._cache_mtime:
+                return self._cache
             text = self.history_file.read_text().strip()
             if not text:
+                self._cache = []
+                self._cache_mtime = current_mtime
                 return []
-            return json.loads(text)
+            records = json.loads(text)
+            self._cache = records
+            self._cache_mtime = current_mtime
+            return records
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to read history: %s", e)
             return []
@@ -60,6 +72,8 @@ class StateManager:
             with os.fdopen(tmp_fd, "w") as f:
                 json.dump(records, f, indent=2)
             os.replace(tmp_path, str(self.history_file))
+            self._cache = records
+            self._cache_mtime = self.history_file.stat().st_mtime
         except Exception:
             # Clean up temp file on failure
             try:
@@ -68,10 +82,18 @@ class StateManager:
                 pass
             raise
 
+    def _prune_history(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Prune history to the most recent max_history_records entries."""
+        max_records = self.config.safety.max_history_records
+        if len(records) > max_records:
+            return records[-max_records:]
+        return records
+
     def record_cycle(self, record: CycleRecord) -> None:
         """Append a cycle record to history."""
         records = self._load_history()
         records.append(asdict(record))
+        records = self._prune_history(records)
         self._save_history(records)
         logger.info(
             "Recorded cycle: %s (success=%s)", record.task_description, record.success

@@ -1,8 +1,10 @@
 """Tests for state module."""
 
 import json
+import os
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -109,3 +111,58 @@ class TestStateManager:
         assert state_mgr.get_total_cost() == 0.0
         assert state_mgr.get_consecutive_failures() == 0
         assert state_mgr.was_recently_attempted("anything") is False
+
+    def test_history_pruning(self, tmp_path, default_config):
+        """Verify history is pruned to max_history_records."""
+        default_config.paths.history_file = str(tmp_path / "history.json")
+        default_config.safety.max_history_records = 10
+        mgr = StateManager(default_config)
+
+        now = time.time()
+        for i in range(25):
+            mgr.record_cycle(CycleRecord(
+                timestamp=now + i,
+                task_description=f"Task {i}",
+            ))
+
+        # On-disk file should have at most 10 records
+        data = json.loads(Path(mgr.history_file).read_text())
+        assert len(data) == 10
+        # The most recent records should be preserved (Task 15..24)
+        assert data[0]["task_description"] == "Task 15"
+        assert data[-1]["task_description"] == "Task 24"
+
+    def test_cache_invalidation(self, state_mgr):
+        """Verify cache is invalidated when file is externally modified."""
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Original",
+        ))
+        assert state_mgr.was_recently_attempted("Original") is True
+
+        # Externally overwrite the history file with different content
+        new_records = [{"timestamp": time.time(), "task_description": "External", "success": True}]
+        Path(state_mgr.history_file).write_text(json.dumps(new_records))
+
+        # The cache should detect the mtime change and reload
+        assert state_mgr.was_recently_attempted("External") is True
+        assert state_mgr.was_recently_attempted("Original") is False
+
+    def test_cache_avoids_reread(self, state_mgr):
+        """Verify that repeated reads use the cache instead of re-reading from disk."""
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Cached task",
+            success=True,
+            cost_usd=0.05,
+        ))
+
+        # After record_cycle, the cache is populated via _save_history.
+        # Subsequent calls should not re-read the file.
+        with patch.object(Path, 'read_text', wraps=state_mgr.history_file.read_text) as mock_read:
+            state_mgr.was_recently_attempted("Cached task")
+            state_mgr.get_cycle_count_last_hour()
+            state_mgr.get_total_cost()
+            state_mgr.get_consecutive_failures()
+            # None of these should have triggered a file read
+            mock_read.assert_not_called()

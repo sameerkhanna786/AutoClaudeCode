@@ -58,6 +58,7 @@ class SafetyConfig:
     max_cycles_per_hour: int = 30
     max_cost_usd_per_hour: float = 10.0
     min_disk_space_mb: int = 500
+    max_history_records: int = 1000
     protected_files: List[str] = field(default_factory=lambda: ["main.py", "config.yaml"])
 
 
