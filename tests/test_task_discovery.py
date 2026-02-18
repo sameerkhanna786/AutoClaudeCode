@@ -18,7 +18,7 @@ def discovery(tmp_path, default_config):
 
 class TestTaskDiscovery:
     def test_discover_all_returns_sorted(self, discovery, tmp_path):
-        # Create a file with a TODO
+        # Set up a source file containing a task marker comment
         (tmp_path / "app.py").write_text("# TODO: fix this\n")
         with patch.object(discovery, "_discover_test_failures", return_value=[]):
             with patch.object(discovery, "_discover_lint_errors", return_value=[]):
