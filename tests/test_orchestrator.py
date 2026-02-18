@@ -108,11 +108,11 @@ class TestOrchestrator:
         orch.git.rollback.assert_called_once()
         orch.git.commit.assert_not_called()
 
-    def test_protected_file_nested_path_causes_rollback(self, orch):
+    def test_nested_path_not_blocked_by_protected_basename(self, orch):
         orch.git.get_new_changed_files.return_value = ["src/main.py", "fix.py"]
         orch._cycle()
-        orch.git.rollback.assert_called_once()
-        orch.git.commit.assert_not_called()
+        orch.git.rollback.assert_not_called()
+        orch.git.commit.assert_called_once()
 
     def test_run_once(self, orch):
         orch.run(once=True)

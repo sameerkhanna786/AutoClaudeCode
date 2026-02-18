@@ -93,12 +93,10 @@ class TestSafetyGuard:
             guard.check_protected_files(["main.py", "other.py"])
 
     def test_check_protected_files_nested_path(self, guard):
-        with pytest.raises(SafetyError, match="Protected files"):
-            guard.check_protected_files(["src/main.py", "other.py"])
+        guard.check_protected_files(["src/main.py", "other.py"])  # OK, different file
 
     def test_check_protected_files_deep_nested_path(self, guard):
-        with pytest.raises(SafetyError, match="Protected files"):
-            guard.check_protected_files(["a/b/c/config.yaml"])
+        guard.check_protected_files(["a/b/c/config.yaml"])  # OK, different file
 
     def test_check_protected_files_relative_path(self, guard):
         with pytest.raises(SafetyError, match="Protected files"):
