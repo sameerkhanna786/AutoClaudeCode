@@ -84,6 +84,11 @@ def main() -> None:
         action="store_true",
         help="Run a single cycle and exit",
     )
+    parser.add_argument(
+        "--target-dir",
+        default=None,
+        help="Target project directory (overrides config.yaml target_dir)",
+    )
     args = parser.parse_args()
 
     # Determine our own directory (for git restore if needed)
@@ -96,6 +101,9 @@ def main() -> None:
             from orchestrator import Orchestrator
 
             config = load_config(args.config)
+
+            if args.target_dir:
+                config.target_dir = os.path.abspath(args.target_dir)
 
             # Setup logging from config
             setup_logging(
