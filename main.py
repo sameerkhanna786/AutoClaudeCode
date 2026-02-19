@@ -95,10 +95,31 @@ def main() -> None:
         default=None,
         help="Target project directory (overrides config.yaml target_dir)",
     )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Launch web dashboard instead of orchestrator",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8505,
+        help="Dashboard port (default: 8505)",
+    )
     args = parser.parse_args()
 
     # Determine our own directory (for git restore if needed)
     own_dir = str(Path(__file__).resolve().parent)
+
+    # Launch dashboard if requested
+    if args.dashboard:
+        dashboard_script = str(Path(__file__).resolve().parent / "dashboard.py")
+        cmd = [sys.executable, dashboard_script, "--port", str(args.port), "--config", args.config]
+        try:
+            subprocess.run(cmd)
+        except KeyboardInterrupt:
+            pass
+        return
 
     # First attempt: import and run
     for attempt in range(2):
