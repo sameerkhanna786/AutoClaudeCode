@@ -1,6 +1,6 @@
 # Auto Claude Code
 
-An autonomous development system that runs Claude Code in a continuous loop to discover and fix issues, committing validated changes directly to `main`.
+An autonomous development system that runs Claude Code in a continuous loop to discover and fix issues, automatically committing validated changes.
 
 ## Features
 
