@@ -342,6 +342,10 @@ class TaskDiscovery:
             logger.warning("Claude idea discovery failed: %s", e)
             return []
 
+        if result is None:
+            logger.warning("Claude idea discovery returned no result")
+            return []
+
         if result.timed_out:
             logger.warning("Claude idea discovery timed out after %ds",
                            self.config.discovery.discovery_timeout)

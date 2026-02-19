@@ -2,6 +2,7 @@
 
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -553,3 +554,36 @@ class TestCorruptHistoryBackup:
         result = state_mgr._load_history()
         assert result == []
         assert not backup_path.exists()  # backup was NOT recreated
+
+
+class TestSaveHistoryFdLeak:
+    def test_save_history_fd_leak_on_fdopen_failure(self, state_mgr):
+        """If os.fdopen raises, the raw fd should be explicitly closed."""
+        original_mkstemp = tempfile.mkstemp
+
+        # Track the fd allocated by mkstemp
+        allocated_fd = None
+
+        def tracking_mkstemp(**kwargs):
+            nonlocal allocated_fd
+            fd, path = original_mkstemp(**kwargs)
+            allocated_fd = fd
+            return fd, path
+
+        with patch("state.tempfile.mkstemp", side_effect=tracking_mkstemp):
+            with patch("state.os.fdopen", side_effect=OSError("fdopen failed")):
+                with patch("state.os.close") as mock_close:
+                    with pytest.raises(OSError, match="fdopen failed"):
+                        state_mgr._save_history([{"test": True}])
+                    # os.close should have been called with the raw fd
+                    mock_close.assert_called_once_with(allocated_fd)
+
+    def test_save_history_json_dump_failure_cleans_up(self, state_mgr):
+        """If json.dump raises, temp file is cleaned up and exception propagates."""
+        with patch("state.json.dump", side_effect=TypeError("not serializable")):
+            with pytest.raises(TypeError, match="not serializable"):
+                state_mgr._save_history([{"test": True}])
+
+        # Verify no leftover .tmp files in the history directory
+        tmp_files = list(Path(state_mgr.history_file).parent.glob("*.tmp"))
+        assert tmp_files == []

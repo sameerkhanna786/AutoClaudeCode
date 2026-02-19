@@ -143,7 +143,12 @@ class StateManager:
             dir=str(self.history_file.parent), suffix=".tmp"
         )
         try:
-            with os.fdopen(tmp_fd, "w") as f:
+            try:
+                f = os.fdopen(tmp_fd, "w")
+            except Exception:
+                os.close(tmp_fd)
+                raise
+            with f:
                 json.dump(records, f, indent=2)
             # os.replace can fail on Windows if target is open; retry with backoff
             retry_delays = [0.1, 0.3, 0.9, 2.7, 8.1]

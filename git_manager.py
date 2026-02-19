@@ -170,7 +170,9 @@ class GitManager:
             return ""
         head = self._run("rev-parse", "HEAD")
         commit_hash = head.stdout.strip()
-        logger.info("Committed: %s — %s", commit_hash[:8], message)
+        logger.info("Committed: %s — %s", commit_hash[:8], message.split("\n", 1)[0])
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Full commit message:\n%s", message)
         return commit_hash
 
     def push(self) -> bool:

@@ -720,6 +720,20 @@ class Orchestrator:
                     ))
                     return
 
+                if retry_count >= max_retries:
+                    logger.error(
+                        "Retry count %d already at max_retries %d, aborting",
+                        retry_count, max_retries,
+                    )
+                    self.git.rollback(snapshot)
+                    self.state.record_cycle(self._make_cycle_record(
+                        tasks, success=False,
+                        cost_usd=total_cost, duration_seconds=total_duration,
+                        validation_summary=validation.summary,
+                        error="Validation failed (retry bounds check)",
+                        validation_retry_count=retry_count, **extra,
+                    ))
+                    return
                 retry_count += 1
                 logger.info(
                     "Validation failed (attempt %d/%d), retrying with failure output...",

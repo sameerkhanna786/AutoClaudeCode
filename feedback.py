@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -26,6 +28,29 @@ class FeedbackManager:
         self.feedback_dir.mkdir(parents=True, exist_ok=True)
         self.done_dir.mkdir(parents=True, exist_ok=True)
         self.failed_dir.mkdir(parents=True, exist_ok=True)
+
+    def _atomic_move(self, src: Path, dst: Path) -> None:
+        """Move src to dst atomically using write-then-rename to prevent corruption."""
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=str(dst.parent), suffix=".tmp"
+        )
+        try:
+            content = src.read_text()
+            try:
+                f = os.fdopen(tmp_fd, "w")
+            except Exception:
+                os.close(tmp_fd)
+                raise
+            with f:
+                f.write(content)
+            os.replace(tmp_path, str(dst))
+            src.unlink()
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def get_pending_feedback(self) -> List[Task]:
         """Read pending feedback files and return them as Tasks.
@@ -89,7 +114,7 @@ class FeedbackManager:
                 counter += 1
 
         try:
-            shutil.move(str(src), str(dst))
+            self._atomic_move(src, dst)
         except OSError as e:
             logger.warning("Failed to move %s to %s: %s", src, dst, e)
             return
@@ -112,7 +137,7 @@ class FeedbackManager:
                 counter += 1
 
         try:
-            shutil.move(str(src), str(dst))
+            self._atomic_move(src, dst)
         except OSError as e:
             logger.warning("Failed to move %s to %s: %s", src, dst, e)
             return
