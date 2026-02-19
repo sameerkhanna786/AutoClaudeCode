@@ -541,6 +541,8 @@ class Orchestrator:
 
         Wraps self.claude.run() in a thread pool with a configurable timeout
         to prevent indefinite hangs even if the subprocess timeout fails.
+        On timeout, actively terminates the child process so neither the
+        thread nor the subprocess leak.
         """
         timeout = self.config.orchestrator.cycle_timeout_seconds
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -549,8 +551,10 @@ class Orchestrator:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
                 logger.warning(
-                    "Claude CLI cycle timeout fired after %ds", timeout,
+                    "Claude CLI cycle timeout fired after %ds — killing subprocess", timeout,
                 )
+                self.claude.terminate()
+                future.cancel()
                 return ClaudeResult(
                     success=False,
                     error=f"Cycle timeout after {timeout}s (Claude CLI hung)",

@@ -54,7 +54,7 @@ discovery:
 safety:
   max_consecutive_failures: 5
   max_cycles_per_hour: 30
-  max_cost_usd_per_hour: 10.0
+  max_cost_usd_per_hour: 1000.0
   min_disk_space_mb: 500
   protected_files:
     - main.py

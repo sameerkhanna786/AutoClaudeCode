@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +36,8 @@ class ClaudeRunner:
         self.retry_delays = config.claude.retry_delays
         self.rate_limit_base_delay = config.claude.rate_limit_base_delay
         self.rate_limit_multiplier = config.claude.rate_limit_multiplier
+        self._current_process: subprocess.Popen | None = None
+        self._process_lock = threading.Lock()
 
     def _build_command(self, prompt: str) -> List[str]:
         """Build the CLI command list."""
@@ -46,6 +51,34 @@ class ClaudeRunner:
             "--output-format", "json",
         ]
         return cmd
+
+    @staticmethod
+    def _kill_process(proc: subprocess.Popen) -> None:
+        """Kill a subprocess and its entire process group."""
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+    def terminate(self) -> None:
+        """Terminate any currently running Claude subprocess.
+
+        Thread-safe: can be called from a different thread than the one
+        executing run().
+        """
+        with self._process_lock:
+            proc = self._current_process
+        if proc is not None:
+            logger.warning("Terminating running Claude subprocess (pid=%s)", proc.pid)
+            self._kill_process(proc)
 
     def _parse_json_response(self, stdout: str) -> Dict[str, Any]:
         """Parse JSON from Claude CLI output.
@@ -109,13 +142,34 @@ class ClaudeRunner:
 
         for attempt in range(self.max_retries + 1):
             try:
-                proc = subprocess.run(
+                popen_proc = subprocess.Popen(
                     cmd,
                     cwd=cwd,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
-                    timeout=self.config.claude.timeout_seconds,
+                    start_new_session=True,
                 )
+                with self._process_lock:
+                    self._current_process = popen_proc
+                try:
+                    stdout, stderr = popen_proc.communicate(
+                        timeout=self.config.claude.timeout_seconds,
+                    )
+                except subprocess.TimeoutExpired:
+                    self._kill_process(popen_proc)
+                    raise
+                finally:
+                    with self._process_lock:
+                        self._current_process = None
+
+                # Build a CompletedProcess-like namespace for downstream code
+                class _ProcResult:
+                    pass
+                proc = _ProcResult()
+                proc.returncode = popen_proc.returncode
+                proc.stdout = stdout
+                proc.stderr = stderr
             except subprocess.TimeoutExpired:
                 if attempt < self.max_retries:
                     delay = self.retry_delays[min(attempt, len(self.retry_delays) - 1)]
