@@ -442,3 +442,62 @@ class TestKeyBasedDedup:
         assert state_mgr.get_task_failure_count(
             "Different desc", "feedback", task_key="claude_idea:safety.py"
         ) == 0
+
+
+class TestFailureRecovery:
+    def test_reset_consecutive_failures(self, state_mgr):
+        """Injecting a synthetic success resets the consecutive failure counter."""
+        now = time.time()
+        for i in range(5):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + i,
+                task_description=f"Fail {i}",
+                success=False,
+            ))
+        assert state_mgr.get_consecutive_failures() == 5
+
+        state_mgr.reset_consecutive_failures("test reset")
+        assert state_mgr.get_consecutive_failures() == 0
+
+        # Verify the synthetic record exists
+        data = json.loads(Path(state_mgr.history_file).read_text())
+        last = data[-1]
+        assert last["task_type"] == "system_reset"
+        assert last["success"] is True
+        assert "test reset" in last["task_description"]
+
+    def test_auto_reset_after_idle(self, state_mgr):
+        """Auto-reset triggers when system has been idle for over min_idle_seconds."""
+        old_time = time.time() - 7200  # 2 hours ago
+        for i in range(5):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=old_time + i,
+                task_description=f"Fail {i}",
+                success=False,
+            ))
+        assert state_mgr.get_consecutive_failures() == 5
+        assert state_mgr.should_auto_reset_failures(min_idle_seconds=3600) is True
+
+    def test_no_reset_when_recently_active(self, state_mgr):
+        """Auto-reset does NOT trigger when last cycle was recent."""
+        now = time.time()
+        for i in range(5):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 60 + i,  # Very recent
+                task_description=f"Fail {i}",
+                success=False,
+            ))
+        assert state_mgr.get_consecutive_failures() == 5
+        assert state_mgr.should_auto_reset_failures(min_idle_seconds=3600) is False
+
+    def test_no_auto_reset_below_limit(self, state_mgr):
+        """Auto-reset does NOT trigger when failures are below the limit."""
+        old_time = time.time() - 7200
+        for i in range(2):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=old_time + i,
+                task_description=f"Fail {i}",
+                success=False,
+            ))
+        assert state_mgr.get_consecutive_failures() == 2
+        assert state_mgr.should_auto_reset_failures(min_idle_seconds=3600) is False

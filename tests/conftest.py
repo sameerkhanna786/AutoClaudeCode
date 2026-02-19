@@ -1,11 +1,18 @@
 """Shared test fixtures."""
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+# Ensure project root is on sys.path so all modules are importable
+# regardless of the working directory when pytest is invoked.
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from config_schema import Config, load_config
 

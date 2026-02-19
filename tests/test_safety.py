@@ -165,3 +165,69 @@ class TestSafetyGuard:
             guard.check_protected_files(["changed.py"])
         # samefile returned False for all protected files, so realpath should not be called
         assert len(realpath_calls) == 0
+
+
+class TestFailureRecoveryGuard:
+    def test_file_based_reset_trigger(self, guard, state_mgr, tmp_path):
+        """The state/reset_failures file clears lockout and gets deleted."""
+        guard.config.safety.max_consecutive_failures = 3
+        guard.config.paths.state_dir = str(tmp_path)
+        now = time.time()
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + i,
+                task_description=f"Fail {i}",
+                success=False,
+            ))
+        # Without reset file, should raise
+        with pytest.raises(SafetyError, match="consecutive failures"):
+            guard.check_consecutive_failures()
+
+        # Create reset file
+        reset_file = tmp_path / "reset_failures"
+        reset_file.write_text("")
+
+        # Now should NOT raise, and file should be deleted
+        guard.check_consecutive_failures()
+        assert not reset_file.exists()
+        assert state_mgr.get_consecutive_failures() == 0
+
+    def test_time_based_auto_reset(self, guard, state_mgr):
+        """Auto-reset triggers when idle for 1+ hour."""
+        guard.config.safety.max_consecutive_failures = 3
+        old_time = time.time() - 7200  # 2 hours ago
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=old_time + i,
+                task_description=f"Fail {i}",
+                success=False,
+            ))
+        # Should NOT raise because idle for > 1 hour
+        guard.check_consecutive_failures()
+        assert state_mgr.get_consecutive_failures() == 0
+
+    def test_no_auto_reset_when_recent(self, guard, state_mgr):
+        """No auto-reset when failures are recent."""
+        guard.config.safety.max_consecutive_failures = 3
+        now = time.time()
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 10 + i,  # Very recent
+                task_description=f"Fail {i}",
+                success=False,
+            ))
+        with pytest.raises(SafetyError, match="consecutive failures"):
+            guard.check_consecutive_failures()
+
+    def test_error_message_includes_reset_instructions(self, guard, state_mgr):
+        """Error message tells user how to reset."""
+        guard.config.safety.max_consecutive_failures = 2
+        now = time.time()
+        for i in range(2):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 10 + i,
+                task_description=f"Fail {i}",
+                success=False,
+            ))
+        with pytest.raises(SafetyError, match="touch state/reset_failures"):
+            guard.check_consecutive_failures()

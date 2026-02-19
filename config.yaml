@@ -5,7 +5,7 @@ target_dir: "."
 claude:
   model: opus
   max_turns: 25
-  timeout_seconds: 300
+  timeout_seconds: 1800
   command: claude
 
 orchestrator:
@@ -27,9 +27,9 @@ validation:
   test_command: "python3 -m pytest tests/ -x -q"
   lint_command: ""
   build_command: ""
-  test_timeout: 120
-  lint_timeout: 60
-  build_timeout: 120
+  test_timeout: 1800
+  lint_timeout: 1800
+  build_timeout: 1800
 
 discovery:
   enable_test_failures: true
@@ -39,7 +39,7 @@ discovery:
   enable_quality_review: false
   enable_claude_ideas: true
   discovery_model: sonnet
-  discovery_timeout: 180
+  discovery_timeout: 1800
   todo_patterns:
     - TODO
     - FIXME

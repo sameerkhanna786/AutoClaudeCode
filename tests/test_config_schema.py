@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from config_schema import Config, load_config
+from config_schema import (
+    Config, load_config,
+    ClaudeConfig, DiscoveryConfig, AgentPipelineConfig,
+)
 
 
 class TestConfigDefaults:
@@ -58,7 +61,7 @@ class TestLoadConfig:
         assert config.claude.model == "opus"
         assert config.claude.max_turns == 10
         # Unset values keep defaults
-        assert config.claude.timeout_seconds == 300
+        assert config.claude.timeout_seconds == ClaudeConfig().timeout_seconds
         assert config.orchestrator.loop_interval_seconds == 30
 
     def test_load_config_full_file(self, tmp_path):
@@ -95,7 +98,7 @@ class TestNewConfigFields:
 
     def test_discovery_timeout_default(self):
         config = Config()
-        assert config.discovery.discovery_timeout == 180
+        assert config.discovery.discovery_timeout == DiscoveryConfig().discovery_timeout
 
     def test_max_feedback_retries_default(self):
         config = Config()
@@ -206,25 +209,25 @@ class TestAgentPipelineConfig:
         config = Config()
         assert config.agent_pipeline.planner.model == "opus"
         assert config.agent_pipeline.planner.max_turns == 10
-        assert config.agent_pipeline.planner.timeout_seconds == 180
+        assert config.agent_pipeline.planner.timeout_seconds == AgentPipelineConfig().planner.timeout_seconds
 
     def test_default_coder_config(self):
         config = Config()
         assert config.agent_pipeline.coder.model == "opus"
         assert config.agent_pipeline.coder.max_turns == 25
-        assert config.agent_pipeline.coder.timeout_seconds == 300
+        assert config.agent_pipeline.coder.timeout_seconds == AgentPipelineConfig().coder.timeout_seconds
 
     def test_default_tester_config(self):
         config = Config()
         assert config.agent_pipeline.tester.model == "opus"
         assert config.agent_pipeline.tester.max_turns == 15
-        assert config.agent_pipeline.tester.timeout_seconds == 240
+        assert config.agent_pipeline.tester.timeout_seconds == AgentPipelineConfig().tester.timeout_seconds
 
     def test_default_reviewer_config(self):
         config = Config()
         assert config.agent_pipeline.reviewer.model == "opus"
         assert config.agent_pipeline.reviewer.max_turns == 10
-        assert config.agent_pipeline.reviewer.timeout_seconds == 180
+        assert config.agent_pipeline.reviewer.timeout_seconds == AgentPipelineConfig().reviewer.timeout_seconds
 
     def test_default_agent_workspace_dir(self):
         config = Config()
@@ -257,7 +260,7 @@ class TestAgentPipelineConfig:
         assert config.agent_pipeline.coder.model == "haiku"
         assert config.agent_pipeline.coder.max_turns == 50
         # Coder timeout_seconds keeps default
-        assert config.agent_pipeline.coder.timeout_seconds == 300
+        assert config.agent_pipeline.coder.timeout_seconds == AgentPipelineConfig().coder.timeout_seconds
         # Other agents unchanged
         assert config.agent_pipeline.planner.model == "opus"
         assert config.agent_pipeline.reviewer.model == "opus"

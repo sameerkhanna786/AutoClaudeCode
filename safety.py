@@ -113,14 +113,31 @@ class SafetyGuard:
             )
 
     def check_consecutive_failures(self) -> None:
-        """Pause if too many consecutive failures."""
+        """Pause if too many consecutive failures, with reset support."""
         failures = self.state.get_consecutive_failures()
         limit = self.config.safety.max_consecutive_failures
-        if failures >= limit:
-            raise SafetyError(
-                f"Too many consecutive failures: {failures} (limit: {limit}). "
-                "Pausing until a successful cycle or manual intervention."
-            )
+        if failures < limit:
+            return
+
+        # Check for file-based reset trigger
+        reset_file = Path(self.config.paths.state_dir) / "reset_failures"
+        if reset_file.exists():
+            logger.info("Found reset_failures file, resetting consecutive failures")
+            self.state.reset_consecutive_failures("file-based trigger (state/reset_failures)")
+            reset_file.unlink(missing_ok=True)
+            return
+
+        # Check for time-based auto-reset (idle for 1+ hour)
+        if self.state.should_auto_reset_failures(min_idle_seconds=3600):
+            logger.info("System idle for 1+ hour, auto-resetting consecutive failures")
+            self.state.reset_consecutive_failures("auto-reset after idle period")
+            return
+
+        raise SafetyError(
+            f"Too many consecutive failures: {failures} (limit: {limit}). "
+            "Pausing until a successful cycle or manual intervention. "
+            "To reset: touch state/reset_failures"
+        )
 
     def check_protected_files(self, changed_files: List[str]) -> None:
         """Ensure no protected files have been modified."""

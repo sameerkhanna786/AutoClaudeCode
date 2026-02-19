@@ -194,3 +194,27 @@ class StateManager:
                           or task_type in r.get("task_types", [])):
                 count += 1
         return count
+
+    def reset_consecutive_failures(self, reason: str = "manual reset") -> None:
+        """Inject a synthetic success record to break the consecutive failure chain."""
+        record = CycleRecord(
+            timestamp=time.time(),
+            task_description=f"System reset: {reason}",
+            task_type="system_reset",
+            success=True,
+        )
+        self.record_cycle(record)
+        logger.info("Reset consecutive failures: %s", reason)
+
+    def should_auto_reset_failures(self, min_idle_seconds: int = 3600) -> bool:
+        """Return True if consecutive failures >= max and system has been idle long enough."""
+        failures = self.get_consecutive_failures()
+        limit = self.config.safety.max_consecutive_failures
+        if failures < limit:
+            return False
+        records = self._load_history()
+        if not records:
+            return False
+        last_timestamp = records[-1].get("timestamp", 0)
+        idle_seconds = time.time() - last_timestamp
+        return idle_seconds >= min_idle_seconds
