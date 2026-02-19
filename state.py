@@ -157,6 +157,10 @@ class StateManager:
                 except OSError as e:
                     last_err = e
                     if attempt < len(retry_delays) - 1:
+                        logger.debug(
+                            "os.replace failed (attempt %d/%d): %s — retrying in %.1fs",
+                            attempt + 1, len(retry_delays), e, delay,
+                        )
                         time.sleep(delay)
             if not replaced:
                 assert last_err is not None  # loop ran at least once and every iteration set last_err

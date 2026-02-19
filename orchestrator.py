@@ -325,7 +325,7 @@ class Orchestrator:
     _SOURCE_VERBS = {
         "test_failure": "Fix",
         "lint": "Fix",
-        "todo": None,       # derive from TODO text
+        "todo": None,       # handled by _derive_todo_subject()
         "feedback": None,   # human-written, use as-is
         "claude_idea": None, # already descriptive, use as-is
         "coverage": "Add test coverage for",
@@ -441,7 +441,7 @@ class Orchestrator:
             filepath = m.group(1)
             action = m.group(2).strip()
 
-            # Handle FIXME / TODO prefixes within the action
+            # Strip leading marker prefixes from the action text
             action = re.sub(r'^(?:FIXME|TODO|XXX)\s*:?\s*', '', action, flags=re.IGNORECASE)
 
             if action:
