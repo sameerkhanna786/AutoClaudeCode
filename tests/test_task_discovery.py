@@ -331,6 +331,100 @@ class TestClaudeIdeasMinLength:
         assert len(tasks) == 1
 
 
+class TestClaudeIdeasAnalysisFallback:
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_numbered_list_fallback(self, mock_run, discovery):
+        """Numbered list items should be extracted as tasks when no IDEA: lines exist."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "1. Add input validation to config loader\\n2. Improve error handling in runner"}',
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 2
+        assert all(t.priority == 4 for t in tasks)
+        assert all(t.source == "claude_idea" for t in tasks)
+        assert "input validation" in tasks[0].description.lower()
+        assert "error handling" in tasks[1].description.lower()
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_bullet_list_fallback(self, mock_run, discovery):
+        """Dash-prefixed bullet items should be extracted as tasks."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "- Add input validation to config loader\\n- Improve error handling in runner"}',
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 2
+        assert "input validation" in tasks[0].description.lower()
+        assert "error handling" in tasks[1].description.lower()
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_asterisk_list_fallback(self, mock_run, discovery):
+        """Asterisk-prefixed bullet items should be extracted as tasks."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "* Add input validation to config loader\\n* Improve error handling in runner"}',
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 2
+        assert "input validation" in tasks[0].description.lower()
+        assert "error handling" in tasks[1].description.lower()
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_fallback_respects_min_length(self, mock_run, discovery):
+        """Short analysis lines (under 10 chars) should be skipped in fallback."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "1. Fix bug\\n2. Add comprehensive input validation to config loader"}',
+        )
+        tasks = discovery._discover_claude_ideas()
+        # "Fix bug" is 7 chars, should be skipped
+        assert len(tasks) == 1
+        assert "comprehensive" in tasks[0].description.lower()
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_fallback_caps_at_five(self, mock_run, discovery):
+        """Even in fallback mode, no more than 5 tasks should be returned."""
+        discovery.config.discovery.enable_claude_ideas = True
+        items = "\\n".join(f"{i}. Improvement number {i} for the project" for i in range(1, 11))
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "' + items + '"}',
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) <= 5
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_idea_format_preferred_over_fallback(self, mock_run, discovery):
+        """When both IDEA: lines and analysis-format lines exist, only IDEA: lines are used."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "IDEA: Add retries to API calls\\n1. Improve error handling in runner\\n- Fix logging format"}',
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 1
+        assert "retries" in tasks[0].description.lower()
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_raw_text_no_json_fallback(self, mock_run, discovery):
+        """When stdout contains no valid JSON but has analysis-format text, tasks are extracted."""
+        discovery.config.discovery.enable_claude_ideas = True
+        raw_text = "Here is my analysis:\n1. Add input validation to config loader\n2. Improve error handling in runner\nDone."
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout=raw_text,
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 2
+        assert "input validation" in tasks[0].description.lower()
+        assert "error handling" in tasks[1].description.lower()
+
+
 class TestTaskKey:
     def test_todo_task_key_with_file_and_line(self):
         task = Task(description="Address TODO in foo.py:10", priority=3, source="todo",

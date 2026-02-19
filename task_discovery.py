@@ -423,21 +423,32 @@ class TaskDiscovery:
 
         logger.info("Claude discovered %d improvement ideas", len(tasks))
         if not tasks and result_text.strip():
-            # Check if Claude returned analysis results instead of IDEA format
+            # Attempt fallback extraction from analysis-format text
             lines = [l.strip() for l in result_text.split("\n") if l.strip()]
-            has_analysis_patterns = any(
-                l[0].isdigit() or l.startswith("-") or l.startswith("*") or l.startswith("•")
-                for l in lines
-            )
-            if has_analysis_patterns:
-                logger.warning(
-                    "Claude returned analysis results instead of IDEA format. "
-                    "Response contained %d non-empty lines but no IDEA: prefixed lines.",
-                    len(lines),
+            for line in lines:
+                # Match numbered items: "1. ...", "2) ..."
+                m = re.match(r'^\d+[.)]\s+(.+)', line)
+                if not m:
+                    # Match bullet items: "- ...", "* ...", "• ..."
+                    m = re.match(r'^[-*•]\s+(.+)', line)
+                if m:
+                    desc = m.group(1).strip()
+                    if desc and len(desc) >= MIN_IDEA_LENGTH:
+                        tasks.append(Task(
+                            description=desc,
+                            priority=4,
+                            source="claude_idea",
+                        ))
+            if tasks:
+                logger.info(
+                    "Extracted %d tasks from analysis-format text "
+                    "(no IDEA: prefixed lines found, used numbered/bullet fallback).",
+                    len(tasks),
                 )
             else:
                 logger.debug(
-                    "Claude response contained no IDEA lines (%d non-empty lines)",
+                    "Claude response contained no IDEA lines and no extractable "
+                    "analysis-format items (%d non-empty lines)",
                     len(lines),
                 )
         return tasks[:5]
