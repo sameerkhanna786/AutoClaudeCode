@@ -38,8 +38,11 @@ def orch(config):
     with patch("orchestrator.GitManager") as MockGit, \
          patch("orchestrator.ClaudeRunner") as MockClaude, \
          patch("orchestrator.TaskDiscovery") as MockDisc, \
-         patch("orchestrator.Validator") as MockVal:
+         patch("orchestrator.Validator") as MockVal, \
+         patch("orchestrator.resolve_model_id", return_value=None), \
+         patch("subprocess.run") as mock_sp:
 
+        mock_sp.return_value = MagicMock(returncode=0)
         mock_git = MockGit.return_value
         mock_git.create_snapshot.return_value = Snapshot(commit_hash="a" * 40)
         mock_git.capture_worktree_state.return_value = set()
@@ -253,8 +256,11 @@ def orch_batch(batch_config):
     with patch("orchestrator.GitManager") as MockGit, \
          patch("orchestrator.ClaudeRunner") as MockClaude, \
          patch("orchestrator.TaskDiscovery") as MockDisc, \
-         patch("orchestrator.Validator") as MockVal:
+         patch("orchestrator.Validator") as MockVal, \
+         patch("orchestrator.resolve_model_id", return_value=None), \
+         patch("subprocess.run") as mock_sp:
 
+        mock_sp.return_value = MagicMock(returncode=0)
         mock_git = MockGit.return_value
         mock_git.create_snapshot.return_value = Snapshot(commit_hash="a" * 40)
         mock_git.capture_worktree_state.return_value = set()
@@ -326,7 +332,8 @@ class TestBatchMode:
         orch_batch._cycle()
         orch_batch.git.commit.assert_called_once()
         commit_msg = orch_batch.git.commit.call_args[0][0]
-        assert "batch(" in commit_msg
+        assert "[auto]" not in commit_msg
+        assert "batch(" not in commit_msg
         orch_batch.git.rollback.assert_called_once()  # once for plan cleanup
 
     def test_batch_cycle_records_all_descriptions(self, orch_batch):
@@ -388,11 +395,11 @@ class TestBatchMode:
             Task(description="Address TODO", priority=3, source="todo"),
         ]
         msg = orch_batch._build_batch_commit_message(tasks)
-        assert msg.startswith("[auto] batch(2):")
-        assert "test_failure" in msg
-        assert "todo" in msg
-        assert "Fix bug in foo.py" in msg
-        assert "Address TODO" in msg
+        assert "[auto]" not in msg
+        assert "batch(" not in msg
+        # Should contain descriptions in body
+        assert "Fix bug in foo.py" in msg or "foo.py" in msg
+        assert "Address TODO" in msg or "TODO" in msg
 
     def test_batch_mode_no_plan_uses_batch_prompt(self, orch_batch):
         """When batch_mode=True and plan_changes=False, all tasks should be
@@ -431,7 +438,10 @@ class TestSyntaxCheckFiles:
         with patch("orchestrator.GitManager"), \
              patch("orchestrator.ClaudeRunner"), \
              patch("orchestrator.TaskDiscovery"), \
-             patch("orchestrator.Validator"):
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0)
             o = Orchestrator(cfg)
 
         # Create a .py file with a syntax error on line 3
@@ -462,7 +472,10 @@ class TestSyntaxCheckFiles:
         with patch("orchestrator.GitManager"), \
              patch("orchestrator.ClaudeRunner"), \
              patch("orchestrator.TaskDiscovery"), \
-             patch("orchestrator.Validator"):
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0)
             o = Orchestrator(cfg)
 
         bad_file = tmp_path / "broken.py"
@@ -495,7 +508,10 @@ class TestCycleTimeout:
         with patch("orchestrator.GitManager"), \
              patch("orchestrator.ClaudeRunner") as MockClaude, \
              patch("orchestrator.TaskDiscovery"), \
-             patch("orchestrator.Validator"):
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0)
             o = Orchestrator(cfg)
             # Make claude.run hang longer than the timeout
             import threading
@@ -524,7 +540,10 @@ class TestCycleTimeout:
         with patch("orchestrator.GitManager"), \
              patch("orchestrator.ClaudeRunner"), \
              patch("orchestrator.TaskDiscovery"), \
-             patch("orchestrator.Validator"):
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0)
             o = Orchestrator(cfg)
             o.claude.run = MagicMock(return_value=ClaudeResult(
                 success=True, result_text="Done", cost_usd=0.01, duration_seconds=2.0,
@@ -585,8 +604,11 @@ class TestValidationRetry:
         with patch("orchestrator.GitManager") as MockGit, \
              patch("orchestrator.ClaudeRunner") as MockClaude, \
              patch("orchestrator.TaskDiscovery") as MockDisc, \
-             patch("orchestrator.Validator") as MockVal:
+             patch("orchestrator.Validator") as MockVal, \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
 
+            mock_sp.return_value = MagicMock(returncode=0)
             mock_git = MockGit.return_value
             mock_git.create_snapshot.return_value = Snapshot(commit_hash="a" * 40)
             mock_git.capture_worktree_state.return_value = set()
@@ -799,3 +821,241 @@ class TestValidationRetry:
         assert abs(record.cost_usd - 0.12) < 0.001
         assert abs(record.duration_seconds - 23.0) < 0.1
         assert record.validation_retry_count == 2
+
+
+class TestCommitMessageStyling:
+    """Tests for natural commit message generation."""
+
+    @pytest.fixture
+    def msg_orch(self, tmp_path):
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.validation.test_command = ""
+        cfg.validation.lint_command = ""
+        cfg.validation.build_command = ""
+        cfg.orchestrator.batch_mode = False
+
+        with patch("orchestrator.GitManager"), \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0)
+            o = Orchestrator(cfg)
+            yield o
+
+    def test_single_task_commit_message_no_auto_prefix(self, msg_orch):
+        task = Task(description="Fix test failure: FAILED tests/test_foo.py::test_bar",
+                    priority=2, source="test_failure")
+        msg = msg_orch._build_commit_message(task)
+        assert "[auto]" not in msg
+
+    def test_single_task_commit_message_test_failure(self, msg_orch):
+        task = Task(
+            description="Fix test failure: FAILED tests/test_foo.py::test_bar - AssertionError",
+            priority=2, source="test_failure",
+        )
+        msg = msg_orch._build_commit_message(task)
+        subject = msg.split("\n")[0]
+        assert "[auto]" not in subject
+        assert "Fix" in subject
+        assert "test_foo.py" in subject
+
+    def test_single_task_commit_message_todo(self, msg_orch):
+        task = Task(
+            description="Address TODO in config_schema.py:42: add type validation",
+            priority=3, source="todo",
+        )
+        msg = msg_orch._build_commit_message(task)
+        subject = msg.split("\n")[0]
+        assert "Add type validation" in subject
+        assert "config_schema.py" in subject
+        assert "[auto]" not in subject
+
+    def test_single_task_commit_message_todo_fixme(self, msg_orch):
+        task = Task(
+            description="Address TODO in bar.py:5: FIXME: broken edge case",
+            priority=3, source="todo",
+        )
+        msg = msg_orch._build_commit_message(task)
+        subject = msg.split("\n")[0]
+        assert "Broken edge case" in subject
+        assert "bar.py" in subject
+
+    def test_single_task_commit_message_feedback(self, msg_orch):
+        task = Task(
+            description="Fix the login bug described in the issue",
+            priority=1, source="feedback",
+        )
+        msg = msg_orch._build_commit_message(task)
+        subject = msg.split("\n")[0]
+        assert subject == "Fix the login bug described in the issue"
+
+    def test_single_task_commit_message_truncation(self, msg_orch):
+        long_desc = "Implement a comprehensive refactoring of the authentication module to support OAuth 2.0 and SAML integration with proper error handling"
+        task = Task(description=long_desc, priority=4, source="claude_idea")
+        msg = msg_orch._build_commit_message(task)
+        subject = msg.split("\n")[0]
+        assert len(subject) <= 72
+        # Should have a body with the full description
+        assert "\n\n" in msg
+
+    def test_single_task_commit_message_claude_idea(self, msg_orch):
+        task = Task(
+            description="In `safety.py:98-105`, `check_protected_files` uses os.path.normpath comparison",
+            priority=5, source="claude_idea",
+        )
+        msg = msg_orch._build_commit_message(task)
+        subject = msg.split("\n")[0]
+        assert "[auto]" not in subject
+        # Backticks should be stripped
+        assert "`" not in subject
+        # Line numbers should be stripped
+        assert ":98-105" not in subject
+        assert "safety.py" in subject
+
+    def test_batch_commit_message_same_source(self, msg_orch):
+        tasks = [
+            Task(description="Fix test failure in foo.py", priority=2, source="test_failure"),
+            Task(description="Fix test failure in bar.py", priority=2, source="test_failure"),
+        ]
+        msg = msg_orch._build_batch_commit_message(tasks)
+        subject = msg.split("\n")[0]
+        assert "Fix test failures" in subject
+        assert "foo.py" in subject
+        assert "bar.py" in subject
+
+    def test_batch_commit_message_mixed_sources(self, msg_orch):
+        tasks = [
+            Task(description="Fix test failure in foo.py", priority=2, source="test_failure"),
+            Task(description="Address TODO in bar.py:10: add validation", priority=3, source="todo"),
+            Task(description="Fix lint error in baz.py", priority=3, source="lint"),
+        ]
+        msg = msg_orch._build_batch_commit_message(tasks)
+        subject = msg.split("\n")[0]
+        assert "[auto]" not in subject
+        assert "batch(" not in subject
+
+    def test_batch_commit_message_no_batch_prefix(self, msg_orch):
+        tasks = [
+            Task(description="Task A", priority=2, source="claude_idea"),
+            Task(description="Task B", priority=3, source="claude_idea"),
+            Task(description="Task C", priority=4, source="claude_idea"),
+        ]
+        msg = msg_orch._build_batch_commit_message(tasks)
+        assert "batch(" not in msg
+        assert "[auto]" not in msg
+
+    def test_clean_description_strips_backticks(self, msg_orch):
+        result = Orchestrator._clean_description("`file.py` has a bug in `func()`")
+        assert "`" not in result
+        assert "File.py has a bug in func()" == result
+
+    def test_clean_description_strips_line_numbers(self, msg_orch):
+        result = Orchestrator._clean_description("In safety.py:98-105, check_protected_files")
+        assert ":98-105" not in result
+        assert "safety.py" in result
+
+    def test_clean_description_strips_single_line_number(self, msg_orch):
+        result = Orchestrator._clean_description("Fix bug in foo.py:42")
+        assert ":42" not in result
+        assert "foo.py" in result
+
+    def test_no_pipeline_metadata_in_commit(self, msg_orch):
+        """Verify that pipeline metadata is not added to commit messages."""
+        task = Task(description="Fix something", priority=2, source="test_failure")
+        msg = msg_orch._build_commit_message(task)
+        assert "[pipeline:" not in msg
+        assert "revisions=" not in msg
+        assert "approved=" not in msg
+
+    def test_no_pipeline_metadata_in_commit_via_validate(self, tmp_path):
+        """Full cycle: pipeline metadata should not appear in the commit message."""
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.validation.test_command = ""
+        cfg.validation.lint_command = ""
+        cfg.validation.build_command = ""
+        cfg.orchestrator.batch_mode = False
+        cfg.orchestrator.max_validation_retries = 0
+
+        with patch("orchestrator.GitManager") as MockGit, \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.Validator") as MockVal, \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
+
+            mock_sp.return_value = MagicMock(returncode=0)
+            mock_git = MockGit.return_value
+            mock_git.create_snapshot.return_value = Snapshot(commit_hash="a" * 40)
+            mock_git.capture_worktree_state.return_value = set()
+            mock_git.get_new_changed_files.return_value = ["fix.py"]
+            mock_git.commit.return_value = "b" * 40
+
+            mock_val = MockVal.return_value
+            mock_val.validate.return_value = ValidationResult(passed=True, steps=[])
+
+            o = Orchestrator(cfg)
+            o.git = mock_git
+            o.validator = mock_val
+
+            tasks = [Task(description="Fix thing", priority=2, source="test_failure")]
+            o._validate_with_retries(
+                tasks=tasks,
+                snapshot=Snapshot(commit_hash="a" * 40),
+                pre_existing_files=set(),
+                total_cost=0.05, total_duration=10.0,
+                is_batch=False,
+                extra_record_kwargs={
+                    "pipeline_mode": "multi_agent",
+                    "pipeline_revision_count": 2,
+                    "pipeline_review_approved": True,
+                },
+            )
+
+            commit_msg = o.git.commit.call_args[0][0]
+            assert "[pipeline:" not in commit_msg
+            assert "revisions=" not in commit_msg
+            assert "approved=" not in commit_msg
+
+    def test_single_task_lint_message(self, msg_orch):
+        task = Task(
+            description="Fix lint error in foo.py: [F401] unused import",
+            priority=3, source="lint",
+        )
+        msg = msg_orch._build_commit_message(task)
+        subject = msg.split("\n")[0]
+        assert "[auto]" not in subject
+        assert "Fix" in subject
+
+    def test_single_task_coverage_message(self, msg_orch):
+        task = Task(
+            description="Low coverage in utils.py (45%)",
+            priority=4, source="coverage",
+        )
+        msg = msg_orch._build_commit_message(task)
+        subject = msg.split("\n")[0]
+        assert "Add test coverage for" in subject
+
+    def test_single_task_quality_message(self, msg_orch):
+        task = Task(
+            description="Complex function in parser.py needs simplification",
+            priority=5, source="quality",
+        )
+        msg = msg_orch._build_commit_message(task)
+        subject = msg.split("\n")[0]
+        assert subject.startswith("Refactor")

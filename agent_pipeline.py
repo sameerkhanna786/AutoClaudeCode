@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -51,14 +52,17 @@ class AgentWorkspace:
         self._root = Path(root)
 
     def clean(self) -> None:
-        """Remove all files in the workspace."""
+        """Remove all files in the workspace, tolerating permission errors."""
         if self._root.exists():
             for child in self._root.iterdir():
-                if child.is_file():
-                    child.unlink()
-                elif child.is_dir():
-                    import shutil
-                    shutil.rmtree(child)
+                try:
+                    if child.is_file():
+                        child.unlink()
+                    elif child.is_dir():
+                        import shutil
+                        shutil.rmtree(child)
+                except (PermissionError, OSError) as e:
+                    logger.warning("Could not remove workspace entry %s: %s", child, e)
         self._root.mkdir(parents=True, exist_ok=True)
 
     def write(self, name: str, content: str) -> None:
@@ -83,6 +87,21 @@ class AgentPipeline:
         self._ws_dir = str(
             Path(config.target_dir) / config.paths.agent_workspace_dir
         )
+        self._active_runner: Optional[ClaudeRunner] = None
+        self._runner_lock = threading.Lock()
+        self._terminated = False
+
+    def terminate(self) -> None:
+        """Terminate the currently running agent subprocess.
+
+        Thread-safe: can be called from a timeout handler in another thread.
+        """
+        self._terminated = True
+        with self._runner_lock:
+            runner = self._active_runner
+        if runner is not None:
+            logger.warning("Terminating active pipeline agent subprocess")
+            runner.terminate()
 
     def _build_runner_for_agent(self, role: AgentRole) -> ClaudeRunner:
         """Build a ClaudeRunner with per-agent model/timeout overrides."""
@@ -126,15 +145,24 @@ class AgentPipeline:
 
         result = PipelineResult(success=False)
 
-        runner = ClaudeRunner(self.config)
-
         def _run_agent(role: AgentRole, prompt: str) -> AgentResult:
             role_cfg = getattr(ap, role.value)
             if not role_cfg.enabled:
                 return AgentResult(
                     role=role, success=True, output_text="(skipped)",
                 )
-            cr = runner.run(prompt, self.config.target_dir)
+            agent_runner = self._build_runner_for_agent(role)
+            with self._runner_lock:
+                self._active_runner = agent_runner
+            try:
+                if self._terminated:
+                    return AgentResult(
+                        role=role, success=False, error="Pipeline was terminated",
+                    )
+                cr = agent_runner.run(prompt, self.config.target_dir)
+            finally:
+                with self._runner_lock:
+                    self._active_runner = None
             return AgentResult(
                 role=role,
                 success=cr.success,
@@ -147,31 +175,33 @@ class AgentPipeline:
         max_revisions = ap.max_revisions
         revision = 0
 
+        # --- Planner (runs once, not on revisions) ---
+        planner_prompt = (
+            f"You are the PLANNER agent.\n\n"
+            f"TASK:\n{task_desc}\n\n"
+            f"Create a detailed plan for implementing the above task. "
+            f"Write the plan to {self._ws_dir}/plan.md"
+        )
+        planner_result = _run_agent(AgentRole.PLANNER, planner_prompt)
+        result.agent_results.append(planner_result)
+        result.total_cost_usd += planner_result.cost_usd
+        result.total_duration_seconds += planner_result.duration_seconds
+
+        if not planner_result.success:
+            result.error = f"Planner failed: {planner_result.error}"
+            return result
+
+        # Rollback any file changes from planner
+        rollback_fn(snapshot)
+
+        plan_text = workspace.read("plan.md") or planner_result.output_text
+
         while True:
+            # Read review feedback before cleaning workspace (reviewer wrote it last iteration)
+            review_text = workspace.read("review.md") or ""
             workspace.clean()
 
-            # --- Planner ---
-            planner_prompt = (
-                f"You are the PLANNER agent.\n\n"
-                f"TASK:\n{task_desc}\n\n"
-                f"Create a detailed plan for implementing the above task. "
-                f"Write the plan to {self._ws_dir}/plan.md"
-            )
-            planner_result = _run_agent(AgentRole.PLANNER, planner_prompt)
-            result.agent_results.append(planner_result)
-            result.total_cost_usd += planner_result.cost_usd
-            result.total_duration_seconds += planner_result.duration_seconds
-
-            if not planner_result.success:
-                result.error = f"Planner failed: {planner_result.error}"
-                return result
-
-            # Rollback any file changes from planner
-            rollback_fn(snapshot)
-
             # --- Coder ---
-            plan_text = workspace.read("plan.md") or planner_result.output_text
-            review_text = workspace.read("review.md") or ""
 
             revision_context = ""
             if revision > 0 and review_text:
@@ -206,6 +236,24 @@ class AgentPipeline:
             result.agent_results.append(tester_result)
             result.total_cost_usd += tester_result.cost_usd
             result.total_duration_seconds += tester_result.duration_seconds
+
+            # Fix 7: Check tester result — if the tester CLI crashed, treat
+            # it as a revision-needed signal rather than silently continuing.
+            if not tester_result.success:
+                logger.warning(
+                    "Tester agent failed: %s — treating as revision needed",
+                    tester_result.error,
+                )
+                if revision < max_revisions:
+                    revision += 1
+                    result.revision_count = revision
+                    rollback_fn(snapshot)
+                    workspace.write("review.md", f"VERDICT: REVISE\nTester failed: {tester_result.error}")
+                    continue
+                else:
+                    result.error = f"Tester failed after exhausting revisions: {tester_result.error}"
+                    result.revision_count = revision
+                    return result
 
             # --- Reviewer ---
             reviewer_prompt = (
@@ -243,10 +291,14 @@ class AgentPipeline:
                 revision += 1
                 result.revision_count = revision
                 rollback_fn(snapshot)
+                # Restore review feedback so the next iteration can read it
+                # (rollback's git clean -fd deletes untracked workspace files)
+                workspace.write("review.md", review_content)
                 # Loop continues with new iteration
             else:
                 # Exhausted revisions
-                result.success = True
+                result.success = False
+                result.error = "Reviewer rejected after exhausting all revisions"
                 result.final_review_approved = False
                 result.revision_count = revision
                 return result

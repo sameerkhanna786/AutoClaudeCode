@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from config_schema import Config
+from process_utils import RunResult
 from task_discovery import Task, TaskDiscovery, MAX_TASK_DESCRIPTION_LENGTH
 
 
@@ -14,6 +15,10 @@ from task_discovery import Task, TaskDiscovery, MAX_TASK_DESCRIPTION_LENGTH
 def discovery(tmp_path, default_config):
     default_config.target_dir = str(tmp_path)
     return TaskDiscovery(default_config)
+
+
+def _run_result(returncode=0, stdout="", stderr="", timed_out=False):
+    return RunResult(returncode=returncode, stdout=stdout, stderr=stderr, timed_out=timed_out)
 
 
 class TestTaskDiscovery:
@@ -26,18 +31,17 @@ class TestTaskDiscovery:
                 # Verify the planted marker comment in app.py is discovered
                 assert any(t.source == "todo" for t in tasks)
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_test_failures_passing(self, mock_run, discovery):
-        mock_run.return_value = MagicMock(returncode=0, stdout="all passed", stderr="")
+        mock_run.return_value = _run_result(returncode=0, stdout="all passed")
         tasks = discovery._discover_test_failures()
         assert tasks == []
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_test_failures_with_failures(self, mock_run, discovery):
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=1,
             stdout="FAILED tests/test_foo.py::test_bar - AssertionError\n",
-            stderr="",
         )
         tasks = discovery._discover_test_failures()
         assert len(tasks) == 1
@@ -45,20 +49,19 @@ class TestTaskDiscovery:
         assert tasks[0].source == "test_failure"
         assert "test_bar" in tasks[0].description
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_test_failures_generic(self, mock_run, discovery):
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=1,
             stdout="some error output\n",
-            stderr="",
         )
         tasks = discovery._discover_test_failures()
         assert len(tasks) == 1
         assert "exit code 1" in tasks[0].description
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_test_failures_timeout(self, mock_run, discovery):
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="pytest", timeout=120)
+        mock_run.return_value = _run_result(timed_out=True, returncode=-1)
         tasks = discovery._discover_test_failures()
         assert tasks == []
 
@@ -85,13 +88,12 @@ class TestTaskDiscovery:
         tasks = discovery._discover_lint_errors()
         assert tasks == []
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_lint_errors_json(self, mock_run, discovery):
         discovery.config.validation.lint_command = "ruff check --output-format=json ."
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=1,
             stdout='[{"filename": "foo.py", "message": "unused import", "code": "F401"}]',
-            stderr="",
         )
         tasks = discovery._discover_lint_errors()
         assert len(tasks) == 1
@@ -105,13 +107,12 @@ class TestTaskDiscovery:
         assert tasks[0].source == "quality"
         assert "big.py" in tasks[0].description
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_success(self, mock_run, discovery):
         discovery.config.discovery.enable_claude_ideas = True
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=0,
             stdout='{"result": "IDEA: Add input validation to the config loader\\nIDEA: Add retry logic to Claude runner\\nSome other text"}',
-            stderr="",
         )
         tasks = discovery._discover_claude_ideas()
         assert len(tasks) == 2
@@ -120,39 +121,37 @@ class TestTaskDiscovery:
         assert "input validation" in tasks[0].description.lower()
         assert "retry" in tasks[1].description.lower()
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_timeout(self, mock_run, discovery):
         discovery.config.discovery.enable_claude_ideas = True
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=120)
+        mock_run.return_value = _run_result(timed_out=True, returncode=-1)
         tasks = discovery._discover_claude_ideas()
         assert tasks == []
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_failure(self, mock_run, discovery):
         discovery.config.discovery.enable_claude_ideas = True
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
+        mock_run.return_value = _run_result(returncode=1, stderr="error")
         tasks = discovery._discover_claude_ideas()
         assert tasks == []
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_no_ideas(self, mock_run, discovery):
         discovery.config.discovery.enable_claude_ideas = True
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=0,
             stdout='{"result": "The codebase looks great, no improvements needed."}',
-            stderr="",
         )
         tasks = discovery._discover_claude_ideas()
         assert tasks == []
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_caps_at_five(self, mock_run, discovery):
         discovery.config.discovery.enable_claude_ideas = True
         ideas = "\n".join(f"IDEA: Improvement {i}" for i in range(10))
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=0,
             stdout=f'{{"result": "{ideas}"}}',
-            stderr="",
         )
         tasks = discovery._discover_claude_ideas()
         assert len(tasks) <= 5
@@ -198,16 +197,15 @@ class TestTaskDiscovery:
         tasks = discovery._discover_todos()
         assert len(tasks) == 2
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_uses_discovery_model(self, mock_run, discovery):
         """Claude idea discovery should use discovery_model, not claude.model."""
         discovery.config.discovery.enable_claude_ideas = True
         discovery.config.discovery.discovery_model = "haiku"
         discovery.config.claude.model = "opus"
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=0,
             stdout='{"result": "IDEA: Test improvement"}',
-            stderr="",
         )
         discovery._discover_claude_ideas()
         call_args = mock_run.call_args
@@ -215,69 +213,55 @@ class TestTaskDiscovery:
         model_idx = cmd.index("--model")
         assert cmd[model_idx + 1] == "haiku"
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_uses_discovery_timeout(self, mock_run, discovery):
         """Claude idea discovery should use discovery_timeout, not claude.timeout_seconds."""
         discovery.config.discovery.enable_claude_ideas = True
         discovery.config.discovery.discovery_timeout = 240
         discovery.config.claude.timeout_seconds = 300
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=0,
             stdout='{"result": "IDEA: Test"}',
-            stderr="",
         )
         discovery._discover_claude_ideas()
         call_args = mock_run.call_args
         assert call_args[1]["timeout"] == 240
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_ignores_unrelated_json(self, mock_run, discovery):
         """If a line contains valid JSON without a 'result' field, parsing
         should continue and find the correct JSON later."""
         discovery.config.discovery.enable_claude_ideas = True
         # First line is unrelated JSON, second line has the actual result
         stdout = '{"status": "ok"}\n{"result": "IDEA: Add input validation"}'
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=stdout,
-            stderr="",
-        )
+        mock_run.return_value = _run_result(returncode=0, stdout=stdout)
         tasks = discovery._discover_claude_ideas()
         assert len(tasks) == 1
         assert "input validation" in tasks[0].description.lower()
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_non_string_result(self, mock_run, discovery):
         """If the JSON 'result' field is not a string, it should be ignored."""
         discovery.config.discovery.enable_claude_ideas = True
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"result": 42}',
-            stderr="",
-        )
+        mock_run.return_value = _run_result(returncode=0, stdout='{"result": 42}')
         tasks = discovery._discover_claude_ideas()
         assert tasks == []
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_null_result(self, mock_run, discovery):
         """If the JSON 'result' field is null, it should be ignored."""
         discovery.config.discovery.enable_claude_ideas = True
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='{"result": null}',
-            stderr="",
-        )
+        mock_run.return_value = _run_result(returncode=0, stdout='{"result": null}')
         tasks = discovery._discover_claude_ideas()
         assert tasks == []
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_unexpected_json_structure(self, mock_run, discovery):
         """If JSON is a list instead of an object, it should be handled gracefully."""
         discovery.config.discovery.enable_claude_ideas = True
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=0,
             stdout='[{"result": "IDEA: something"}]',
-            stderr="",
         )
         tasks = discovery._discover_claude_ideas()
         assert tasks == []
@@ -309,42 +293,39 @@ class TestTaskDescriptionValidation:
 
 
 class TestClaudeIdeasMinLength:
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_skips_short_descriptions(self, mock_run, discovery):
         """IDEA lines with descriptions shorter than 10 chars are skipped."""
         discovery.config.discovery.enable_claude_ideas = True
         ideas = "IDEA: fix\nIDEA: Add comprehensive input validation to config loader"
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=0,
             stdout=f'{{"result": "{ideas}"}}',
-            stderr="",
         )
         tasks = discovery._discover_claude_ideas()
         assert len(tasks) == 1
         assert "comprehensive" in tasks[0].description.lower()
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_skips_empty_idea_lines(self, mock_run, discovery):
         """IDEA lines with no description or only whitespace are skipped."""
         discovery.config.discovery.enable_claude_ideas = True
         ideas = "IDEA: \\nIDEA:\\nIDEA:   "
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=0,
             stdout=f'{{"result": "{ideas}"}}',
-            stderr="",
         )
         tasks = discovery._discover_claude_ideas()
         assert tasks == []
 
-    @patch("task_discovery.subprocess.run")
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_accepts_long_enough_descriptions(self, mock_run, discovery):
         """IDEA lines with descriptions >= 10 chars are accepted."""
         discovery.config.discovery.enable_claude_ideas = True
         ideas = "IDEA: Add retries to API calls"
-        mock_run.return_value = MagicMock(
+        mock_run.return_value = _run_result(
             returncode=0,
             stdout=f'{{"result": "{ideas}"}}',
-            stderr="",
         )
         tasks = discovery._discover_claude_ideas()
         assert len(tasks) == 1

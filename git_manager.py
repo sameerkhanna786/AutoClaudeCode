@@ -8,7 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Set
 
+from process_utils import kill_process_group, run_with_group_kill
+
 logger = logging.getLogger(__name__)
+
+# Default timeout for git operations (seconds)
+GIT_DEFAULT_TIMEOUT = 120
+# Longer timeout for push operations (seconds)
+GIT_PUSH_TIMEOUT = 300
 
 
 @dataclass
@@ -30,22 +37,42 @@ class GitManager:
             cwd=self.repo_dir,
             capture_output=True,
             text=True,
+            timeout=GIT_DEFAULT_TIMEOUT,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Not a git repository: {self.repo_dir}")
         self._repo_validated = True
 
-    def _run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-        """Run a git command in the repo directory."""
+    def _run(self, *args: str, check: bool = True, timeout: int = GIT_DEFAULT_TIMEOUT) -> subprocess.CompletedProcess:
+        """Run a git command in the repo directory.
+
+        Uses run_with_group_kill() so that git hooks and subprocesses are
+        properly killed on timeout, returning a failed result instead of
+        raising subprocess.TimeoutExpired.
+        """
         self._validate_repo()
         cmd = ["git"] + list(args)
-        return subprocess.run(
-            cmd,
-            cwd=self.repo_dir,
-            capture_output=True,
-            text=True,
-            check=check,
+        result = run_with_group_kill(cmd, cwd=self.repo_dir, timeout=timeout)
+        if result.timed_out:
+            logger.warning(
+                "git %s timed out after %ds: %s",
+                args[0] if args else "?", timeout, result.stderr.strip(),
+            )
+            # Return a CompletedProcess-like object with failure code
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=-1,
+                stdout=result.stdout, stderr=result.stderr,
+            )
+        completed = subprocess.CompletedProcess(
+            args=cmd, returncode=result.returncode,
+            stdout=result.stdout, stderr=result.stderr,
         )
+        if check and completed.returncode != 0:
+            raise subprocess.CalledProcessError(
+                completed.returncode, cmd,
+                output=completed.stdout, stderr=completed.stderr,
+            )
+        return completed
 
     def capture_worktree_state(self) -> set:
         """Return the set of currently modified/untracked files (before Claude runs)."""
@@ -59,23 +86,54 @@ class GitManager:
         return Snapshot(commit_hash=commit_hash)
 
     def rollback(self, snapshot: Optional[Snapshot] = None, allowed_dirty: Optional[Set[str]] = None) -> None:
-        """Discard all working tree changes and untracked files.
+        """Discard working tree changes, optionally targeting only specific files.
 
         If a snapshot is provided and HEAD has moved, reset to that commit.
-        Otherwise just clean the working tree.
 
-        If allowed_dirty is provided, verify that all current dirty files are
-        in the allowed set before proceeding.  Raises RuntimeError if
-        unexpected uncommitted files are found, preventing data loss.
+        If allowed_dirty is provided:
+          - Only revert files that are in the allowed set (Claude's changes).
+          - If unexpected dirty files exist beyond what Claude changed,
+            log a warning and refuse to clean them, preventing data loss.
+        If allowed_dirty is None: blanket clean (legacy behavior).
         """
         if allowed_dirty is not None:
             current_dirty = set(self.get_changed_files())
             unexpected = current_dirty - allowed_dirty
             if unexpected:
+                logger.warning(
+                    "Rollback: leaving %d unexpected uncommitted files untouched: %s",
+                    len(unexpected), sorted(unexpected),
+                )
                 raise RuntimeError(
-                    f"Rollback aborted: unexpected uncommitted files would be lost: "
+                    f"Rollback aborted: {len(unexpected)} unexpected uncommitted files: "
                     f"{sorted(unexpected)}"
                 )
+
+            # Only revert files that are both dirty and in the allowed set
+            files_to_revert = current_dirty & allowed_dirty
+            if snapshot:
+                current = self._run("rev-parse", "HEAD").stdout.strip()
+                if current != snapshot.commit_hash:
+                    self._run("reset", "--hard", snapshot.commit_hash)
+                    logger.info("Reset HEAD to snapshot %s", snapshot.commit_hash[:8])
+
+            if files_to_revert:
+                # Checkout tracked files
+                self._run("checkout", "--", *sorted(files_to_revert), check=False)
+                # Clean untracked files in the allowed set
+                for f in sorted(files_to_revert):
+                    fpath = Path(self.repo_dir) / f
+                    if fpath.exists():
+                        # Check if it's untracked
+                        status = self._run("ls-files", "--error-unmatch", f, check=False)
+                        if status.returncode != 0:
+                            # Untracked — remove it
+                            try:
+                                fpath.unlink()
+                            except OSError:
+                                pass
+            logger.info("Targeted rollback: reverted %d files", len(files_to_revert))
+            return
 
         if snapshot:
             current = self._run("rev-parse", "HEAD").stdout.strip()
@@ -109,7 +167,7 @@ class GitManager:
 
     def push(self) -> bool:
         """Push current branch to origin. Returns True on success."""
-        result = self._run("push", check=False)
+        result = self._run("push", check=False, timeout=GIT_PUSH_TIMEOUT)
         if result.returncode == 0:
             logger.info("Pushed to remote")
             return True

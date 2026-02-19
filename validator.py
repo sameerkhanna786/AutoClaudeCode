@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from config_schema import Config
+from process_utils import run_with_group_kill
 
 logger = logging.getLogger(__name__)
 
@@ -46,30 +47,28 @@ class Validator:
 
         logger.info("Running %s: %s", name, command)
         try:
-            proc = subprocess.run(
+            result = run_with_group_kill(
                 command,
                 shell=True,
                 cwd=cwd,
-                capture_output=True,
-                text=True,
                 timeout=timeout,
             )
-            passed = proc.returncode == 0
-            output = proc.stdout + proc.stderr
+            if result.timed_out:
+                return ValidationStep(
+                    name=name,
+                    command=command,
+                    passed=False,
+                    output=f"Timed out after {timeout}s",
+                    return_code=-1,
+                )
+            passed = result.returncode == 0
+            output = result.stdout + result.stderr
             return ValidationStep(
                 name=name,
                 command=command,
                 passed=passed,
                 output=output.strip(),
-                return_code=proc.returncode,
-            )
-        except subprocess.TimeoutExpired:
-            return ValidationStep(
-                name=name,
-                command=command,
-                passed=False,
-                output=f"Timed out after {timeout}s",
-                return_code=-1,
+                return_code=result.returncode,
             )
         except OSError as e:
             return ValidationStep(

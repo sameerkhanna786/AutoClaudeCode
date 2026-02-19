@@ -248,7 +248,7 @@ class TestAgentPipelineFlow:
 
     @patch("agent_pipeline.ClaudeRunner")
     def test_max_revisions_exhausted(self, MockRunner, tmp_path):
-        """All revisions exhausted -> success=True, review_approved=False."""
+        """All revisions exhausted -> success=False, review_approved=False."""
         self.config.target_dir = str(tmp_path)
         self.config.agent_pipeline.max_revisions = 1
         pipeline = AgentPipeline(self.config)
@@ -268,9 +268,10 @@ class TestAgentPipelineFlow:
 
         result = pipeline.run([MockTask()], rollback_fn, "snap")
 
-        assert result.success is True
+        assert result.success is False
         assert result.final_review_approved is False
         assert result.revision_count == 1
+        assert "rejected" in result.error.lower() or "exhausting" in result.error.lower()
 
     @patch("agent_pipeline.ClaudeRunner")
     def test_git_rollback_called_between_revisions(self, MockRunner, tmp_path):

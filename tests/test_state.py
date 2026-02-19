@@ -501,3 +501,55 @@ class TestFailureRecovery:
             ))
         assert state_mgr.get_consecutive_failures() == 2
         assert state_mgr.should_auto_reset_failures(min_idle_seconds=3600) is False
+
+
+class TestCorruptHistoryBackup:
+    def test_corrupt_history_backed_up(self, state_mgr):
+        """Corrupted JSON history file is backed up before returning empty."""
+        corrupted_content = "{this is not valid json!!"
+        Path(state_mgr.history_file).write_text(corrupted_content)
+
+        result = state_mgr._load_history()
+
+        assert result == []
+        assert state_mgr.get_consecutive_failures() == 0
+        backup_path = Path(str(state_mgr.history_file) + ".corrupt")
+        assert backup_path.exists()
+        assert backup_path.read_text() == corrupted_content
+
+    def test_corrupt_history_not_destroyed_by_record_cycle(self, state_mgr):
+        """record_cycle after corruption preserves the backup and writes new data."""
+        corrupted_content = "{this is not valid json!!"
+        Path(state_mgr.history_file).write_text(corrupted_content)
+
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="New record after corruption",
+            success=True,
+        ))
+
+        backup_path = Path(str(state_mgr.history_file) + ".corrupt")
+        assert backup_path.exists()
+        assert backup_path.read_text() == corrupted_content
+
+        data = json.loads(Path(state_mgr.history_file).read_text())
+        assert len(data) == 1
+        assert data[0]["task_description"] == "New record after corruption"
+
+    def test_corrupt_history_cache_prevents_repeated_backup(self, state_mgr):
+        """After first load of corrupted file, cache prevents re-reading on second call."""
+        corrupted_content = "{this is not valid json!!"
+        Path(state_mgr.history_file).write_text(corrupted_content)
+
+        # First call: triggers backup
+        state_mgr._load_history()
+        backup_path = Path(str(state_mgr.history_file) + ".corrupt")
+        assert backup_path.exists()
+
+        # Remove backup to verify second call doesn't recreate it
+        backup_path.unlink()
+
+        # Second call: should use cache, not re-read file
+        result = state_mgr._load_history()
+        assert result == []
+        assert not backup_path.exists()  # backup was NOT recreated

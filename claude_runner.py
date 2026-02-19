@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from config_schema import Config
+from process_utils import kill_process_group
 
 logger = logging.getLogger(__name__)
 
@@ -55,18 +56,7 @@ class ClaudeRunner:
     @staticmethod
     def _kill_process(proc: subprocess.Popen) -> None:
         """Kill a subprocess and its entire process group."""
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
-        try:
-            proc.kill()
-        except OSError:
-            pass
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
+        kill_process_group(proc)
 
     def terminate(self) -> None:
         """Terminate any currently running Claude subprocess.

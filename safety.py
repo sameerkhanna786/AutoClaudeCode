@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import fcntl
 import logging
 import os
@@ -13,6 +14,21 @@ from config_schema import Config
 from state import StateManager
 
 logger = logging.getLogger(__name__)
+
+# Module-level list of SafetyGuard instances that hold locks, for atexit cleanup.
+_active_guards: List[SafetyGuard] = []
+
+
+def _atexit_release_locks() -> None:
+    """Release all held locks on normal interpreter exit."""
+    for guard in list(_active_guards):
+        try:
+            guard.release_lock()
+        except Exception:
+            pass
+
+
+atexit.register(_atexit_release_locks)
 
 
 class SafetyError(Exception):
@@ -28,18 +44,23 @@ class SafetyGuard:
         self.lock_path = Path(config.paths.lock_file)
 
     def acquire_lock(self) -> None:
-        """Acquire an exclusive file lock to prevent concurrent runs."""
+        """Acquire an exclusive file lock to prevent concurrent runs.
+
+        Uses flock() on the existing lock file inode, avoiding the race
+        condition of unlink-then-recreate where two processes could each
+        hold exclusive flocks on different inodes.
+        """
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock_fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR)
+        fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR)
         try:
-            fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             # Check if the PID in the lock file is still alive
             stale = False
             existing_pid_str = ""
             try:
-                os.lseek(self._lock_fd, 0, os.SEEK_SET)
-                existing_pid_bytes = os.read(self._lock_fd, 64)
+                os.lseek(fd, 0, os.SEEK_SET)
+                existing_pid_bytes = os.read(fd, 64)
                 existing_pid_str = existing_pid_bytes.decode(errors="replace").strip()
                 existing_pid = int(existing_pid_str)
                 os.kill(existing_pid, 0)
@@ -49,27 +70,25 @@ class SafetyGuard:
                 # Process exists but we can't signal it
                 stale = False
 
-            os.close(self._lock_fd)
-            self._lock_fd = None
-
-            if stale:
-                logger.warning(
-                    "Cleaning up stale lock file from dead process (PID %s)",
-                    existing_pid_str,
-                )
-                self.lock_path.unlink(missing_ok=True)
-                # Retry acquisition
-                self._lock_fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR)
-                try:
-                    fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except OSError:
-                    os.close(self._lock_fd)
-                    self._lock_fd = None
-                    raise SafetyError("Another instance is already running (lock file held)")
-            else:
+            if not stale:
+                os.close(fd)
                 raise SafetyError("Another instance is already running (lock file held)")
 
-        # Write our PID
+            # Stale lock: the PID is dead. Retry flock on the SAME file
+            # descriptor (same inode) — don't unlink and recreate.
+            logger.warning(
+                "Cleaning up stale lock file from dead process (PID %s)",
+                existing_pid_str,
+            )
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                os.close(fd)
+                raise SafetyError("Another instance is already running (lock file held)")
+
+        # Lock acquired — store the fd and write our PID
+        self._lock_fd = fd
+        _active_guards.append(self)
         os.ftruncate(self._lock_fd, 0)
         os.lseek(self._lock_fd, 0, os.SEEK_SET)
         os.write(self._lock_fd, str(os.getpid()).encode())
@@ -78,10 +97,18 @@ class SafetyGuard:
         """Release the file lock."""
         if self._lock_fd is not None:
             try:
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
                 os.close(self._lock_fd)
             except OSError:
                 pass
             self._lock_fd = None
+            try:
+                _active_guards.remove(self)
+            except ValueError:
+                pass
 
     def check_disk_space(self) -> None:
         """Ensure sufficient disk space is available."""

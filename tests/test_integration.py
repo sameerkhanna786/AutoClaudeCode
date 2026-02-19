@@ -79,7 +79,8 @@ def test_full_cycle_fix_and_commit(integration_repo):
     config.paths.backup_dir = str(integration_repo / "state" / "backups")
 
     # Create the orchestrator
-    orch = Orchestrator(config)
+    with patch("orchestrator.resolve_model_id", return_value=None):
+        orch = Orchestrator(config)
 
     # Mock Claude to "fix" the bug by writing the correct file
     def mock_claude_run(prompt, working_dir=None):
@@ -101,12 +102,13 @@ def test_full_cycle_fix_and_commit(integration_repo):
     # Run a single cycle
     orch._cycle()
 
-    # Verify the fix was committed
+    # Verify the fix was committed (commit message should be descriptive, no [auto] prefix)
     result = subprocess.run(
         ["git", "log", "--oneline"],
         cwd=repo, capture_output=True, text=True, check=True,
     )
-    assert "[auto]" in result.stdout
+    # There should be more than just the initial commit
+    assert len(result.stdout.strip().splitlines()) > 1
 
     # Verify the file is fixed
     app_content = (integration_repo / "app.py").read_text()
@@ -134,7 +136,8 @@ def test_full_cycle_rollback_on_bad_fix(integration_repo):
     config.paths.feedback_done_dir = str(integration_repo / "feedback" / "done")
     config.paths.backup_dir = str(integration_repo / "state" / "backups")
 
-    orch = Orchestrator(config)
+    with patch("orchestrator.resolve_model_id", return_value=None):
+        orch = Orchestrator(config)
 
     # Mock Claude to make a bad fix
     def mock_claude_run(prompt, working_dir=None):
@@ -159,12 +162,12 @@ def test_full_cycle_rollback_on_bad_fix(integration_repo):
     app_content = (integration_repo / "app.py").read_text()
     assert "a - b" in app_content  # Original buggy code
 
-    # Verify no new commit was made
+    # Verify no new commit was made (only the initial commit should exist)
     result = subprocess.run(
         ["git", "log", "--oneline"],
         cwd=repo, capture_output=True, text=True, check=True,
     )
-    assert "[auto]" not in result.stdout
+    assert len(result.stdout.strip().splitlines()) == 1
 
     # Verify history recorded the failure
     history = json.loads((integration_repo / "state" / "history.json").read_text())
@@ -190,7 +193,8 @@ def test_full_batch_cycle(integration_repo):
     config.orchestrator.plan_changes = True
     config.orchestrator.max_tasks_per_cycle = 10
 
-    orch = Orchestrator(config)
+    with patch("orchestrator.resolve_model_id", return_value=None):
+        orch = Orchestrator(config)
 
     call_count = [0]
 
@@ -222,12 +226,13 @@ def test_full_batch_cycle(integration_repo):
 
     orch._cycle()
 
-    # Verify the fix was committed
+    # Verify the fix was committed (commit message should be descriptive, no [auto] prefix)
     result = subprocess.run(
         ["git", "log", "--oneline"],
         cwd=repo, capture_output=True, text=True, check=True,
     )
-    assert "[auto]" in result.stdout
+    # There should be more than just the initial commit
+    assert len(result.stdout.strip().splitlines()) > 1
 
     # Verify the file is fixed
     app_content = (integration_repo / "app.py").read_text()

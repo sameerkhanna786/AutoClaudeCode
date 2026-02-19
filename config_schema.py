@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, get_type_hints
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -15,7 +19,7 @@ class ClaudeConfig:
     model: str = "opus"
     resolved_model: str = ""   # Populated at startup by Orchestrator
     max_turns: int = 25
-    timeout_seconds: int = 1800
+    timeout_seconds: int = 14400
     command: str = "claude"
     max_retries: int = 3
     retry_delays: List[int] = field(default_factory=lambda: [2, 8, 32])
@@ -33,7 +37,7 @@ class OrchestratorConfig:
     max_feedback_retries: int = 3
     max_tasks_per_cycle: int = 10
     batch_mode: bool = True
-    cycle_timeout_seconds: int = 7200
+    cycle_timeout_seconds: int = 43200
     # Adaptive batch sizing
     min_batch_size: int = 1
     max_batch_size: int = 10
@@ -51,9 +55,9 @@ class ValidationConfig:
     test_command: str = "python3 -m pytest tests/ -x -q"
     lint_command: str = ""
     build_command: str = ""
-    test_timeout: int = 1800
-    lint_timeout: int = 1800
-    build_timeout: int = 1800
+    test_timeout: int = 7200
+    lint_timeout: int = 7200
+    build_timeout: int = 7200
 
 
 @dataclass
@@ -70,7 +74,7 @@ class DiscoveryConfig:
     ])
     max_todo_tasks: int = 20
     discovery_model: str = "opus"
-    discovery_timeout: int = 1800
+    discovery_timeout: int = 7200
 
 
 @dataclass
@@ -89,7 +93,7 @@ class AgentRoleConfig:
     enabled: bool = True
     model: str = "opus"
     max_turns: int = 25
-    timeout_seconds: int = 1800
+    timeout_seconds: int = 7200
 
 
 @dataclass
@@ -98,13 +102,13 @@ class AgentPipelineConfig:
     enabled: bool = False
     max_revisions: int = 2
     planner: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
-        model="opus", max_turns=10, timeout_seconds=1800))
+        model="opus", max_turns=10, timeout_seconds=7200))
     coder: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
-        model="opus", max_turns=25, timeout_seconds=1800))
+        model="opus", max_turns=25, timeout_seconds=14400))
     tester: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
-        model="opus", max_turns=15, timeout_seconds=1800))
+        model="opus", max_turns=15, timeout_seconds=7200))
     reviewer: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
-        model="opus", max_turns=10, timeout_seconds=1800))
+        model="opus", max_turns=10, timeout_seconds=7200))
 
 
 @dataclass
@@ -140,13 +144,62 @@ class Config:
     agent_pipeline: AgentPipelineConfig = field(default_factory=AgentPipelineConfig)
 
 
+def _get_expected_type(dc_class, field_name: str):
+    """Return the expected primitive type for a dataclass field, or None if unknown."""
+    try:
+        hints = get_type_hints(dc_class)
+    except Exception:
+        return None
+    hint = hints.get(field_name)
+    if hint is None:
+        return None
+    # Unwrap Optional[X] -> X
+    origin = getattr(hint, "__origin__", None)
+    if origin is type(None):
+        return None
+    # Handle Union (Optional is Union[X, None])
+    import typing
+    if origin is getattr(typing, "Union", None):
+        args = [a for a in hint.__args__ if a is not type(None)]
+        if len(args) == 1:
+            hint = args[0]
+            origin = getattr(hint, "__origin__", None)
+        else:
+            return None
+    # For List[X], accept list
+    if origin is list:
+        return list
+    # For simple types
+    if isinstance(hint, type):
+        return hint
+    return None
+
+
 def _merge_dataclass(dc_instance, overrides: dict):
-    """Merge a dict of overrides into a dataclass instance."""
+    """Merge a dict of overrides into a dataclass instance.
+
+    Validates each value's type against the dataclass field annotation.
+    Invalid types are logged and skipped.
+    """
     if not overrides:
         return dc_instance
+    dc_class = type(dc_instance)
     for key, value in overrides.items():
-        if hasattr(dc_instance, key):
-            setattr(dc_instance, key, value)
+        if not hasattr(dc_instance, key):
+            continue
+        expected = _get_expected_type(dc_class, key)
+        if expected is not None and value is not None:
+            # Allow int where float is expected (YAML often produces int for "10.0")
+            if expected is float and isinstance(value, int):
+                value = float(value)
+            elif not isinstance(value, expected):
+                logger.warning(
+                    "Config field '%s.%s' expects %s but got %s (%r) — skipping",
+                    dc_class.__name__, key, expected.__name__,
+                    type(value).__name__, value,
+                )
+                continue
+        setattr(dc_instance, key, value)
     return dc_instance
 
 

@@ -22,9 +22,15 @@ from pathlib import Path
 
 
 def setup_logging(log_file: str, level: str, max_bytes: int, backup_count: int) -> None:
-    """Configure logging with both console and rotating file handler."""
+    """Configure logging with both console and rotating file handler.
+
+    Clears existing handlers first to prevent duplicate output on retry.
+    """
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    # Fix 14: Clear existing handlers to prevent duplicates on retry
+    root.handlers.clear()
 
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -131,6 +137,7 @@ def main() -> None:
                         "config_schema", "orchestrator", "claude_runner",
                         "git_manager", "validator", "state", "safety",
                         "task_discovery", "feedback",
+                        "model_resolver", "process_utils", "agent_pipeline",
                     )
                 ]
                 for m in mods_to_remove:

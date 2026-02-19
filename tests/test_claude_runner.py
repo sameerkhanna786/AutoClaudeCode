@@ -183,13 +183,24 @@ class TestParseJsonResponse:
         assert data["cost_usd"] == 0.02
 
 
+def _make_popen_mock(returncode=0, stdout="", stderr="", communicate_effect=None):
+    """Create a mock subprocess.Popen that behaves like the real thing."""
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+    mock_proc.returncode = returncode
+    if communicate_effect is not None:
+        mock_proc.communicate.side_effect = communicate_effect
+    else:
+        mock_proc.communicate.return_value = (stdout, stderr)
+    return mock_proc
+
+
 class TestRun:
-    @patch("claude_runner.subprocess.run")
-    def test_successful_run(self, mock_run, runner):
-        mock_run.return_value = MagicMock(
+    @patch("claude_runner.subprocess.Popen")
+    def test_successful_run(self, mock_popen, runner):
+        mock_popen.return_value = _make_popen_mock(
             returncode=0,
             stdout='{"result": "Fixed bug", "cost_usd": 0.03, "duration_seconds": 12.5}',
-            stderr="",
         )
         result = runner.run("Fix the bug")
         assert result.success is True
@@ -197,37 +208,37 @@ class TestRun:
         assert result.cost_usd == 0.03
         assert result.duration_seconds == 12.5
 
-    @patch("claude_runner.subprocess.run")
-    def test_timeout(self, mock_run, runner):
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=300)
+    @patch("claude_runner.subprocess.Popen")
+    def test_timeout(self, mock_popen, runner):
+        mock_popen.return_value = _make_popen_mock(
+            communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300),
+        )
         result = runner.run("Fix the bug")
         assert result.success is False
         assert "timed out" in result.error
 
-    @patch("claude_runner.subprocess.run")
-    def test_command_not_found(self, mock_run, runner):
-        mock_run.side_effect = FileNotFoundError()
+    @patch("claude_runner.subprocess.Popen")
+    def test_command_not_found(self, mock_popen, runner):
+        mock_popen.side_effect = FileNotFoundError()
         result = runner.run("Fix the bug")
         assert result.success is False
         assert "not found" in result.error
 
-    @patch("claude_runner.subprocess.run")
-    def test_nonzero_exit(self, mock_run, runner):
-        mock_run.return_value = MagicMock(
+    @patch("claude_runner.subprocess.Popen")
+    def test_nonzero_exit(self, mock_popen, runner):
+        mock_popen.return_value = _make_popen_mock(
             returncode=1,
-            stdout="",
             stderr="Error occurred",
         )
         result = runner.run("Fix the bug")
         assert result.success is False
         assert "exited with code 1" in result.error
 
-    @patch("claude_runner.subprocess.run")
-    def test_unparseable_output(self, mock_run, runner):
-        mock_run.return_value = MagicMock(
+    @patch("claude_runner.subprocess.Popen")
+    def test_unparseable_output(self, mock_popen, runner):
+        mock_popen.return_value = _make_popen_mock(
             returncode=0,
             stdout="Not JSON at all",
-            stderr="",
         )
         result = runner.run("Fix the bug")
         assert result.success is False
@@ -236,118 +247,111 @@ class TestRun:
 
 class TestRetryLogic:
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_retry_on_timeout(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_retry_on_timeout(self, mock_popen, mock_sleep, runner):
         """Retries on TimeoutExpired, succeeds on third attempt."""
-        mock_run.side_effect = [
-            subprocess.TimeoutExpired(cmd="claude", timeout=300),
-            subprocess.TimeoutExpired(cmd="claude", timeout=300),
-            MagicMock(
-                returncode=0,
-                stdout='{"result": "Done", "cost_usd": 0.01}',
-                stderr="",
-            ),
+        mock_popen.side_effect = [
+            _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300)),
+            _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300)),
+            _make_popen_mock(returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}'),
         ]
         result = runner.run("Fix the bug")
         assert result.success is True
         assert result.result_text == "Done"
-        assert mock_run.call_count == 3
+        assert mock_popen.call_count == 3
         assert mock_sleep.call_count == 2
         mock_sleep.assert_any_call(2)
         mock_sleep.assert_any_call(8)
 
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_retry_on_nonzero_exit(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_retry_on_nonzero_exit(self, mock_popen, mock_sleep, runner):
         """Retries on non-zero exit code, succeeds on third attempt."""
-        mock_run.side_effect = [
-            MagicMock(returncode=1, stdout="", stderr="rate limited"),
-            MagicMock(returncode=1, stdout="", stderr="rate limited"),
-            MagicMock(
-                returncode=0,
-                stdout='{"result": "Fixed", "cost_usd": 0.02}',
-                stderr="",
-            ),
+        mock_popen.side_effect = [
+            _make_popen_mock(returncode=1, stderr="rate limited"),
+            _make_popen_mock(returncode=1, stderr="rate limited"),
+            _make_popen_mock(returncode=0, stdout='{"result": "Fixed", "cost_usd": 0.02}'),
         ]
         result = runner.run("Fix the bug")
         assert result.success is True
         assert result.result_text == "Fixed"
-        assert mock_run.call_count == 3
+        assert mock_popen.call_count == 3
 
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_no_retry_on_file_not_found(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_no_retry_on_file_not_found(self, mock_popen, mock_sleep, runner):
         """FileNotFoundError is not retryable — returns immediately."""
-        mock_run.side_effect = FileNotFoundError()
+        mock_popen.side_effect = FileNotFoundError()
         result = runner.run("Fix the bug")
         assert result.success is False
         assert "not found" in result.error
-        assert mock_run.call_count == 1
+        assert mock_popen.call_count == 1
         mock_sleep.assert_not_called()
 
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_no_retry_on_json_parse_failure(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_no_retry_on_json_parse_failure(self, mock_popen, mock_sleep, runner):
         """JSON parse failure is not retryable — CLI ran fine, output was bad."""
-        mock_run.return_value = MagicMock(
+        mock_popen.return_value = _make_popen_mock(
             returncode=0,
             stdout="Not JSON at all",
-            stderr="",
         )
         result = runner.run("Fix the bug")
         assert result.success is False
         assert "parse" in result.error.lower()
-        assert mock_run.call_count == 1
+        assert mock_popen.call_count == 1
         mock_sleep.assert_not_called()
 
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_all_retries_exhausted(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_all_retries_exhausted(self, mock_popen, mock_sleep, runner):
         """All retries exhausted returns failure."""
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=300)
+        mock_popen.side_effect = [
+            _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300))
+            for _ in range(4)
+        ]
         result = runner.run("Fix the bug")
         assert result.success is False
         assert "timed out" in result.error
-        assert mock_run.call_count == 4  # 1 initial + 3 retries
+        assert mock_popen.call_count == 4  # 1 initial + 3 retries
         assert mock_sleep.call_count == 3
 
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_retry_delays_are_exponential(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_retry_delays_are_exponential(self, mock_popen, mock_sleep, runner):
         """Verify exponential backoff delays: 2, 8, 32."""
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=300)
+        mock_popen.side_effect = [
+            _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300))
+            for _ in range(4)
+        ]
         runner.run("Fix the bug")
         delays = [call.args[0] for call in mock_sleep.call_args_list]
         assert delays == [2, 8, 32]
 
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_retry_on_os_error(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_retry_on_os_error(self, mock_popen, mock_sleep, runner):
         """Retries on OSError, succeeds on second attempt."""
-        mock_run.side_effect = [
+        mock_popen.side_effect = [
             OSError("Connection reset"),
-            MagicMock(
-                returncode=0,
-                stdout='{"result": "Done", "cost_usd": 0.01}',
-                stderr="",
-            ),
+            _make_popen_mock(returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}'),
         ]
         result = runner.run("Fix the bug")
         assert result.success is True
-        assert mock_run.call_count == 2
+        assert mock_popen.call_count == 2
         mock_sleep.assert_called_once_with(2)
 
 
 class TestRateLimitBackoff:
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_rate_limit_exponential_backoff(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_rate_limit_exponential_backoff(self, mock_popen, mock_sleep, runner):
         """Rate limit errors should use exponential backoff (5, 15, 45) not fixed delays."""
-        mock_run.side_effect = [
-            MagicMock(returncode=1, stdout="", stderr="rate limit exceeded"),
-            MagicMock(returncode=1, stdout="", stderr="rate limit exceeded"),
-            MagicMock(returncode=1, stdout="", stderr="rate limit exceeded"),
-            MagicMock(returncode=1, stdout="", stderr="rate limit exceeded"),
+        mock_popen.side_effect = [
+            _make_popen_mock(returncode=1, stderr="rate limit exceeded"),
+            _make_popen_mock(returncode=1, stderr="rate limit exceeded"),
+            _make_popen_mock(returncode=1, stderr="rate limit exceeded"),
+            _make_popen_mock(returncode=1, stderr="rate limit exceeded"),
         ]
         result = runner.run("Fix the bug")
         assert result.success is False
@@ -356,14 +360,14 @@ class TestRateLimitBackoff:
         assert delays == [5, 15, 45]
 
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_non_rate_limit_uses_fixed_delays(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_non_rate_limit_uses_fixed_delays(self, mock_popen, mock_sleep, runner):
         """Non-rate-limit errors should still use the fixed delays (2, 8, 32)."""
-        mock_run.side_effect = [
-            MagicMock(returncode=1, stdout="", stderr="some other error"),
-            MagicMock(returncode=1, stdout="", stderr="some other error"),
-            MagicMock(returncode=1, stdout="", stderr="some other error"),
-            MagicMock(returncode=1, stdout="", stderr="some other error"),
+        mock_popen.side_effect = [
+            _make_popen_mock(returncode=1, stderr="some other error"),
+            _make_popen_mock(returncode=1, stderr="some other error"),
+            _make_popen_mock(returncode=1, stderr="some other error"),
+            _make_popen_mock(returncode=1, stderr="some other error"),
         ]
         result = runner.run("Fix the bug")
         assert result.success is False
@@ -371,16 +375,12 @@ class TestRateLimitBackoff:
         assert delays == [2, 8, 32]
 
     @patch("claude_runner.time.sleep")
-    @patch("claude_runner.subprocess.run")
-    def test_rate_limit_429_detected(self, mock_run, mock_sleep, runner):
+    @patch("claude_runner.subprocess.Popen")
+    def test_rate_limit_429_detected(self, mock_popen, mock_sleep, runner):
         """429 in stderr should trigger rate limit backoff."""
-        mock_run.side_effect = [
-            MagicMock(returncode=1, stdout="", stderr="HTTP 429 Too Many Requests"),
-            MagicMock(
-                returncode=0,
-                stdout='{"result": "Done", "cost_usd": 0.01}',
-                stderr="",
-            ),
+        mock_popen.side_effect = [
+            _make_popen_mock(returncode=1, stderr="HTTP 429 Too Many Requests"),
+            _make_popen_mock(returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}'),
         ]
         result = runner.run("Fix the bug")
         assert result.success is True

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from config_schema import Config
+from process_utils import run_with_group_kill
 
 logger = logging.getLogger(__name__)
 
@@ -161,24 +162,26 @@ class TaskDiscovery:
             return []
 
         try:
-            proc = subprocess.run(
+            result = run_with_group_kill(
                 test_cmd,
                 shell=True,
                 cwd=self.target_dir,
-                capture_output=True,
-                text=True,
                 timeout=self.config.validation.test_timeout,
             )
-        except (subprocess.TimeoutExpired, OSError) as e:
+        except OSError as e:
             logger.warning("Test discovery failed: %s", e)
             return []
 
-        if proc.returncode == 0:
+        if result.timed_out:
+            logger.warning("Test discovery timed out after %ds", self.config.validation.test_timeout)
+            return []
+
+        if result.returncode == 0:
             return []
 
         # Parse pytest output for FAILED lines
         tasks = []
-        for line in proc.stdout.split("\n"):
+        for line in result.stdout.split("\n"):
             line = line.strip()
             if line.startswith("FAILED"):
                 # e.g. "FAILED tests/test_foo.py::test_bar - AssertionError: ..."
@@ -190,9 +193,9 @@ class TaskDiscovery:
                 ))
 
         # If we got failures but couldn't parse individual ones, create a generic task
-        if proc.returncode != 0 and not tasks:
+        if result.returncode != 0 and not tasks:
             tasks.append(Task(
-                description=f"Fix test failures (exit code {proc.returncode})",
+                description=f"Fix test failures (exit code {result.returncode})",
                 priority=2,
                 source="test_failure",
             ))
@@ -206,23 +209,25 @@ class TaskDiscovery:
             return []
 
         try:
-            proc = subprocess.run(
+            result = run_with_group_kill(
                 lint_cmd,
                 shell=True,
                 cwd=self.target_dir,
-                capture_output=True,
-                text=True,
                 timeout=self.config.validation.lint_timeout,
             )
-        except (subprocess.TimeoutExpired, OSError) as e:
+        except OSError as e:
             logger.warning("Lint discovery failed: %s", e)
             return []
 
-        if proc.returncode == 0:
+        if result.timed_out:
+            logger.warning("Lint discovery timed out after %ds", self.config.validation.lint_timeout)
+            return []
+
+        if result.returncode == 0:
             return []
 
         # Try to parse ruff JSON output
-        output = proc.stdout.strip()
+        output = result.stdout.strip()
         try:
             errors = json.loads(output)
             if isinstance(errors, list):
@@ -328,23 +333,26 @@ class TaskDiscovery:
         ]
 
         try:
-            proc = subprocess.run(
+            result = run_with_group_kill(
                 cmd,
                 cwd=self.target_dir,
-                capture_output=True,
-                text=True,
                 timeout=self.config.discovery.discovery_timeout,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        except (FileNotFoundError, OSError) as e:
             logger.warning("Claude idea discovery failed: %s", e)
             return []
 
-        if proc.returncode != 0:
-            logger.warning("Claude idea discovery exited with code %d", proc.returncode)
+        if result.timed_out:
+            logger.warning("Claude idea discovery timed out after %ds",
+                           self.config.discovery.discovery_timeout)
+            return []
+
+        if result.returncode != 0:
+            logger.warning("Claude idea discovery exited with code %d", result.returncode)
             return []
 
         # Parse JSON response to get result text
-        result_text = proc.stdout
+        result_text = result.stdout
         try:
             # Strategy 1: Try each line individually as a complete JSON object
             for line in result_text.strip().split("\n"):
@@ -433,15 +441,16 @@ class TaskDiscovery:
     def _discover_coverage_gaps(self) -> List[Task]:
         """Discover files with low test coverage (optional, requires pytest-cov)."""
         try:
-            proc = subprocess.run(
+            result = run_with_group_kill(
                 "python3 -m pytest --cov --cov-report=json --cov-report=term -q",
                 shell=True,
                 cwd=self.target_dir,
-                capture_output=True,
-                text=True,
                 timeout=self.config.validation.test_timeout,
             )
-        except (subprocess.TimeoutExpired, OSError):
+        except OSError:
+            return []
+
+        if result.timed_out:
             return []
 
         cov_file = Path(self.target_dir) / "coverage.json"

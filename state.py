@@ -35,6 +35,7 @@ class CycleRecord:
     pipeline_revision_count: int = 0
     pipeline_review_approved: bool = True
     validation_retry_count: int = 0
+    push_succeeded: Optional[bool] = None
 
 
 class StateManager:
@@ -43,10 +44,39 @@ class StateManager:
         self.history_file = Path(config.paths.history_file)
         self._cache: Optional[List[Dict[str, Any]]] = None
         self._cache_mtime: float = 0.0
+        self._history_corrupt: bool = False
         self._ensure_dir()
 
     def _ensure_dir(self) -> None:
         self.history_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def _try_restore_from_backups(self) -> Optional[List[Dict[str, Any]]]:
+        """Attempt to restore history from .corrupt backup files.
+
+        Returns the parsed records from the most recent readable backup,
+        or None if no backup can be parsed.
+        """
+        parent = self.history_file.parent
+        base_name = self.history_file.name
+        backups = sorted(
+            parent.glob(f"{base_name}.corrupt*"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for backup in backups:
+            try:
+                text = backup.read_text().strip()
+                if text:
+                    records = json.loads(text)
+                    if isinstance(records, list):
+                        logger.info(
+                            "Restored %d history records from backup %s",
+                            len(records), backup,
+                        )
+                        return records
+            except (json.JSONDecodeError, OSError):
+                continue
+        return None
 
     def _load_history(self) -> List[Dict[str, Any]]:
         if not self.history_file.exists():
@@ -63,15 +93,51 @@ class StateManager:
                 self._cache_mtime = current_mtime
                 return []
             records = json.loads(text)
+            self._history_corrupt = False
             self._cache = records
             self._cache_mtime = current_mtime
             return records
-        except (json.JSONDecodeError, OSError) as e:
+        except json.JSONDecodeError as e:
+            logger.error("History file is corrupt: %s", e)
+            # Back up corrupted file so record_cycle won't overwrite it
+            backup = str(self.history_file) + ".corrupt"
+            try:
+                import shutil
+                shutil.copy2(str(self.history_file), backup)
+                logger.warning("Backed up corrupted history to %s", backup)
+            except OSError as backup_err:
+                logger.warning("Could not back up corrupted history: %s", backup_err)
+
+            # Attempt to restore from a previous backup
+            restored = self._try_restore_from_backups()
+            if restored is not None:
+                self._cache = restored
+                self._history_corrupt = False
+            else:
+                logger.warning(
+                    "No valid backup found. Corrupted history backed up. "
+                    "Starting fresh — new cycles will write to a clean history file."
+                )
+                self._cache = []
+                self._history_corrupt = False
+            self._cache_mtime = self.history_file.stat().st_mtime
+            return self._cache
+        except OSError as e:
             logger.warning("Failed to read history: %s", e)
             return []
 
     def _save_history(self, records: List[Dict[str, Any]]) -> None:
-        """Atomic write: write to temp file, then rename."""
+        """Atomic write: write to temp file, then rename.
+
+        Refuses to overwrite the history file if it was flagged as corrupt
+        and unrecoverable, to prevent data loss.
+        """
+        if self._history_corrupt:
+            logger.error(
+                "Refusing to save history: file is corrupt and unrecoverable. "
+                "Manually fix or remove %s to resume.", self.history_file,
+            )
+            return
         self._ensure_dir()
         tmp_fd, tmp_path = tempfile.mkstemp(
             dir=str(self.history_file.parent), suffix=".tmp"

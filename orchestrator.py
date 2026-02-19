@@ -6,6 +6,7 @@ import ast
 import concurrent.futures
 import logging
 import os
+import re
 import shutil
 import signal
 import time
@@ -156,7 +157,23 @@ class Orchestrator:
     def __init__(self, config: Config):
         self.config = config
 
-        # Resolve model alias to actual model ID
+        # Fix 10: Validate target_dir at startup
+        target = config.target_dir
+        if not os.path.isdir(target):
+            raise RuntimeError(
+                f"target_dir does not exist or is not a directory: {target}"
+            )
+        import subprocess as _sp
+        git_check = _sp.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=target, capture_output=True, text=True,
+        )
+        if git_check.returncode != 0:
+            raise RuntimeError(
+                f"target_dir is not a git repository: {target}"
+            )
+
+        # Fix 11: Resolve model alias to actual model ID with retry
         resolved = resolve_model_id(
             model_alias=config.claude.model,
             claude_command=config.claude.command,
@@ -164,8 +181,19 @@ class Orchestrator:
         if resolved:
             config.claude.resolved_model = resolved
         else:
-            logger.warning("Could not resolve model '%s', using alias directly",
-                           config.claude.model)
+            # Retry once
+            resolved = resolve_model_id(
+                model_alias=config.claude.model,
+                claude_command=config.claude.command,
+            )
+            if resolved:
+                config.claude.resolved_model = resolved
+            else:
+                logger.error(
+                    "Could not resolve model '%s' after retrying. "
+                    "Using alias directly — Claude invocations may fail.",
+                    config.claude.model,
+                )
 
         self.state = StateManager(config)
         self.safety = SafetyGuard(config, self.state)
@@ -175,12 +203,15 @@ class Orchestrator:
         self.discovery = TaskDiscovery(config)
         self.feedback = FeedbackManager(config)
         self._running = True
+        self._consecutive_exceptions = 0
+        self._backoff_seconds = 0
 
     def _setup_signals(self) -> None:
         """Register signal handlers for graceful shutdown."""
         def handler(signum, frame):
             logger.info("Received signal %d, shutting down gracefully...", signum)
             self._running = False
+            self.claude.terminate()
 
         signal.signal(signal.SIGINT, handler)
         signal.signal(signal.SIGTERM, handler)
@@ -285,12 +316,262 @@ class Orchestrator:
             protected_files=protected,
         )
 
+    # ------------------------------------------------------------------
+    # Commit-message helpers
+    # ------------------------------------------------------------------
+
+    # Verb prefix applied to the commit subject based on the task source.
+    # None means "use the description as-is" (or derive the verb from text).
+    _SOURCE_VERBS = {
+        "test_failure": "Fix",
+        "lint": "Fix",
+        "todo": None,       # derive from TODO text
+        "feedback": None,   # human-written, use as-is
+        "claude_idea": None, # already descriptive, use as-is
+        "coverage": "Add test coverage for",
+        "quality": "Refactor",
+    }
+
+    # Prefixes commonly produced by task_discovery that should be stripped
+    # to avoid stuttering (e.g. "Fix Fix test failure: …").
+    _STRIP_PREFIXES = [
+        "Fix test failure: ",
+        "Fix test failure in ",
+        "FAILED ",
+        "Fix lint error in ",
+        "Fix lint error: ",
+        "Address TODO in ",
+        "Address TODO: ",
+        "IDEA: ",
+    ]
+
+    @staticmethod
+    def _clean_description(desc: str) -> str:
+        """Clean an auto-generated task description for use in commit messages.
+
+        1. Strip common auto-generated prefixes.
+        2. Remove backtick formatting.
+        3. Strip line-number ranges from file references (file.py:10-20 → file.py).
+        4. Strip leading/trailing whitespace.
+        5. Ensure the first character is uppercase.
+        """
+        text = desc.strip()
+
+        # Strip known auto-generated prefixes (case-insensitive first match)
+        lower = text.lower()
+        for pfx in Orchestrator._STRIP_PREFIXES:
+            if lower.startswith(pfx.lower()):
+                text = text[len(pfx):]
+                break
+
+        # Remove backtick formatting
+        text = text.replace("`", "")
+
+        # Strip line-number ranges from file references:
+        # file.py:10-20  → file.py
+        # file.py:10     → file.py
+        text = re.sub(r'(\.\w+):\d+(?:-\d+)?', r'\1', text)
+
+        text = text.strip()
+
+        # Capitalize first character
+        if text:
+            text = text[0].upper() + text[1:]
+
+        return text
+
+    def _build_commit_message(self, task: Task) -> str:
+        """Build a conventional, human-style commit message for a single task.
+
+        Returns a subject line (max 72 chars) optionally followed by a blank
+        line and a body with the full description if it was truncated.
+        """
+        cleaned = self._clean_description(task.description)
+        verb = self._SOURCE_VERBS.get(task.source)
+
+        if task.source == "todo":
+            subject = self._derive_todo_subject(task.description)
+        elif verb is None:
+            # feedback / claude_idea — use cleaned description directly
+            subject = cleaned
+        else:
+            # Avoid double-verbing: if cleaned already starts with the verb, skip
+            if cleaned.lower().startswith(verb.lower()):
+                subject = cleaned
+            else:
+                subject = f"{verb} {cleaned[0].lower() + cleaned[1:]}" if cleaned else verb
+
+        # Ensure first char is uppercase
+        if subject:
+            subject = subject[0].upper() + subject[1:]
+
+        # Truncate subject at 72 characters (git convention)
+        if len(subject) > 72:
+            full_subject = subject
+            # Try to break at a word boundary
+            truncated = subject[:69]
+            last_space = truncated.rfind(" ")
+            if last_space > 40:
+                truncated = truncated[:last_space]
+            subject = truncated + "..."
+            return subject + "\n\n" + full_subject
+        return subject
+
+    @staticmethod
+    def _derive_todo_subject(description: str) -> str:
+        """Derive a commit subject from a TODO task description.
+
+        Examples:
+          "Address TODO in foo.py:10: add input validation"
+            → "Add input validation in foo.py"
+          "Address TODO in bar.py:5: FIXME: broken edge case"
+            → "Fix broken edge case in bar.py"
+        """
+        text = description.strip()
+
+        # Try to extract "Address TODO in <file>:<line>: <action>"
+        m = re.match(
+            r'(?:Address\s+)?TODO\s+in\s+'
+            r'([a-zA-Z0-9_/.\-]+\.\w+)'     # file path
+            r'(?::\d+(?:-\d+)?)?'            # optional :line or :line-line
+            r':\s*(.+)',                       # colon + action text
+            text, re.IGNORECASE,
+        )
+        if m:
+            filepath = m.group(1)
+            action = m.group(2).strip()
+
+            # Handle FIXME / TODO prefixes within the action
+            action = re.sub(r'^(?:FIXME|TODO|XXX)\s*:?\s*', '', action, flags=re.IGNORECASE)
+
+            if action:
+                # Capitalize first letter of action
+                action = action[0].upper() + action[1:]
+                return f"{action} in {filepath}"
+            return f"Address TODO in {filepath}"
+
+        # Fallback: clean the description generically
+        cleaned = Orchestrator._clean_description(text)
+        return cleaned if cleaned else "Address TODO"
+
     def _build_batch_commit_message(self, tasks: List[Task]) -> str:
-        """Build a commit message summarizing a batch of tasks."""
-        sources = sorted(set(t.source for t in tasks))
-        header = f"[auto] batch({len(tasks)}): {', '.join(sources)}"
-        body_lines = [f"  - {t.description[:80]}" for t in tasks]
-        return header + "\n\n" + "\n".join(body_lines)
+        """Build a natural commit message summarizing a batch of tasks."""
+        sources = set(t.source for t in tasks)
+        count = len(tasks)
+
+        if len(sources) == 1:
+            source = next(iter(sources))
+            subject = self._summarize_same_source(source, tasks)
+        else:
+            subject = self._summarize_mixed_sources(sources, tasks)
+
+        # Truncate subject at 72 chars
+        if len(subject) > 72:
+            truncated = subject[:69]
+            last_space = truncated.rfind(" ")
+            if last_space > 40:
+                truncated = truncated[:last_space]
+            subject = truncated + "..."
+
+        body_lines = [f"- {self._clean_description(t.description)}" for t in tasks]
+        return subject + "\n\n" + "\n".join(body_lines)
+
+    def _summarize_same_source(self, source: str, tasks: List[Task]) -> str:
+        """Generate a summary subject when all tasks share the same source."""
+        count = len(tasks)
+        files = self._extract_file_names(tasks)
+
+        if source == "test_failure":
+            if files and len(files) <= 2:
+                return f"Fix test failures in {' and '.join(files)}"
+            return f"Fix test failures in {count} files"
+
+        if source == "lint":
+            if files and len(files) <= 2:
+                return f"Fix lint errors in {' and '.join(files)}"
+            return f"Fix lint errors in {count} files"
+
+        if source == "todo":
+            return f"Address TODOs across {count} modules"
+
+        if source == "coverage":
+            return f"Add test coverage for {count} modules"
+
+        if source == "quality":
+            return f"Refactor {count} modules"
+
+        if source == "claude_idea":
+            # Use the first task's cleaned description as a representative subject
+            cleaned = self._clean_description(tasks[0].description)
+            if count > 1:
+                return f"{cleaned} and {count - 1} more improvements"
+            return cleaned
+
+        if source == "feedback":
+            cleaned = self._clean_description(tasks[0].description)
+            if count > 1:
+                return f"{cleaned} and {count - 1} more tasks"
+            return cleaned
+
+        # Unknown source fallback
+        return f"Apply {count} changes"
+
+    def _summarize_mixed_sources(self, sources: set, tasks: List[Task]) -> str:
+        """Generate a summary subject for tasks with mixed source types."""
+        parts = []
+        source_groups = {}
+        for t in tasks:
+            source_groups.setdefault(t.source, []).append(t)
+
+        # Build a natural summary from the source types present
+        for src in ["test_failure", "lint", "todo", "coverage", "quality",
+                     "claude_idea", "feedback"]:
+            group = source_groups.get(src)
+            if not group:
+                continue
+            if src == "test_failure":
+                parts.append("fix test failures")
+            elif src == "lint":
+                parts.append("fix lint errors")
+            elif src == "todo":
+                parts.append("address TODOs")
+            elif src == "coverage":
+                parts.append("add test coverage")
+            elif src == "quality":
+                parts.append("refactor")
+            elif src in ("claude_idea", "feedback"):
+                parts.append(self._clean_description(group[0].description).lower())
+
+        file_count = len(set().union(*(set(self._extract_file_names(source_groups[s]))
+                                       for s in source_groups)))
+        subject_parts = " and ".join(parts[:2])
+        if len(parts) > 2:
+            subject_parts += f" and {len(parts) - 2} more"
+
+        # Capitalize first letter
+        subject = subject_parts[0].upper() + subject_parts[1:] if subject_parts else "Apply changes"
+
+        if file_count:
+            subject += f" in {file_count} files"
+
+        return subject
+
+    @staticmethod
+    def _extract_file_names(tasks: List[Task]) -> List[str]:
+        """Extract file names mentioned in task descriptions."""
+        files = []
+        for t in tasks:
+            # Look for file references in the description
+            m = re.search(
+                r'([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json|md|txt))',
+                t.description,
+            )
+            if m:
+                # Use just the basename for brevity
+                fname = m.group(1).split("/")[-1]
+                if fname not in files:
+                    files.append(fname)
+        return files
 
     def _format_validation_errors(self, validation: ValidationResult) -> str:
         """Extract failure details from ValidationResult for the retry prompt."""
@@ -386,21 +667,20 @@ class Orchestrator:
                 if is_batch:
                     commit_msg = self._build_batch_commit_message(tasks)
                 else:
-                    commit_msg = f"[auto] {tasks[0].source}: {tasks[0].description[:80]}"
-
-                # Add pipeline metadata to commit message if present
-                if extra.get("pipeline_mode"):
-                    commit_msg += (
-                        f"\n\n[pipeline: {extra['pipeline_mode']}, "
-                        f"revisions={extra.get('pipeline_revision_count', 0)}, "
-                        f"approved={extra.get('pipeline_review_approved', True)}]"
-                    )
+                    commit_msg = self._build_commit_message(tasks[0])
 
                 commit_hash = self.git.commit(commit_msg, files=changed_files)
                 logger.info("Cycle succeeded: %s", commit_msg.split("\n")[0])
 
                 if self.config.orchestrator.push_after_commit:
-                    self.git.push()
+                    push_ok = self.git.push()
+                    if not push_ok:
+                        logger.error(
+                            "Push failed for commit %s — local commits may diverge from remote",
+                            commit_hash[:8],
+                        )
+                else:
+                    push_ok = None
 
                 for t in tasks:
                     if t.source == "feedback" and t.source_file:
@@ -411,7 +691,9 @@ class Orchestrator:
                     commit_hash=commit_hash,
                     cost_usd=total_cost, duration_seconds=total_duration,
                     validation_summary=validation.summary,
-                    validation_retry_count=retry_count, **extra,
+                    validation_retry_count=retry_count,
+                    push_succeeded=push_ok,
+                    **extra,
                 ))
                 return
 
@@ -494,6 +776,7 @@ class Orchestrator:
             pipeline_revision_count=kwargs.get("pipeline_revision_count", 0),
             pipeline_review_approved=kwargs.get("pipeline_review_approved", True),
             validation_retry_count=kwargs.get("validation_retry_count", 0),
+            push_succeeded=kwargs.get("push_succeeded", None),
         )
         return record
 
@@ -542,10 +825,12 @@ class Orchestrator:
         Wraps self.claude.run() in a thread pool with a configurable timeout
         to prevent indefinite hangs even if the subprocess timeout fails.
         On timeout, actively terminates the child process so neither the
-        thread nor the subprocess leak.
+        thread nor the subprocess leak.  Uses wait=False on shutdown to
+        avoid blocking the main loop if the thread refuses to die.
         """
         timeout = self.config.orchestrator.cycle_timeout_seconds
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
             future = executor.submit(self.claude.run, prompt, self.config.target_dir)
             try:
                 return future.result(timeout=timeout)
@@ -555,10 +840,20 @@ class Orchestrator:
                 )
                 self.claude.terminate()
                 future.cancel()
+                # Short secondary wait for the thread to finish
+                try:
+                    future.result(timeout=30)
+                except (concurrent.futures.TimeoutError, concurrent.futures.CancelledError, Exception):
+                    logger.error(
+                        "Claude thread still alive 30s after terminate — "
+                        "continuing without blocking"
+                    )
                 return ClaudeResult(
                     success=False,
                     error=f"Cycle timeout after {timeout}s (Claude CLI hung)",
                 )
+        finally:
+            executor.shutdown(wait=False)
 
     def _cycle(self) -> None:
         """Run a single orchestration cycle."""
@@ -697,7 +992,41 @@ class Orchestrator:
         """Run a cycle using the multi-agent pipeline."""
         logger.info("Running multi-agent pipeline")
         pipeline = AgentPipeline(self.config)
-        pipeline_result = pipeline.run(tasks, self.git.rollback, snapshot)
+
+        # Wrap pipeline.run() in a thread pool with cycle-level timeout
+        timeout = self.config.orchestrator.cycle_timeout_seconds
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(pipeline.run, tasks, self.git.rollback, snapshot)
+            try:
+                pipeline_result = future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    "Multi-agent pipeline cycle timeout fired after %ds", timeout,
+                )
+                # Fix 1: Terminate the active agent subprocess
+                pipeline.terminate()
+                future.cancel()
+                # Short secondary wait
+                try:
+                    future.result(timeout=30)
+                except (concurrent.futures.TimeoutError, concurrent.futures.CancelledError, Exception):
+                    logger.error(
+                        "Pipeline thread still alive 30s after terminate — "
+                        "continuing without blocking"
+                    )
+                self.git.rollback(snapshot)
+                self.state.record_cycle(self._make_cycle_record(
+                    tasks,
+                    success=False,
+                    cost_usd=0.0,
+                    duration_seconds=float(timeout),
+                    error=f"Pipeline cycle timeout after {timeout}s",
+                    pipeline_mode="multi_agent",
+                ))
+                return
+        finally:
+            executor.shutdown(wait=False)
 
         total_cost = pipeline_result.total_cost_usd
         total_duration = pipeline_result.total_duration_seconds
@@ -745,18 +1074,51 @@ class Orchestrator:
             while self._running:
                 try:
                     self._cycle()
+                    # Reset backoff on successful cycle (no exception)
+                    self._consecutive_exceptions = 0
+                    self._backoff_seconds = 0
+                except (FileNotFoundError, PermissionError) as e:
+                    # Likely permanent errors — don't retry at normal pace
+                    self._consecutive_exceptions += 1
+                    logger.error(
+                        "Likely permanent error in cycle (%s): %s "
+                        "(consecutive errors: %d)",
+                        type(e).__name__, e, self._consecutive_exceptions,
+                    )
+                    if self._consecutive_exceptions >= 3:
+                        logger.error(
+                            "Pausing after %d consecutive %s errors — "
+                            "check config and permissions",
+                            self._consecutive_exceptions, type(e).__name__,
+                        )
+                        self._backoff_seconds = min(
+                            self._backoff_seconds * 2 if self._backoff_seconds else 60,
+                            600,
+                        )
                 except Exception:
-                    logger.exception("Unexpected error in cycle")
+                    self._consecutive_exceptions += 1
+                    self._backoff_seconds = min(
+                        self._backoff_seconds * 2 if self._backoff_seconds else 30,
+                        600,
+                    )
+                    logger.exception(
+                        "Unexpected error in cycle (consecutive: %d, backoff: %ds)",
+                        self._consecutive_exceptions, self._backoff_seconds,
+                    )
 
                 if once:
                     break
 
-                # 13. Sleep
-                logger.debug(
-                    "Sleeping %ds...", self.config.orchestrator.loop_interval_seconds
-                )
+                # 13. Sleep (with exponential backoff if exceptions are recurring)
+                sleep_total = self.config.orchestrator.loop_interval_seconds + self._backoff_seconds
+                if self._backoff_seconds > 0:
+                    logger.info(
+                        "Sleeping %ds (includes %ds backoff after %d consecutive errors)",
+                        sleep_total, self._backoff_seconds, self._consecutive_exceptions,
+                    )
+                else:
+                    logger.debug("Sleeping %ds...", sleep_total)
                 # Sleep in small increments so we can respond to signals
-                sleep_total = self.config.orchestrator.loop_interval_seconds
                 while sleep_total > 0 and self._running:
                     time.sleep(min(1, sleep_total))
                     sleep_total -= 1
