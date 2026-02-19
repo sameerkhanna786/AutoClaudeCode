@@ -129,6 +129,28 @@ INSTRUCTIONS:
 - If a task is unclear or impossible, make your best effort and explain what you did.
 """
 
+VALIDATION_RETRY_PROMPT_TEMPLATE = """\
+You are working on the project in the current directory.
+
+ORIGINAL TASK: {task_description}
+
+YOUR PREVIOUS CHANGES FAILED VALIDATION (attempt {attempt} of {max_attempts}).
+
+VALIDATION FAILURES:
+{validation_errors}
+
+INSTRUCTIONS:
+- Read the failure output above carefully.
+- Determine whether the bug is in the code you changed or in the tests.
+  Sometimes the test expectation is wrong (e.g., wrong return value asserted).
+  Other times the implementation has the actual bug.
+- Fix whichever side is wrong. You may fix the code, fix the tests, or both.
+- Do NOT run git commands (add, commit, push). The orchestrator handles git.
+- Do NOT modify these protected files: {protected_files}
+- Your previous changes are still in the working tree. Build on them, do not start over.
+- Focus on making ALL validations pass.
+"""
+
 
 class Orchestrator:
     def __init__(self, config: Config):
@@ -270,6 +292,187 @@ class Orchestrator:
         body_lines = [f"  - {t.description[:80]}" for t in tasks]
         return header + "\n\n" + "\n".join(body_lines)
 
+    def _format_validation_errors(self, validation: ValidationResult) -> str:
+        """Extract failure details from ValidationResult for the retry prompt."""
+        include_full = self.config.orchestrator.retry_include_full_output
+        parts = []
+        for step in validation.steps:
+            if not step.passed:
+                parts.append(f"--- {step.name} FAILED (exit code {step.return_code}) ---")
+                parts.append(f"Command: {step.command}")
+                if include_full and step.output:
+                    output = step.output[:8000]
+                    if len(step.output) > 8000:
+                        output += "\n... (truncated)"
+                    parts.append(output)
+                parts.append("")
+        return "\n".join(parts) if parts else validation.summary
+
+    def _build_retry_prompt(self, tasks: List[Task], validation: ValidationResult,
+                            attempt: int, max_attempts: int) -> str:
+        """Build a prompt for retrying after validation failure."""
+        protected = ", ".join(self.config.safety.protected_files)
+        errors = self._format_validation_errors(validation)
+        if len(tasks) > 1:
+            desc = self._format_task_list(tasks)
+        else:
+            desc = tasks[0].description
+        return VALIDATION_RETRY_PROMPT_TEMPLATE.format(
+            task_description=desc, attempt=attempt,
+            max_attempts=max_attempts, validation_errors=errors,
+            protected_files=protected,
+        )
+
+    def _validate_with_retries(
+        self, tasks: List[Task], snapshot, pre_existing_files,
+        total_cost: float, total_duration: float,
+        is_batch: bool, extra_record_kwargs: Optional[dict] = None,
+    ) -> None:
+        """Validate changes, retrying with Claude on failure.
+
+        On validation failure, re-invokes Claude with the failure output so it can
+        fix the issue in-place. Rollback only happens if all fix attempts are exhausted
+        or a non-retryable error occurs (safety check, syntax error).
+        """
+        max_retries = self.config.orchestrator.max_validation_retries
+        extra = extra_record_kwargs or {}
+        retry_count = 0
+
+        for attempt in range(max_retries + 1):
+            # Re-capture changed files (may differ after retry)
+            changed_files = self.git.get_new_changed_files(pre_existing_files)
+            if not changed_files:
+                logger.info("No files changed, skipping")
+                self.state.record_cycle(self._make_cycle_record(
+                    tasks, success=False,
+                    cost_usd=total_cost, duration_seconds=total_duration,
+                    error="No files changed",
+                    validation_retry_count=retry_count, **extra,
+                ))
+                return
+
+            # Safety checks (non-retryable — immediate rollback)
+            try:
+                self.safety.post_claude_checks(changed_files)
+            except SafetyError as e:
+                logger.warning("Post-Claude safety check failed: %s", e)
+                self.git.rollback(snapshot)
+                self.state.record_cycle(self._make_cycle_record(
+                    tasks, success=False,
+                    cost_usd=total_cost, duration_seconds=total_duration,
+                    error=str(e),
+                    validation_retry_count=retry_count, **extra,
+                ))
+                return
+
+            # Syntax check (non-retryable)
+            syntax_err = self._syntax_check_files(changed_files)
+            if syntax_err:
+                logger.warning("Syntax check failed: %s", syntax_err)
+                self.git.rollback(snapshot)
+                self.state.record_cycle(self._make_cycle_record(
+                    tasks, success=False,
+                    cost_usd=total_cost, duration_seconds=total_duration,
+                    error=syntax_err,
+                    validation_retry_count=retry_count, **extra,
+                ))
+                return
+
+            # Validate
+            validation = self.validator.validate(self.config.target_dir)
+
+            if validation.passed:
+                # Commit
+                if is_batch:
+                    commit_msg = self._build_batch_commit_message(tasks)
+                else:
+                    commit_msg = f"[auto] {tasks[0].source}: {tasks[0].description[:80]}"
+
+                # Add pipeline metadata to commit message if present
+                if extra.get("pipeline_mode"):
+                    commit_msg += (
+                        f"\n\n[pipeline: {extra['pipeline_mode']}, "
+                        f"revisions={extra.get('pipeline_revision_count', 0)}, "
+                        f"approved={extra.get('pipeline_review_approved', True)}]"
+                    )
+
+                commit_hash = self.git.commit(commit_msg, files=changed_files)
+                logger.info("Cycle succeeded: %s", commit_msg.split("\n")[0])
+
+                if self.config.orchestrator.push_after_commit:
+                    self.git.push()
+
+                for t in tasks:
+                    if t.source == "feedback" and t.source_file:
+                        self.feedback.mark_done(t.source_file)
+
+                self.state.record_cycle(self._make_cycle_record(
+                    tasks, success=True,
+                    commit_hash=commit_hash,
+                    cost_usd=total_cost, duration_seconds=total_duration,
+                    validation_summary=validation.summary,
+                    validation_retry_count=retry_count, **extra,
+                ))
+                return
+
+            # Validation failed
+            if attempt < max_retries:
+                # Cost guard: check accumulated cost against hourly budget
+                hourly_cost = self.state.get_total_cost(lookback_seconds=3600)
+                cost_limit = self.config.safety.max_cost_usd_per_hour
+                if hourly_cost + total_cost >= cost_limit * 0.9:
+                    logger.warning(
+                        "Cost guard: $%.2f accumulated (limit $%.2f), aborting retries",
+                        hourly_cost + total_cost, cost_limit,
+                    )
+                    self.git.rollback(snapshot)
+                    self.state.record_cycle(self._make_cycle_record(
+                        tasks, success=False,
+                        cost_usd=total_cost, duration_seconds=total_duration,
+                        validation_summary=validation.summary,
+                        error="Validation failed; cost guard prevented retry",
+                        validation_retry_count=retry_count, **extra,
+                    ))
+                    return
+
+                retry_count += 1
+                logger.info(
+                    "Validation failed (attempt %d/%d), retrying with failure output...",
+                    attempt + 1, max_retries + 1,
+                )
+                retry_prompt = self._build_retry_prompt(
+                    tasks, validation, attempt + 1, max_retries + 1,
+                )
+                retry_result = self._run_claude_with_timeout(retry_prompt)
+                total_cost += retry_result.cost_usd
+                total_duration += retry_result.duration_seconds
+
+                if not retry_result.success:
+                    logger.warning("Retry Claude invocation failed: %s", retry_result.error)
+                    self.git.rollback(snapshot)
+                    self.state.record_cycle(self._make_cycle_record(
+                        tasks, success=False,
+                        cost_usd=total_cost, duration_seconds=total_duration,
+                        validation_summary=validation.summary,
+                        error=f"Retry failed: {retry_result.error}",
+                        validation_retry_count=retry_count, **extra,
+                    ))
+                    return
+                # Loop back to re-validate
+            else:
+                # All attempts exhausted
+                logger.warning("Validation failed after %d attempts: %s",
+                               max_retries + 1, validation.summary)
+                self.git.rollback(snapshot)
+                self.state.record_cycle(self._make_cycle_record(
+                    tasks, success=False,
+                    cost_usd=total_cost, duration_seconds=total_duration,
+                    validation_summary=validation.summary,
+                    error="Validation failed",
+                    validation_retry_count=retry_count, **extra,
+                ))
+                return
+
     def _make_cycle_record(self, tasks: List[Task], **kwargs) -> CycleRecord:
         """Construct a CycleRecord with both singular and batch list fields."""
         primary = tasks[0] if tasks else Task(description="unknown", priority=99, source="unknown")
@@ -290,6 +493,7 @@ class Orchestrator:
             pipeline_mode=kwargs.get("pipeline_mode", ""),
             pipeline_revision_count=kwargs.get("pipeline_revision_count", 0),
             pipeline_review_approved=kwargs.get("pipeline_review_approved", True),
+            validation_retry_count=kwargs.get("validation_retry_count", 0),
         )
         return record
 
@@ -474,88 +678,13 @@ class Orchestrator:
             ))
             return
 
-        # 8. Check changed files
-        changed_files = self.git.get_new_changed_files(pre_existing_files)
-        if not changed_files:
-            logger.info("No files changed by Claude, skipping")
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=False,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                error="No files changed",
-            ))
-            return
-
-        try:
-            self.safety.post_claude_checks(changed_files)
-        except SafetyError as e:
-            logger.warning("Post-Claude safety check failed: %s", e)
-            self.git.rollback(snapshot)
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=False,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                error=str(e),
-            ))
-            return
-
-        # Syntax check if self-improving
-        syntax_err = self._syntax_check_files(changed_files)
-        if syntax_err:
-            logger.warning("Syntax check failed: %s", syntax_err)
-            self.git.rollback(snapshot)
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=False,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                error=syntax_err,
-            ))
-            return
-
-        # 9. Validate
-        validation = self.validator.validate(self.config.target_dir)
-
-        if validation.passed:
-            # 10. Commit
-            if is_batch:
-                commit_msg = self._build_batch_commit_message(tasks)
-            else:
-                commit_msg = f"[auto] {tasks[0].source}: {tasks[0].description[:80]}"
-            commit_hash = self.git.commit(commit_msg, files=changed_files)
-            logger.info("Cycle succeeded: %s", commit_msg.split("\n")[0])
-
-            # Push to remote if configured
-            if self.config.orchestrator.push_after_commit:
-                self.git.push()
-
-            # Mark all feedback tasks as done
-            for t in tasks:
-                if t.source == "feedback" and t.source_file:
-                    self.feedback.mark_done(t.source_file)
-
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=True,
-                commit_hash=commit_hash,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                validation_summary=validation.summary,
-            ))
-        else:
-            # 11. Rollback
-            logger.warning("Validation failed: %s", validation.summary)
-            self.git.rollback(snapshot)
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=False,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                validation_summary=validation.summary,
-                error="Validation failed",
-            ))
+        # 8-11. Validate with retries, commit or rollback
+        self._validate_with_retries(
+            tasks=tasks, snapshot=snapshot,
+            pre_existing_files=pre_existing_files,
+            total_cost=total_cost, total_duration=total_duration,
+            is_batch=is_batch,
+        )
 
     def _cycle_multi_agent(
         self, tasks: List[Task], snapshot: str,
@@ -584,102 +713,18 @@ class Orchestrator:
             ))
             return
 
-        # Steps 8-11: same as single-agent flow
-        changed_files = self.git.get_new_changed_files(pre_existing_files)
-        if not changed_files:
-            logger.info("No files changed by pipeline, skipping")
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=False,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                error="No files changed",
-                pipeline_mode="multi_agent",
-                pipeline_revision_count=pipeline_result.revision_count,
-                pipeline_review_approved=pipeline_result.final_review_approved,
-            ))
-            return
-
-        try:
-            self.safety.post_claude_checks(changed_files)
-        except SafetyError as e:
-            logger.warning("Post-pipeline safety check failed: %s", e)
-            self.git.rollback(snapshot)
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=False,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                error=str(e),
-                pipeline_mode="multi_agent",
-                pipeline_revision_count=pipeline_result.revision_count,
-                pipeline_review_approved=pipeline_result.final_review_approved,
-            ))
-            return
-
-        syntax_err = self._syntax_check_files(changed_files)
-        if syntax_err:
-            logger.warning("Syntax check failed: %s", syntax_err)
-            self.git.rollback(snapshot)
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=False,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                error=syntax_err,
-                pipeline_mode="multi_agent",
-                pipeline_revision_count=pipeline_result.revision_count,
-                pipeline_review_approved=pipeline_result.final_review_approved,
-            ))
-            return
-
-        validation = self.validator.validate(self.config.target_dir)
-
-        if validation.passed:
-            if is_batch:
-                commit_msg = self._build_batch_commit_message(tasks)
-            else:
-                commit_msg = f"[auto] {tasks[0].source}: {tasks[0].description[:80]}"
-            # Add pipeline metadata to commit message
-            commit_msg += (
-                f"\n\n[pipeline: multi_agent, revisions={pipeline_result.revision_count}, "
-                f"approved={pipeline_result.final_review_approved}]"
-            )
-            commit_hash = self.git.commit(commit_msg, files=changed_files)
-            logger.info("Pipeline cycle succeeded: %s", commit_msg.split("\n")[0])
-
-            if self.config.orchestrator.push_after_commit:
-                self.git.push()
-
-            for t in tasks:
-                if t.source == "feedback" and t.source_file:
-                    self.feedback.mark_done(t.source_file)
-
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=True,
-                commit_hash=commit_hash,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                validation_summary=validation.summary,
-                pipeline_mode="multi_agent",
-                pipeline_revision_count=pipeline_result.revision_count,
-                pipeline_review_approved=pipeline_result.final_review_approved,
-            ))
-        else:
-            logger.warning("Validation failed: %s", validation.summary)
-            self.git.rollback(snapshot)
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=False,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                validation_summary=validation.summary,
-                error="Validation failed",
-                pipeline_mode="multi_agent",
-                pipeline_revision_count=pipeline_result.revision_count,
-                pipeline_review_approved=pipeline_result.final_review_approved,
-            ))
+        # Steps 8-11: validate with retries, commit or rollback
+        self._validate_with_retries(
+            tasks=tasks, snapshot=snapshot,
+            pre_existing_files=pre_existing_files,
+            total_cost=total_cost, total_duration=total_duration,
+            is_batch=is_batch,
+            extra_record_kwargs={
+                "pipeline_mode": "multi_agent",
+                "pipeline_revision_count": pipeline_result.revision_count,
+                "pipeline_review_approved": pipeline_result.final_review_approved,
+            },
+        )
 
     def run(self, once: bool = False) -> None:
         """Run the main loop. If once=True, run a single cycle and exit."""

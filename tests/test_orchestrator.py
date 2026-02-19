@@ -79,6 +79,7 @@ class TestOrchestrator:
         orch.git.rollback.assert_not_called()
 
     def test_failed_validation_causes_rollback(self, orch):
+        orch.config.orchestrator.max_validation_retries = 0
         orch.validator.validate.return_value = ValidationResult(
             passed=False,
             steps=[ValidationStep(name="tests", command="pytest", passed=False)],
@@ -560,3 +561,241 @@ class TestAdaptiveBatchSizing:
         tasks = orch_batch._gather_tasks()
         assert all(t.description != "Fix bug in foo.py" for t in tasks)
         assert len(tasks) == 2
+
+
+class TestValidationRetry:
+    """Tests for retry-on-validation-failure behavior."""
+
+    @pytest.fixture
+    def retry_orch(self, tmp_path):
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.validation.test_command = ""
+        cfg.validation.lint_command = ""
+        cfg.validation.build_command = ""
+        cfg.orchestrator.batch_mode = False
+        cfg.orchestrator.max_validation_retries = 5
+
+        with patch("orchestrator.GitManager") as MockGit, \
+             patch("orchestrator.ClaudeRunner") as MockClaude, \
+             patch("orchestrator.TaskDiscovery") as MockDisc, \
+             patch("orchestrator.Validator") as MockVal:
+
+            mock_git = MockGit.return_value
+            mock_git.create_snapshot.return_value = Snapshot(commit_hash="a" * 40)
+            mock_git.capture_worktree_state.return_value = set()
+            mock_git.get_new_changed_files.return_value = ["fix.py"]
+            mock_git.is_clean.return_value = True
+            mock_git.commit.return_value = "b" * 40
+
+            mock_claude = MockClaude.return_value
+            mock_claude.run.return_value = ClaudeResult(
+                success=True, result_text="Fixed it",
+                cost_usd=0.05, duration_seconds=10.0,
+            )
+
+            mock_disc = MockDisc.return_value
+            mock_disc.discover_all.return_value = [
+                Task(description="Fix bug in foo.py", priority=2, source="test_failure"),
+            ]
+
+            mock_val = MockVal.return_value
+            mock_val.validate.return_value = ValidationResult(passed=True, steps=[])
+
+            o = Orchestrator(cfg)
+            o.git = mock_git
+            o.claude = mock_claude
+            o.discovery = mock_disc
+            o.validator = mock_val
+            yield o
+
+    def test_retry_succeeds_on_second_attempt(self, retry_orch):
+        """First validation fails, retry fixes it, commit happens."""
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED test_foo.py::test_bar", return_code=1,
+            )],
+        )
+        pass_result = ValidationResult(passed=True, steps=[])
+        retry_orch.validator.validate.side_effect = [fail_result, pass_result]
+
+        retry_orch.state.record_cycle = MagicMock()
+        retry_orch._cycle()
+
+        retry_orch.git.commit.assert_called_once()
+        retry_orch.git.rollback.assert_not_called()
+        record = retry_orch.state.record_cycle.call_args[0][0]
+        assert record.success is True
+        assert record.validation_retry_count == 1
+
+    def test_retry_all_attempts_exhausted(self, retry_orch):
+        """All 6 attempts fail (1 initial + 5 retries), rollback at end."""
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED", return_code=1,
+            )],
+        )
+        # 6 validation calls: 1 initial + 5 retries
+        retry_orch.validator.validate.side_effect = [fail_result] * 6
+
+        retry_orch.state.record_cycle = MagicMock()
+        retry_orch._cycle()
+
+        retry_orch.git.rollback.assert_called_once()
+        retry_orch.git.commit.assert_not_called()
+        record = retry_orch.state.record_cycle.call_args[0][0]
+        assert record.success is False
+        assert record.validation_retry_count == 5
+
+    def test_retry_no_rollback_between_attempts(self, retry_orch):
+        """git.rollback is not called until final failure (in-place fix behavior)."""
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED", return_code=1,
+            )],
+        )
+        pass_result = ValidationResult(passed=True, steps=[])
+        # Fail 3 times, then pass
+        retry_orch.validator.validate.side_effect = [
+            fail_result, fail_result, fail_result, pass_result,
+        ]
+
+        retry_orch._cycle()
+
+        # Rollback should never be called since we eventually succeeded
+        retry_orch.git.rollback.assert_not_called()
+        retry_orch.git.commit.assert_called_once()
+
+    def test_retry_disabled_when_zero(self, retry_orch):
+        """Setting max_validation_retries=0 causes immediate rollback."""
+        retry_orch.config.orchestrator.max_validation_retries = 0
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED", return_code=1,
+            )],
+        )
+        retry_orch.validator.validate.return_value = fail_result
+
+        retry_orch.state.record_cycle = MagicMock()
+        retry_orch._cycle()
+
+        retry_orch.git.rollback.assert_called_once()
+        retry_orch.git.commit.assert_not_called()
+        # Claude should only be called once (the initial invocation, no retries)
+        assert retry_orch.claude.run.call_count == 1
+
+    def test_retry_cost_guard(self, retry_orch):
+        """Retry aborts early if cost limit is approached."""
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED", return_code=1,
+            )],
+        )
+        retry_orch.validator.validate.return_value = fail_result
+        # Make cost guard trigger by returning high accumulated cost
+        retry_orch.state.get_total_cost = MagicMock(return_value=9.5)
+        retry_orch.config.safety.max_cost_usd_per_hour = 10.0
+
+        retry_orch.state.record_cycle = MagicMock()
+        retry_orch._cycle()
+
+        retry_orch.git.rollback.assert_called_once()
+        record = retry_orch.state.record_cycle.call_args[0][0]
+        assert record.success is False
+        assert "cost guard" in record.error
+
+    def test_retry_claude_failure_aborts(self, retry_orch):
+        """If retry Claude invocation itself fails, rollback immediately."""
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED", return_code=1,
+            )],
+        )
+        retry_orch.validator.validate.return_value = fail_result
+
+        # First Claude call succeeds (initial), second fails (retry)
+        retry_orch.claude.run.side_effect = [
+            ClaudeResult(success=True, result_text="Fixed it",
+                         cost_usd=0.05, duration_seconds=10.0),
+            ClaudeResult(success=False, error="API error",
+                         cost_usd=0.01, duration_seconds=2.0),
+        ]
+
+        retry_orch.state.record_cycle = MagicMock()
+        retry_orch._cycle()
+
+        retry_orch.git.rollback.assert_called_once()
+        retry_orch.git.commit.assert_not_called()
+        record = retry_orch.state.record_cycle.call_args[0][0]
+        assert record.success is False
+        assert "Retry failed" in record.error
+
+    def test_retry_prompt_includes_test_output(self, retry_orch):
+        """The retry prompt contains the actual validation failure output."""
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest -x", passed=False,
+                output="FAILED test_foo.py::test_bar - AssertionError: 1 != 2",
+                return_code=1,
+            )],
+        )
+        pass_result = ValidationResult(passed=True, steps=[])
+        retry_orch.validator.validate.side_effect = [fail_result, pass_result]
+
+        retry_orch._cycle()
+
+        # The second Claude call should be the retry with failure info
+        assert retry_orch.claude.run.call_count == 2
+        retry_prompt = retry_orch.claude.run.call_args_list[1][0][0]
+        assert "FAILED test_foo.py::test_bar" in retry_prompt
+        assert "AssertionError: 1 != 2" in retry_prompt
+        assert "VALIDATION FAILURES" in retry_prompt
+        assert "attempt 1 of 6" in retry_prompt
+
+    def test_retry_aggregates_cost(self, retry_orch):
+        """Single CycleRecord sums cost from all attempts."""
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED", return_code=1,
+            )],
+        )
+        pass_result = ValidationResult(passed=True, steps=[])
+        retry_orch.validator.validate.side_effect = [fail_result, fail_result, pass_result]
+
+        # Initial call + 2 retry calls
+        retry_orch.claude.run.side_effect = [
+            ClaudeResult(success=True, result_text="v1", cost_usd=0.05, duration_seconds=10.0),
+            ClaudeResult(success=True, result_text="v2", cost_usd=0.03, duration_seconds=5.0),
+            ClaudeResult(success=True, result_text="v3", cost_usd=0.04, duration_seconds=8.0),
+        ]
+
+        retry_orch.state.record_cycle = MagicMock()
+        retry_orch._cycle()
+
+        record = retry_orch.state.record_cycle.call_args[0][0]
+        assert record.success is True
+        # 0.05 (initial) + 0.03 (retry1) + 0.04 (retry2)
+        assert abs(record.cost_usd - 0.12) < 0.001
+        assert abs(record.duration_seconds - 23.0) < 0.1
+        assert record.validation_retry_count == 2

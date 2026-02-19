@@ -15,7 +15,7 @@ class ClaudeConfig:
     model: str = "opus"
     resolved_model: str = ""   # Populated at startup by Orchestrator
     max_turns: int = 25
-    timeout_seconds: int = 300
+    timeout_seconds: int = 1800
     command: str = "claude"
     max_retries: int = 3
     retry_delays: List[int] = field(default_factory=lambda: [2, 8, 32])
@@ -33,7 +33,7 @@ class OrchestratorConfig:
     max_feedback_retries: int = 3
     max_tasks_per_cycle: int = 10
     batch_mode: bool = True
-    cycle_timeout_seconds: int = 600
+    cycle_timeout_seconds: int = 7200
     # Adaptive batch sizing
     min_batch_size: int = 1
     max_batch_size: int = 10
@@ -41,6 +41,9 @@ class OrchestratorConfig:
     batch_grow_step: int = 1
     batch_shrink_step: int = 2
     adaptive_batch_window: int = 10
+    # Validation retry — re-invoke Claude with failure output to fix in-place
+    max_validation_retries: int = 5
+    retry_include_full_output: bool = True
 
 
 @dataclass
@@ -48,9 +51,9 @@ class ValidationConfig:
     test_command: str = "python3 -m pytest tests/ -x -q"
     lint_command: str = ""
     build_command: str = ""
-    test_timeout: int = 120
-    lint_timeout: int = 60
-    build_timeout: int = 120
+    test_timeout: int = 1800
+    lint_timeout: int = 1800
+    build_timeout: int = 1800
 
 
 @dataclass
@@ -67,7 +70,7 @@ class DiscoveryConfig:
     ])
     max_todo_tasks: int = 20
     discovery_model: str = "opus"
-    discovery_timeout: int = 180
+    discovery_timeout: int = 1800
 
 
 @dataclass
@@ -86,7 +89,7 @@ class AgentRoleConfig:
     enabled: bool = True
     model: str = "opus"
     max_turns: int = 25
-    timeout_seconds: int = 300
+    timeout_seconds: int = 1800
 
 
 @dataclass
@@ -95,13 +98,13 @@ class AgentPipelineConfig:
     enabled: bool = False
     max_revisions: int = 2
     planner: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
-        model="opus", max_turns=10, timeout_seconds=180))
+        model="opus", max_turns=10, timeout_seconds=1800))
     coder: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
-        model="opus", max_turns=25, timeout_seconds=300))
+        model="opus", max_turns=25, timeout_seconds=1800))
     tester: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
-        model="opus", max_turns=15, timeout_seconds=240))
+        model="opus", max_turns=15, timeout_seconds=1800))
     reviewer: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
-        model="opus", max_turns=10, timeout_seconds=180))
+        model="opus", max_turns=10, timeout_seconds=1800))
 
 
 @dataclass

@@ -31,6 +31,10 @@ class CycleRecord:
     task_types: List[str] = field(default_factory=list)
     batch_size: int = 1
     task_keys: List[str] = field(default_factory=list)
+    pipeline_mode: str = ""
+    pipeline_revision_count: int = 0
+    pipeline_review_approved: bool = True
+    validation_retry_count: int = 0
 
 
 class StateManager:
