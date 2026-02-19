@@ -37,6 +37,9 @@ python3 main.py
 
 # Custom config
 python3 main.py --config path/to/config.yaml
+
+# Target a different project directory
+python3 main.py --once --target-dir /path/to/project
 ```
 
 ## How It Works
