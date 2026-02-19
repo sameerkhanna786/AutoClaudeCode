@@ -37,10 +37,11 @@ class ClaudeRunner:
     def _build_command(self, prompt: str) -> List[str]:
         """Build the CLI command list."""
         cc = self.config.claude
+        model = cc.resolved_model or cc.model
         cmd = [
             cc.command,
             "-p", prompt,
-            "--model", cc.model,
+            "--model", model,
             "--max-turns", str(cc.max_turns),
             "--output-format", "json",
         ]

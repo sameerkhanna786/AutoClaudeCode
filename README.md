@@ -6,6 +6,7 @@ An autonomous development system that runs Claude Code in a continuous loop to d
 
 - **Autonomous task discovery** — finds test failures, lint errors, TODOs, and generates Claude-powered improvement ideas
 - **Plan-then-execute mode** — Claude plans changes before implementing for higher quality results
+- **Multi-agent pipeline** — specialized Planner, Coder, Tester, and Reviewer agents collaborate with revision loops for higher quality
 - **Automatic validation** — runs tests/lint/build after every change, rolls back on failure
 - **Developer feedback system** — drop task files in `feedback/` to steer priorities
 - **Self-improvement mode** — can modify its own source code with syntax checking and backups
@@ -72,6 +73,7 @@ All settings live in `config.yaml`. Key sections:
 | `safety` | Max consecutive failures, cycles/hour, cost/hour, min disk space, protected files |
 | `paths` | Feedback, state, history, lock file, and backup directories |
 | `logging` | Log level, file path, rotation size and backup count |
+| `agent_pipeline` | Multi-agent mode: enable/disable, per-agent model and timeout, max revision loops |
 
 See [`config.yaml`](config.yaml) for the full annotated configuration.
 
@@ -92,8 +94,10 @@ auto_claude_code/
 ├── config.yaml          # Configuration (PROTECTED)
 ├── config_schema.py     # Load/validate config, apply defaults
 ├── orchestrator.py      # Main loop tying everything together
+├── agent_pipeline.py    # Multi-agent pipeline: planner, coder, tester, reviewer
 ├── task_discovery.py    # Auto-discover tasks (tests, lint, TODOs, coverage, quality)
 ├── claude_runner.py     # Invoke claude CLI, parse JSON response
+├── model_resolver.py    # Resolve model aliases to actual model IDs at startup
 ├── validator.py         # Run test/lint/build commands, determine pass/fail
 ├── git_manager.py       # Snapshot, rollback, commit
 ├── feedback.py          # Watch feedback/ dir for developer task files
@@ -107,6 +111,7 @@ auto_claude_code/
 │   ├── history.json     # Cycle history
 │   ├── auto_claude.log  # Log file
 │   ├── lock.pid         # Lock file for single-instance enforcement
+│   ├── agent_workspace/ # Inter-agent communication files (multi-agent mode)
 │   └── backups/         # Module backups (self-improvement mode)
 └── tests/               # Pytest test suite
     ├── conftest.py
@@ -119,15 +124,19 @@ auto_claude_code/
     ├── test_safety.py
     ├── test_state.py
     ├── test_task_discovery.py
-    └── test_validator.py
+    ├── test_validator.py
+    ├── test_model_resolver.py
+    └── test_agent_pipeline.py
 ```
 
 | Module | Role |
 |---|---|
 | `main.py` | Entry point with argument parsing and a two-layer watchdog that recovers from import failures |
 | `orchestrator.py` | Runs the core loop, coordinates all other modules |
+| `agent_pipeline.py` | Orchestrates the multi-agent pipeline: Planner → Coder → Tester → Reviewer with revision loops |
 | `task_discovery.py` | Discovers work: test failures, lint errors, TODOs, coverage gaps, quality issues, Claude ideas |
 | `claude_runner.py` | Invokes the `claude` CLI and parses the JSON response |
+| `model_resolver.py` | Resolves model aliases (e.g., "opus") to actual model IDs at startup |
 | `validator.py` | Runs test/lint/build commands and reports pass/fail |
 | `git_manager.py` | Manages git snapshots, rollbacks, and commits |
 | `feedback.py` | Reads developer task files from `feedback/` and moves completed ones to `feedback/done/` |
@@ -155,6 +164,39 @@ When `self_improve: true` in `config.yaml`:
 - All orchestrator source files are backed up to `state/backups/` before each cycle
 - Every modified `.py` file is syntax-checked before committing
 - If syntax checking fails, changes are rolled back
+
+## Multi-Agent Pipeline
+
+When `agent_pipeline.enabled: true` in `config.yaml`, each cycle uses a pipeline of specialized agents instead of a single Claude invocation:
+
+1. **Planner** — analyzes the task and writes a detailed implementation plan (does not modify code)
+2. **Coder** — implements the plan by modifying source files
+3. **Tester** — writes or updates tests to cover the changes
+4. **Reviewer** — reviews all changes and approves or requests revisions
+
+If the Reviewer requests revisions, changes are rolled back and the Coder tries again with the feedback (up to `max_revisions` times, default: 2). Each agent can use a different model and timeout.
+
+Example configuration:
+
+```yaml
+agent_pipeline:
+  enabled: true
+  max_revisions: 2
+  planner:
+    model: opus
+    max_turns: 10
+  coder:
+    model: opus
+    max_turns: 25
+  tester:
+    model: opus
+    max_turns: 15
+  reviewer:
+    model: opus
+    max_turns: 10
+```
+
+Agents communicate via files in `state/agent_workspace/`. The pipeline integrates with the existing validation and git management — changes are only committed if tests/lint/build pass.
 
 ## Testing
 

@@ -17,10 +17,12 @@ from claude_runner import ClaudeRunner, ClaudeResult
 from config_schema import Config
 from feedback import FeedbackManager
 from git_manager import GitManager
+from model_resolver import resolve_model_id
 from safety import SafetyError, SafetyGuard
 from state import CycleRecord, StateManager
 from task_discovery import Task, TaskDiscovery
 from validator import ValidationResult, Validator
+from agent_pipeline import AgentPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,18 @@ INSTRUCTIONS:
 class Orchestrator:
     def __init__(self, config: Config):
         self.config = config
+
+        # Resolve model alias to actual model ID
+        resolved = resolve_model_id(
+            model_alias=config.claude.model,
+            claude_command=config.claude.command,
+        )
+        if resolved:
+            config.claude.resolved_model = resolved
+        else:
+            logger.warning("Could not resolve model '%s', using alias directly",
+                           config.claude.model)
+
         self.state = StateManager(config)
         self.safety = SafetyGuard(config, self.state)
         self.claude = ClaudeRunner(config)
@@ -273,6 +287,9 @@ class Orchestrator:
             task_types=[t.source for t in tasks],
             batch_size=len(tasks),
             task_keys=[t.task_key for t in tasks],
+            pipeline_mode=kwargs.get("pipeline_mode", ""),
+            pipeline_revision_count=kwargs.get("pipeline_revision_count", 0),
+            pipeline_review_approved=kwargs.get("pipeline_review_approved", True),
         )
         return record
 
@@ -391,6 +408,11 @@ class Orchestrator:
         # 6. Record git snapshot
         snapshot = self.git.create_snapshot()
         pre_existing_files = self.git.capture_worktree_state()
+
+        # Multi-agent pipeline dispatch
+        if self.config.agent_pipeline.enabled:
+            self._cycle_multi_agent(tasks, snapshot, pre_existing_files, is_batch)
+            return
 
         # 7. Invoke Claude (with optional plan-then-execute)
         total_cost = 0.0
@@ -533,6 +555,130 @@ class Orchestrator:
                 duration_seconds=total_duration,
                 validation_summary=validation.summary,
                 error="Validation failed",
+            ))
+
+    def _cycle_multi_agent(
+        self, tasks: List[Task], snapshot: str,
+        pre_existing_files: dict, is_batch: bool,
+    ) -> None:
+        """Run a cycle using the multi-agent pipeline."""
+        logger.info("Running multi-agent pipeline")
+        pipeline = AgentPipeline(self.config)
+        pipeline_result = pipeline.run(tasks, self.git.rollback, snapshot)
+
+        total_cost = pipeline_result.total_cost_usd
+        total_duration = pipeline_result.total_duration_seconds
+
+        if not pipeline_result.success:
+            logger.warning("Multi-agent pipeline failed: %s", pipeline_result.error)
+            self.git.rollback(snapshot)
+            self.state.record_cycle(self._make_cycle_record(
+                tasks,
+                success=False,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
+                error=pipeline_result.error,
+                pipeline_mode="multi_agent",
+                pipeline_revision_count=pipeline_result.revision_count,
+                pipeline_review_approved=pipeline_result.final_review_approved,
+            ))
+            return
+
+        # Steps 8-11: same as single-agent flow
+        changed_files = self.git.get_new_changed_files(pre_existing_files)
+        if not changed_files:
+            logger.info("No files changed by pipeline, skipping")
+            self.state.record_cycle(self._make_cycle_record(
+                tasks,
+                success=False,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
+                error="No files changed",
+                pipeline_mode="multi_agent",
+                pipeline_revision_count=pipeline_result.revision_count,
+                pipeline_review_approved=pipeline_result.final_review_approved,
+            ))
+            return
+
+        try:
+            self.safety.post_claude_checks(changed_files)
+        except SafetyError as e:
+            logger.warning("Post-pipeline safety check failed: %s", e)
+            self.git.rollback(snapshot)
+            self.state.record_cycle(self._make_cycle_record(
+                tasks,
+                success=False,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
+                error=str(e),
+                pipeline_mode="multi_agent",
+                pipeline_revision_count=pipeline_result.revision_count,
+                pipeline_review_approved=pipeline_result.final_review_approved,
+            ))
+            return
+
+        syntax_err = self._syntax_check_files(changed_files)
+        if syntax_err:
+            logger.warning("Syntax check failed: %s", syntax_err)
+            self.git.rollback(snapshot)
+            self.state.record_cycle(self._make_cycle_record(
+                tasks,
+                success=False,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
+                error=syntax_err,
+                pipeline_mode="multi_agent",
+                pipeline_revision_count=pipeline_result.revision_count,
+                pipeline_review_approved=pipeline_result.final_review_approved,
+            ))
+            return
+
+        validation = self.validator.validate(self.config.target_dir)
+
+        if validation.passed:
+            if is_batch:
+                commit_msg = self._build_batch_commit_message(tasks)
+            else:
+                commit_msg = f"[auto] {tasks[0].source}: {tasks[0].description[:80]}"
+            # Add pipeline metadata to commit message
+            commit_msg += (
+                f"\n\n[pipeline: multi_agent, revisions={pipeline_result.revision_count}, "
+                f"approved={pipeline_result.final_review_approved}]"
+            )
+            commit_hash = self.git.commit(commit_msg, files=changed_files)
+            logger.info("Pipeline cycle succeeded: %s", commit_msg.split("\n")[0])
+
+            if self.config.orchestrator.push_after_commit:
+                self.git.push()
+
+            for t in tasks:
+                if t.source == "feedback" and t.source_file:
+                    self.feedback.mark_done(t.source_file)
+
+            self.state.record_cycle(self._make_cycle_record(
+                tasks,
+                success=True,
+                commit_hash=commit_hash,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
+                validation_summary=validation.summary,
+                pipeline_mode="multi_agent",
+                pipeline_revision_count=pipeline_result.revision_count,
+                pipeline_review_approved=pipeline_result.final_review_approved,
+            ))
+        else:
+            logger.warning("Validation failed: %s", validation.summary)
+            self.git.rollback(snapshot)
+            self.state.record_cycle(self._make_cycle_record(
+                tasks,
+                success=False,
+                cost_usd=total_cost,
+                duration_seconds=total_duration,
+                validation_summary=validation.summary,
+                error="Validation failed",
+                pipeline_mode="multi_agent",
+                pipeline_revision_count=pipeline_result.revision_count,
+                pipeline_review_approved=pipeline_result.final_review_approved,
             ))
 
     def run(self, once: bool = False) -> None:

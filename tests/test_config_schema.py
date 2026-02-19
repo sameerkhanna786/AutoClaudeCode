@@ -87,7 +87,11 @@ class TestLoadConfig:
 class TestNewConfigFields:
     def test_discovery_model_default(self):
         config = Config()
-        assert config.discovery.discovery_model == "sonnet"
+        assert config.discovery.discovery_model == "opus"
+
+    def test_resolved_model_default(self):
+        config = Config()
+        assert config.claude.resolved_model == ""
 
     def test_discovery_timeout_default(self):
         config = Config()
@@ -187,3 +191,91 @@ class TestAdaptiveBatchConfig:
         )
         config = load_config(str(f))
         assert config.orchestrator.max_batch_size == 15
+
+
+class TestAgentPipelineConfig:
+    def test_default_agent_pipeline_disabled(self):
+        config = Config()
+        assert config.agent_pipeline.enabled is False
+
+    def test_default_max_revisions(self):
+        config = Config()
+        assert config.agent_pipeline.max_revisions == 2
+
+    def test_default_planner_config(self):
+        config = Config()
+        assert config.agent_pipeline.planner.model == "opus"
+        assert config.agent_pipeline.planner.max_turns == 10
+        assert config.agent_pipeline.planner.timeout_seconds == 180
+
+    def test_default_coder_config(self):
+        config = Config()
+        assert config.agent_pipeline.coder.model == "opus"
+        assert config.agent_pipeline.coder.max_turns == 25
+        assert config.agent_pipeline.coder.timeout_seconds == 300
+
+    def test_default_tester_config(self):
+        config = Config()
+        assert config.agent_pipeline.tester.model == "opus"
+        assert config.agent_pipeline.tester.max_turns == 15
+        assert config.agent_pipeline.tester.timeout_seconds == 240
+
+    def test_default_reviewer_config(self):
+        config = Config()
+        assert config.agent_pipeline.reviewer.model == "opus"
+        assert config.agent_pipeline.reviewer.max_turns == 10
+        assert config.agent_pipeline.reviewer.timeout_seconds == 180
+
+    def test_default_agent_workspace_dir(self):
+        config = Config()
+        assert config.paths.agent_workspace_dir == "state/agent_workspace"
+
+    def test_yaml_merge_enabled(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text(
+            "agent_pipeline:\n"
+            "  enabled: true\n"
+            "  max_revisions: 3\n"
+        )
+        config = load_config(str(f))
+        assert config.agent_pipeline.enabled is True
+        assert config.agent_pipeline.max_revisions == 3
+        # Agent defaults preserved
+        assert config.agent_pipeline.planner.model == "opus"
+
+    def test_yaml_nested_agent_override(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text(
+            "agent_pipeline:\n"
+            "  enabled: true\n"
+            "  coder:\n"
+            "    model: haiku\n"
+            "    max_turns: 50\n"
+        )
+        config = load_config(str(f))
+        assert config.agent_pipeline.enabled is True
+        assert config.agent_pipeline.coder.model == "haiku"
+        assert config.agent_pipeline.coder.max_turns == 50
+        # Coder timeout_seconds keeps default
+        assert config.agent_pipeline.coder.timeout_seconds == 300
+        # Other agents unchanged
+        assert config.agent_pipeline.planner.model == "opus"
+        assert config.agent_pipeline.reviewer.model == "opus"
+
+    def test_yaml_partial_override_preserves_defaults(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text(
+            "agent_pipeline:\n"
+            "  planner:\n"
+            "    max_turns: 20\n"
+        )
+        config = load_config(str(f))
+        # planner max_turns overridden
+        assert config.agent_pipeline.planner.max_turns == 20
+        # planner model keeps default
+        assert config.agent_pipeline.planner.model == "opus"
+        # enabled keeps default
+        assert config.agent_pipeline.enabled is False
+        # other agents fully default
+        assert config.agent_pipeline.coder.model == "opus"
+        assert config.agent_pipeline.tester.max_turns == 15

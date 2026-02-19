@@ -322,7 +322,7 @@ class TaskDiscovery:
 
         cmd = [
             cc.command, "-p", prompt,
-            "--model", self.config.discovery.discovery_model,
+            "--model", self.config.claude.resolved_model or self.config.discovery.discovery_model,
             "--max-turns", "5",
             "--output-format", "json",
         ]

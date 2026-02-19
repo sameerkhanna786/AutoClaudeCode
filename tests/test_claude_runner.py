@@ -28,6 +28,22 @@ class TestBuildCommand:
         assert "--output-format" in cmd
         assert "json" in cmd
 
+    def test_build_command_uses_resolved_model(self):
+        config = Config()
+        config.claude.resolved_model = "claude-opus-4-6"
+        runner = ClaudeRunner(config)
+        cmd = runner._build_command("test")
+        model_idx = cmd.index("--model") + 1
+        assert cmd[model_idx] == "claude-opus-4-6"
+
+    def test_build_command_falls_back_to_alias(self):
+        config = Config()
+        config.claude.resolved_model = ""
+        runner = ClaudeRunner(config)
+        cmd = runner._build_command("test")
+        model_idx = cmd.index("--model") + 1
+        assert cmd[model_idx] == "opus"
+
 
 class TestParseJsonResponse:
     def test_clean_json(self, runner):

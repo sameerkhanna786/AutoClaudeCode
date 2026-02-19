@@ -13,6 +13,7 @@ import yaml
 @dataclass
 class ClaudeConfig:
     model: str = "opus"
+    resolved_model: str = ""   # Populated at startup by Orchestrator
     max_turns: int = 25
     timeout_seconds: int = 300
     command: str = "claude"
@@ -65,7 +66,7 @@ class DiscoveryConfig:
         "__pycache__", ".git", "node_modules", ".venv", "venv",
     ])
     max_todo_tasks: int = 20
-    discovery_model: str = "sonnet"
+    discovery_model: str = "opus"
     discovery_timeout: int = 180
 
 
@@ -80,6 +81,30 @@ class SafetyConfig:
 
 
 @dataclass
+class AgentRoleConfig:
+    """Per-agent settings."""
+    enabled: bool = True
+    model: str = "opus"
+    max_turns: int = 25
+    timeout_seconds: int = 300
+
+
+@dataclass
+class AgentPipelineConfig:
+    """Multi-agent pipeline settings."""
+    enabled: bool = False
+    max_revisions: int = 2
+    planner: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
+        model="opus", max_turns=10, timeout_seconds=180))
+    coder: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
+        model="opus", max_turns=25, timeout_seconds=300))
+    tester: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
+        model="opus", max_turns=15, timeout_seconds=240))
+    reviewer: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
+        model="opus", max_turns=10, timeout_seconds=180))
+
+
+@dataclass
 class PathsConfig:
     feedback_dir: str = "feedback"
     feedback_done_dir: str = "feedback/done"
@@ -88,6 +113,7 @@ class PathsConfig:
     lock_file: str = "state/lock.pid"
     backup_dir: str = "state/backups"
     feedback_failed_dir: str = "feedback/failed"
+    agent_workspace_dir: str = "state/agent_workspace"
 
 
 @dataclass
@@ -108,6 +134,7 @@ class Config:
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    agent_pipeline: AgentPipelineConfig = field(default_factory=AgentPipelineConfig)
 
 
 def _merge_dataclass(dc_instance, overrides: dict):
@@ -161,5 +188,16 @@ def load_config(path: Optional[str] = None) -> Config:
     if "orchestrator" in raw and isinstance(raw["orchestrator"], dict):
         if "max_tasks_per_cycle" in raw["orchestrator"] and "max_batch_size" not in raw["orchestrator"]:
             config.orchestrator.max_batch_size = config.orchestrator.max_tasks_per_cycle
+
+    # Nested agent pipeline config
+    if "agent_pipeline" in raw and isinstance(raw["agent_pipeline"], dict):
+        ap_raw = raw["agent_pipeline"]
+        _merge_dataclass(config.agent_pipeline, {
+            k: v for k, v in ap_raw.items()
+            if k not in ("planner", "coder", "tester", "reviewer")
+        })
+        for agent_name in ("planner", "coder", "tester", "reviewer"):
+            if agent_name in ap_raw and isinstance(ap_raw[agent_name], dict):
+                _merge_dataclass(getattr(config.agent_pipeline, agent_name), ap_raw[agent_name])
 
     return config

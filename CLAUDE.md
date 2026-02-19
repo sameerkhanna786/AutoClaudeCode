@@ -21,8 +21,10 @@ main.py              # Entry point + watchdog (PROTECTED)
 config.yaml          # Configuration (PROTECTED)
 config_schema.py     # Load/validate config, defaults
 orchestrator.py      # Main loop tying everything together
+agent_pipeline.py    # Multi-agent pipeline (planner, coder, tester, reviewer)
 task_discovery.py    # Auto-discover tasks (test failures, lint, TODOs, coverage, quality)
 claude_runner.py     # Invoke `claude` CLI, parse JSON response
+model_resolver.py    # Resolve model aliases to actual model IDs at startup
 validator.py         # Run test/lint/build commands, determine pass/fail
 git_manager.py       # Snapshot, rollback, commit
 feedback.py          # Watch feedback/ dir for developer task files
@@ -38,7 +40,7 @@ safety.py            # Lock file, failure counters, disk/rate/cost checks
 4. De-duplicate against recent history
 5. Pick highest-priority task
 6. Record git snapshot
-7. Invoke Claude Code with task prompt
+7. Invoke Claude Code with task prompt (or run multi-agent pipeline if enabled)
 8. Check changed files (count limit, protected files)
 9. Validate: run tests, lint, build (short-circuit on failure)
 10. If valid: commit; If invalid: rollback
@@ -52,3 +54,4 @@ safety.py            # Lock file, failure counters, disk/rate/cost checks
 - **Claude prompt says "do NOT commit"** — the orchestrator handles all git operations.
 - **File-based everything**: state is JSON, feedback is text files, config is YAML.
 - **Self-improvement mode**: when `self_improve: true`, orchestrator syntax-checks modified `.py` files and backs up modules before each cycle.
+- **Multi-agent mode**: when `agent_pipeline.enabled: true`, each cycle runs a Planner → Coder → Tester → Reviewer pipeline instead of a single Claude invocation.
