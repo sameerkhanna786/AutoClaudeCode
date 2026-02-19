@@ -162,6 +162,57 @@ class TestCommitEmptyChanges:
         assert any("No staged changes" in r.message for r in caplog.records)
 
 
+class TestCommitTimeout:
+    def test_commit_timeout_returns_empty_string(self, tmp_git_repo, caplog):
+        """When git commit times out (returncode -1), commit() returns empty string."""
+        import logging
+        from unittest.mock import patch, call
+        gm = GitManager(tmp_git_repo)
+        Path(tmp_git_repo, "timeout_test.txt").write_text("test content")
+
+        original_run = gm._run
+
+        def mock_run(*args, **kwargs):
+            # Intercept the "commit" call and simulate a timeout
+            if args and args[0] == "commit":
+                return subprocess.CompletedProcess(
+                    args=["git", "commit"], returncode=-1,
+                    stdout="", stderr="timed out",
+                )
+            return original_run(*args, **kwargs)
+
+        with patch.object(gm, "_run", side_effect=mock_run):
+            with caplog.at_level(logging.WARNING):
+                result = gm.commit("this should timeout", files=["timeout_test.txt"])
+
+        assert result == ""
+        assert any("git commit failed" in r.message for r in caplog.records)
+
+    def test_commit_nonzero_exit_returns_empty_string(self, tmp_git_repo, caplog):
+        """When git commit fails with nonzero exit, commit() returns empty string."""
+        import logging
+        from unittest.mock import patch
+        gm = GitManager(tmp_git_repo)
+        Path(tmp_git_repo, "fail_test.txt").write_text("test content")
+
+        original_run = gm._run
+
+        def mock_run(*args, **kwargs):
+            if args and args[0] == "commit":
+                return subprocess.CompletedProcess(
+                    args=["git", "commit"], returncode=1,
+                    stdout="", stderr="pre-commit hook failed",
+                )
+            return original_run(*args, **kwargs)
+
+        with patch.object(gm, "_run", side_effect=mock_run):
+            with caplog.at_level(logging.WARNING):
+                result = gm.commit("hook should fail", files=["fail_test.txt"])
+
+        assert result == ""
+        assert any("git commit failed" in r.message for r in caplog.records)
+
+
 class TestRollbackSafety:
     def test_rollback_raises_on_unexpected_dirty_files(self, tmp_git_repo):
         """Rollback should raise RuntimeError when unexpected dirty files exist."""

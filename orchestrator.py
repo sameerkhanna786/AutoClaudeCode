@@ -274,6 +274,9 @@ class Orchestrator:
             return tasks[:1]
 
         batch_size = self.state.compute_adaptive_batch_size()
+        if batch_size < 1:
+            logger.warning("Adaptive batch size was %d, clamping to 1", batch_size)
+            batch_size = 1
         logger.info("Adaptive batch size: %d", batch_size)
         return tasks[:batch_size]
 

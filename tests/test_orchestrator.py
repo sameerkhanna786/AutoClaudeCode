@@ -581,6 +581,12 @@ class TestAdaptiveBatchSizing:
         assert all(t.description != "Fix bug in foo.py" for t in tasks)
         assert len(tasks) == 2
 
+    def test_gather_tasks_clamps_zero_batch_size(self, orch_batch):
+        """When compute_adaptive_batch_size() returns 0, _gather_tasks() clamps to 1."""
+        orch_batch.state.compute_adaptive_batch_size = MagicMock(return_value=0)
+        tasks = orch_batch._gather_tasks()
+        assert len(tasks) == 1
+
 
 class TestValidationRetry:
     """Tests for retry-on-validation-failure behavior."""

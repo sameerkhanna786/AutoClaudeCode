@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 GIT_DEFAULT_TIMEOUT = 120
 # Longer timeout for push operations (seconds)
 GIT_PUSH_TIMEOUT = 300
+# Longer timeout for commit operations (pre-commit hooks may be slow)
+GIT_COMMIT_TIMEOUT = 300
 
 
 @dataclass
@@ -159,9 +161,15 @@ class GitManager:
         if not staged.stdout.strip():
             logger.warning("No staged changes after git add, skipping commit")
             return ""
-        self._run("commit", "-m", message)
-        result = self._run("rev-parse", "HEAD")
-        commit_hash = result.stdout.strip()
+        result = self._run("commit", "-m", message, check=False, timeout=GIT_COMMIT_TIMEOUT)
+        if result.returncode != 0:
+            logger.warning(
+                "git commit failed (exit code %d): %s",
+                result.returncode, result.stderr.strip(),
+            )
+            return ""
+        head = self._run("rev-parse", "HEAD")
+        commit_hash = head.stdout.strip()
         logger.info("Committed: %s — %s", commit_hash[:8], message)
         return commit_hash
 
