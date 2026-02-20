@@ -667,3 +667,53 @@ class TestDiskSpacePreCheck:
         assert Path(state_mgr.history_file).exists()
         data = json.loads(Path(state_mgr.history_file).read_text())
         assert len(data) == 1
+
+
+class TestSaveHistoryRaceDetection:
+    def test_external_modification_logs_warning(self, state_mgr, caplog):
+        """Writing after external file modification should log a warning."""
+        import logging
+
+        # Write initial record to populate cache and mtime
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="First record",
+            success=True,
+        ))
+
+        # Externally modify the file to change its mtime without going
+        # through StateManager (simulates another process writing)
+        time.sleep(0.05)  # Ensure mtime differs
+        Path(state_mgr.history_file).write_text(
+            json.dumps([{"timestamp": time.time(), "task_description": "External", "success": True}])
+        )
+
+        # Directly call _save_history to bypass _load_history (which would
+        # update _cache_mtime). This simulates the race: read happened
+        # before the external modification, write happens after.
+        with caplog.at_level(logging.WARNING):
+            state_mgr._save_history([{"timestamp": time.time(), "task_description": "Second", "success": True}])
+
+        assert any(
+            "modified externally" in r.message for r in caplog.records
+        )
+
+    def test_no_warning_on_normal_write(self, state_mgr, caplog):
+        """Sequential writes without external modification should not warn."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=time.time(),
+                task_description="Record A",
+                success=True,
+            ))
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=time.time(),
+                task_description="Record B",
+                success=True,
+            ))
+
+        assert not any(
+            "modified externally" in r.message for r in caplog.records
+        )

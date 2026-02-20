@@ -476,10 +476,11 @@ class ParallelCoordinator:
 
         thread = threading.Thread(target=_do_cleanup, daemon=True)
         thread.start()
-        thread.join(timeout=60)
+        thread.join(timeout=self.config.parallel.cleanup_timeout)
         if thread.is_alive():
             logger.warning(
-                "Worktree cleanup timed out after 60s, abandoning remaining cleanup"
+                "Worktree cleanup timed out after %ds, abandoning remaining cleanup",
+                self.config.parallel.cleanup_timeout,
             )
         else:
             logger.info("Cleaned up all worktrees")

@@ -120,6 +120,7 @@ class ParallelConfig:
     merge_strategy: str = "rebase"  # "rebase" or "merge"
     max_merge_retries: int = 2
     cleanup_on_exit: bool = True
+    cleanup_timeout: int = 60
 
 
 @dataclass
@@ -309,3 +310,56 @@ def validate_config(config: Config) -> None:
             f"validation.test_timeout ({config.validation.test_timeout}) to ensure tests "
             f"can complete before Claude times out"
         )
+
+    # Validate orchestrator fields
+    if config.orchestrator.loop_interval_seconds <= 0:
+        raise ValueError(
+            f"orchestrator.loop_interval_seconds must be positive, "
+            f"got {config.orchestrator.loop_interval_seconds}"
+        )
+
+    # Validate discovery timeout
+    if config.discovery.discovery_timeout <= 0:
+        raise ValueError(
+            f"discovery.discovery_timeout must be positive, "
+            f"got {config.discovery.discovery_timeout}"
+        )
+
+    # Validate safety fields
+    if config.safety.max_consecutive_failures <= 0:
+        raise ValueError(
+            f"safety.max_consecutive_failures must be positive, "
+            f"got {config.safety.max_consecutive_failures}"
+        )
+    if config.safety.max_cycles_per_hour <= 0:
+        raise ValueError(
+            f"safety.max_cycles_per_hour must be positive, "
+            f"got {config.safety.max_cycles_per_hour}"
+        )
+    if config.safety.max_cost_usd_per_hour <= 0:
+        raise ValueError(
+            f"safety.max_cost_usd_per_hour must be positive, "
+            f"got {config.safety.max_cost_usd_per_hour}"
+        )
+    if config.safety.min_disk_space_mb <= 0:
+        raise ValueError(
+            f"safety.min_disk_space_mb must be positive, "
+            f"got {config.safety.min_disk_space_mb}"
+        )
+
+    # Validate parallel config
+    if config.parallel.enabled and config.parallel.max_workers <= 0:
+        raise ValueError(
+            f"parallel.max_workers must be positive when parallel is enabled, "
+            f"got {config.parallel.max_workers}"
+        )
+
+    # Validate agent pipeline timeouts when enabled
+    if config.agent_pipeline.enabled:
+        for agent_name in ("planner", "coder", "tester", "reviewer"):
+            agent_cfg = getattr(config.agent_pipeline, agent_name)
+            if agent_cfg.timeout_seconds <= 0:
+                raise ValueError(
+                    f"agent_pipeline.{agent_name}.timeout_seconds must be positive "
+                    f"when agent_pipeline is enabled, got {agent_cfg.timeout_seconds}"
+                )

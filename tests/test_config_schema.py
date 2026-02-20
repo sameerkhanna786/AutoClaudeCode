@@ -305,6 +305,10 @@ class TestParallelConfig:
         config = Config()
         assert config.parallel.cleanup_on_exit is True
 
+    def test_default_cleanup_timeout(self):
+        config = Config()
+        assert config.parallel.cleanup_timeout == 60
+
     def test_parallel_yaml_override(self, tmp_path):
         f = tmp_path / "config.yaml"
         f.write_text(
@@ -315,6 +319,7 @@ class TestParallelConfig:
             "  worktree_base_dir: custom_worktrees\n"
             "  max_merge_retries: 4\n"
             "  cleanup_on_exit: false\n"
+            "  cleanup_timeout: 120\n"
         )
         config = load_config(str(f))
         assert config.parallel.enabled is True
@@ -323,6 +328,7 @@ class TestParallelConfig:
         assert config.parallel.worktree_base_dir == "custom_worktrees"
         assert config.parallel.max_merge_retries == 4
         assert config.parallel.cleanup_on_exit is False
+        assert config.parallel.cleanup_timeout == 120
 
     def test_parallel_partial_override(self, tmp_path):
         f = tmp_path / "config.yaml"
@@ -335,3 +341,91 @@ class TestParallelConfig:
         # Other fields keep defaults
         assert config.parallel.max_workers == 3
         assert config.parallel.merge_strategy == "rebase"
+
+
+class TestValidateConfig:
+    def test_valid_default_config_passes(self):
+        from config_schema import validate_config
+        config = Config()
+        # Should not raise
+        validate_config(config)
+
+    def test_zero_claude_timeout_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.timeout_seconds = 0
+        with pytest.raises(ValueError, match="claude.timeout_seconds"):
+            validate_config(config)
+
+    def test_negative_test_timeout_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.validation.test_timeout = -1
+        with pytest.raises(ValueError, match="validation.test_timeout"):
+            validate_config(config)
+
+    def test_zero_loop_interval_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.orchestrator.loop_interval_seconds = 0
+        with pytest.raises(ValueError, match="orchestrator.loop_interval_seconds"):
+            validate_config(config)
+
+    def test_zero_discovery_timeout_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.discovery.discovery_timeout = 0
+        with pytest.raises(ValueError, match="discovery.discovery_timeout"):
+            validate_config(config)
+
+    def test_zero_max_consecutive_failures_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.safety.max_consecutive_failures = 0
+        with pytest.raises(ValueError, match="safety.max_consecutive_failures"):
+            validate_config(config)
+
+    def test_zero_max_cycles_per_hour_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.safety.max_cycles_per_hour = 0
+        with pytest.raises(ValueError, match="safety.max_cycles_per_hour"):
+            validate_config(config)
+
+    def test_zero_max_cost_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.safety.max_cost_usd_per_hour = 0
+        with pytest.raises(ValueError, match="safety.max_cost_usd_per_hour"):
+            validate_config(config)
+
+    def test_zero_min_disk_space_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.safety.min_disk_space_mb = 0
+        with pytest.raises(ValueError, match="safety.min_disk_space_mb"):
+            validate_config(config)
+
+    def test_zero_max_workers_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.parallel.enabled = True
+        config.parallel.max_workers = 0
+        with pytest.raises(ValueError, match="parallel.max_workers"):
+            validate_config(config)
+
+    def test_claude_timeout_le_test_timeout_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.timeout_seconds = 100
+        config.validation.test_timeout = 100
+        with pytest.raises(ValueError, match="claude.timeout_seconds.*must be greater than"):
+            validate_config(config)
+
+    def test_pipeline_zero_timeout_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.agent_pipeline.enabled = True
+        config.agent_pipeline.planner.timeout_seconds = 0
+        with pytest.raises(ValueError, match="agent_pipeline.planner.timeout_seconds"):
+            validate_config(config)

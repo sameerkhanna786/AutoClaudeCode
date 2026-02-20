@@ -164,6 +164,19 @@ class StateManager:
             logger.debug("Disk space check failed (continuing anyway): %s", e)
 
         self._ensure_dir()
+        # Check for external modifications between read and write
+        if self._cache_mtime > 0 and self.history_file.exists():
+            try:
+                current_mtime = self.history_file.stat().st_mtime
+                if current_mtime != self._cache_mtime:
+                    logger.warning(
+                        "History file was modified externally since last read "
+                        "(expected mtime %.6f, got %.6f). Data from the external "
+                        "modification may be lost.",
+                        self._cache_mtime, current_mtime,
+                    )
+            except OSError:
+                pass  # File may have been deleted; proceed with write
         # Pre-check: verify records are JSON-serializable before writing.
         # This catches circular references, non-serializable types (e.g.,
         # unconverted dataclass instances with self-references), etc.
