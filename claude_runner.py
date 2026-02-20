@@ -77,6 +77,9 @@ class ClaudeRunner:
         and log/warning lines after it. We extract only the first
         valid top-level JSON object.
         """
+        if not stdout or not stdout.strip():
+            raise ValueError("Claude CLI produced empty output (no JSON to parse)")
+
         # Strategy 1a: Try each line as a complete JSON object starting with '{'.
         # This handles the common case where the JSON is on its own line.
         for line in stdout.splitlines():

@@ -295,4 +295,4 @@ class GitManager:
 
     def prune_worktrees(self) -> None:
         """Clean up stale worktree references."""
-        self._run("worktree", "prune", check=False)
+        self._run("worktree", "prune", check=False, timeout=30)

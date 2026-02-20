@@ -203,8 +203,9 @@ class StateManager:
                         )
                         time.sleep(delay)
             if not replaced:
-                assert last_err is not None  # loop ran at least once and every iteration set last_err
-                raise last_err
+                if last_err is not None:
+                    raise last_err
+                raise OSError("os.replace failed: no retries were attempted")
             self._cache = records
             self._cache_mtime = self.history_file.stat().st_mtime
         except OSError as e:

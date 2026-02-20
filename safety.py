@@ -198,6 +198,10 @@ class SafetyGuard:
         """Ensure number of changed files is within limit."""
         limit = self.config.orchestrator.max_changed_files
         if limit <= 0:
+            if limit == 0:
+                raise SafetyError(
+                    "max_changed_files is zero; no files can be changed"
+                )
             raise SafetyError(
                 f"max_changed_files must be positive (got {limit})"
             )
@@ -206,7 +210,8 @@ class SafetyGuard:
             raise SafetyError(
                 f"Too many files changed: {count} (limit: {limit})"
             )
-        if count > limit * 0.8:
+        warning_threshold = int(limit * 0.8)
+        if warning_threshold > 0 and count > warning_threshold:
             logger.warning("Changed file count (%d) approaching limit (%d)", count, limit)
 
     def pre_flight_checks(self) -> None:
