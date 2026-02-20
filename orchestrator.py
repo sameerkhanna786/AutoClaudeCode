@@ -929,7 +929,7 @@ class Orchestrator:
         timeout = self.config.orchestrator.cycle_timeout_seconds
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            future = executor.submit(self.claude.run, prompt, self.config.target_dir)
+            future = executor.submit(self.claude.run, prompt)
             try:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:

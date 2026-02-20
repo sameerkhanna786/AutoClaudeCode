@@ -94,6 +94,55 @@ class TestPartitionTasks:
         assert len(groups) >= 2
         assert len(groups) <= parallel_config.parallel.max_workers
 
+    def test_single_source_splits_across_workers(self, parallel_config):
+        """8 tasks of same source, batch_size=2, 4 workers → 4 groups."""
+        parallel_config.parallel.max_workers = 4
+        parallel_config.orchestrator.max_batch_size = 2
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description=f"Idea {i}", priority=5, source="claude_idea")
+            for i in range(8)
+        ]
+        groups = coord._partition_tasks(tasks)
+        assert len(groups) == 4
+        for g in groups:
+            assert len(g) == 2
+
+    def test_single_source_capped_by_max_workers(self, parallel_config):
+        """9 tasks of same source, batch_size=3, 2 workers → 2 groups."""
+        parallel_config.parallel.max_workers = 2
+        parallel_config.orchestrator.max_batch_size = 3
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description=f"Idea {i}", priority=5, source="claude_idea")
+            for i in range(9)
+        ]
+        groups = coord._partition_tasks(tasks)
+        assert len(groups) == 2
+        for g in groups:
+            assert len(g) == 3
+
+    def test_round_robin_across_sources(self, parallel_config):
+        """Lint + todo tasks distributed across workers."""
+        parallel_config.parallel.max_workers = 4
+        parallel_config.orchestrator.max_batch_size = 2
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description="Lint 1", priority=3, source="lint"),
+            Task(description="Lint 2", priority=3, source="lint"),
+            Task(description="Lint 3", priority=3, source="lint"),
+            Task(description="Lint 4", priority=3, source="lint"),
+            Task(description="Todo 1", priority=4, source="todo"),
+            Task(description="Todo 2", priority=4, source="todo"),
+        ]
+        groups = coord._partition_tasks(tasks)
+        # lint: 4 tasks / batch 2 = 2 chunks; todo: 2 tasks / batch 2 = 1 chunk
+        # Total 3 chunks, all fit within 4 workers
+        assert len(groups) == 3
+        sources = [g[0].source for g in groups]
+        assert "lint" in sources
+        assert "todo" in sources
+
 
 class TestMergeWorkerBranch:
     def test_fast_forward_merge(self, tmp_git_repo, parallel_config):

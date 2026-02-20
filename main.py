@@ -26,6 +26,9 @@ def setup_logging(log_file: str, level: str, max_bytes: int, backup_count: int) 
 
     Clears existing handlers first to prevent duplicate output on retry.
     """
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(line_buffering=True)
+
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 

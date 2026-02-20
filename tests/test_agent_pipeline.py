@@ -115,7 +115,7 @@ class TestAgentPipelineFlow:
 
         runner_instance = MockRunner.return_value
 
-        def side_effect_fn(prompt, working_dir):
+        def side_effect_fn(prompt):
             """Write review.md when reviewer runs."""
             if "REVIEWER" in prompt:
                 ws_dir.mkdir(parents=True, exist_ok=True)
@@ -157,7 +157,7 @@ class TestAgentPipelineFlow:
         call_count = {"n": 0}
         runner_instance = MockRunner.return_value
 
-        def side_effect_fn(prompt, working_dir):
+        def side_effect_fn(prompt):
             call_count["n"] += 1
             if call_count["n"] == 1:
                 return _make_success_result("plan")
@@ -180,7 +180,7 @@ class TestAgentPipelineFlow:
 
         runner_instance = MockRunner.return_value
 
-        def side_effect_fn(prompt, working_dir):
+        def side_effect_fn(prompt):
             if "REVIEWER" in prompt:
                 ws_dir.mkdir(parents=True, exist_ok=True)
                 (ws_dir / "review.md").write_text("VERDICT: APPROVED\nOK")
@@ -225,7 +225,7 @@ class TestAgentPipelineFlow:
         reviewer_count = {"n": 0}
         runner_instance = MockRunner.return_value
 
-        def side_effect_fn(prompt, working_dir):
+        def side_effect_fn(prompt):
             if "REVIEWER" in prompt:
                 reviewer_count["n"] += 1
                 ws_dir.mkdir(parents=True, exist_ok=True)
@@ -257,7 +257,7 @@ class TestAgentPipelineFlow:
 
         runner_instance = MockRunner.return_value
 
-        def side_effect_fn(prompt, working_dir):
+        def side_effect_fn(prompt):
             if "REVIEWER" in prompt:
                 ws_dir.mkdir(parents=True, exist_ok=True)
                 (ws_dir / "review.md").write_text("VERDICT: REVISE\nStill issues.")
@@ -285,7 +285,7 @@ class TestAgentPipelineFlow:
         reviewer_count = {"n": 0}
         runner_instance = MockRunner.return_value
 
-        def side_effect_fn(prompt, working_dir):
+        def side_effect_fn(prompt):
             if "REVIEWER" in prompt:
                 reviewer_count["n"] += 1
                 ws_dir.mkdir(parents=True, exist_ok=True)
@@ -338,7 +338,7 @@ class TestAgentPipelineFlow:
         call_idx = {"n": 0}
         runner_instance = MockRunner.return_value
 
-        def side_effect_fn(prompt, working_dir):
+        def side_effect_fn(prompt):
             idx = call_idx["n"]
             call_idx["n"] += 1
             return ClaudeResult(
@@ -411,7 +411,7 @@ class TestPipelineCostGuard:
         call_idx = {"n": 0}
         runner_instance = MockRunner.return_value
 
-        def side_effect_fn(prompt, working_dir):
+        def side_effect_fn(prompt):
             call_idx["n"] += 1
             if "REVIEWER" in prompt:
                 ws_dir.mkdir(parents=True, exist_ok=True)
@@ -443,7 +443,7 @@ class TestPipelineCostGuard:
 
         runner_instance = MockRunner.return_value
 
-        def side_effect_fn(prompt, working_dir):
+        def side_effect_fn(prompt):
             if "REVIEWER" in prompt:
                 ws_dir.mkdir(parents=True, exist_ok=True)
                 (ws_dir / "review.md").write_text("VERDICT: REVISE\nKeep going.")

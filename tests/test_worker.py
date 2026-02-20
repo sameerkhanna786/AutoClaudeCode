@@ -183,3 +183,54 @@ class TestWorkerCommitMessage:
         assert "2 tasks" in msg
         assert "Fix A" in msg
         assert "Fix B" in msg
+
+
+class TestWorkerMainRepoSafetyCheck:
+    def test_detects_main_repo_modification(self, worker_config, tmp_git_repo):
+        """Worker fails when Claude modifies files in the main repo."""
+        state = MagicMock(spec=LockedStateManager)
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+
+        with patch.object(Worker, '_setup_worktree'):
+            worker.worktree_dir = tmp_git_repo
+            worker._git = MagicMock()
+            worker._git.get_changed_files.return_value = ["fix.py"]
+
+            with patch('worker.ClaudeRunner') as mock_cr:
+                mock_runner = MagicMock()
+                mock_runner.run.return_value = ClaudeResult(
+                    success=True, cost_usd=0.5, result_text="done",
+                )
+                mock_cr.return_value = mock_runner
+
+                # Simulate main repo getting dirty after Claude runs
+                from git_manager import GitManager
+                with patch('worker.GitManager') as MockGitManager:
+                    main_git_mock = MagicMock()
+                    # Before Claude: clean; After Claude: dirty
+                    main_git_mock.get_changed_files.side_effect = [
+                        [],                    # pre-state: clean
+                        ["orchestrator.py"],   # post-state: dirty
+                    ]
+                    MockGitManager.return_value = main_git_mock
+
+                    with patch('worker.CycleStateWriter'):
+                        result = worker.execute()
+
+        assert result.success is False
+        assert "main repo" in result.error.lower()
+
+    def test_prompt_contains_warning(self, worker_config, tmp_git_repo):
+        """Worker prompt contains warning about not modifying files outside worktree."""
+        state = MagicMock(spec=LockedStateManager)
+        tasks = [Task(description="Fix the bug", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+
+        # Test single-task prompt
+        prompt = worker._build_prompt(tasks, is_batch=False)
+        assert "Do NOT modify any files outside" in prompt
+
+        # Test batch prompt
+        prompt_batch = worker._build_prompt(tasks, is_batch=True)
+        assert "Do NOT modify any files outside" in prompt_batch

@@ -210,12 +210,12 @@ class TestRun:
 
     @patch("claude_runner.subprocess.Popen")
     def test_cwd_always_uses_target_dir(self, mock_popen, runner):
-        """cwd should always be config.target_dir, even if working_dir is passed."""
+        """cwd should always be config.target_dir."""
         mock_popen.return_value = _make_popen_mock(
             returncode=0,
             stdout='{"result": "Done", "cost_usd": 0.01}',
         )
-        runner.run("Fix the bug", working_dir="/some/other/dir")
+        runner.run("Fix the bug")
         popen_call = mock_popen.call_args
         assert popen_call.kwargs["cwd"] == runner.config.target_dir
 

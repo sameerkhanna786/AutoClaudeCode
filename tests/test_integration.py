@@ -83,7 +83,7 @@ def test_full_cycle_fix_and_commit(integration_repo):
         orch = Orchestrator(config)
 
     # Mock Claude to "fix" the bug by writing the correct file
-    def mock_claude_run(prompt, working_dir=None):
+    def mock_claude_run(prompt):
         # Simulate Claude fixing the bug
         app_path = Path(repo) / "app.py"
         app_path.write_text(
@@ -140,7 +140,7 @@ def test_full_cycle_rollback_on_bad_fix(integration_repo):
         orch = Orchestrator(config)
 
     # Mock Claude to make a bad fix
-    def mock_claude_run(prompt, working_dir=None):
+    def mock_claude_run(prompt):
         app_path = Path(repo) / "app.py"
         app_path.write_text(
             'def add(a, b):\n'
@@ -198,7 +198,7 @@ def test_full_batch_cycle(integration_repo):
 
     call_count = [0]
 
-    def mock_claude_run(prompt, working_dir=None):
+    def mock_claude_run(prompt):
         call_count[0] += 1
         if call_count[0] == 1:
             # Planning phase: return a plan (no file changes)

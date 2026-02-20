@@ -125,7 +125,7 @@ class ClaudeRunner:
 
         raise ValueError("No JSON object found in Claude CLI output")
 
-    def run(self, prompt: str, working_dir: Optional[str] = None,
+    def run(self, prompt: str,
             add_dirs: Optional[List[str]] = None) -> ClaudeResult:
         """Run Claude CLI with the given prompt and return parsed result."""
         cmd = self._build_command(prompt)

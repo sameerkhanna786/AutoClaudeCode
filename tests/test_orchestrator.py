@@ -516,7 +516,7 @@ class TestCycleTimeout:
             # Make claude.run hang longer than the timeout
             import threading
 
-            def slow_run(prompt, working_dir=None):
+            def slow_run(prompt):
                 time.sleep(10)
                 return ClaudeResult(success=True, result_text="Done")
 

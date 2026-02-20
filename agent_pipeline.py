@@ -173,7 +173,7 @@ class AgentPipeline:
                     return AgentResult(
                         role=role, success=False, error="Pipeline was terminated",
                     )
-                cr = agent_runner.run(prompt, self.config.target_dir)
+                cr = agent_runner.run(prompt)
             finally:
                 with self._runner_lock:
                     self._active_runner = None

@@ -106,6 +106,10 @@ class Worker:
                 batch_size=len(self.tasks),
             ))
 
+            # Snapshot main repo state before invoking Claude
+            main_repo_git = GitManager(self.main_repo_dir)
+            main_repo_pre_state = set(main_repo_git.get_changed_files())
+
             # Invoke Claude in the worktree directory
             logger.info(
                 "Worker %d: invoking Claude for %d task(s) in %s",
@@ -125,6 +129,24 @@ class Worker:
                     cost_usd=total_cost,
                     duration_seconds=time.time() - start_time,
                     error=claude_result.error,
+                    tasks=self.tasks,
+                )
+
+            # Check if Claude accidentally modified the main repo
+            main_repo_post_state = set(main_repo_git.get_changed_files())
+            new_main_dirty = sorted(main_repo_post_state - main_repo_pre_state)
+            if new_main_dirty:
+                logger.error(
+                    "Worker %d: Claude modified files in the main repo "
+                    "instead of the worktree: %s",
+                    self.worker_id, new_main_dirty[:5],
+                )
+                return WorkerResult(
+                    success=False,
+                    branch_name=self.branch_name,
+                    cost_usd=total_cost,
+                    duration_seconds=time.time() - start_time,
+                    error=f"Claude modified main repo files: {new_main_dirty[:5]}",
                     tasks=self.tasks,
                 )
 
@@ -261,7 +283,8 @@ class Worker:
             task_list = self._format_task_list(tasks)
             return (
                 f"You are working on the project at {Path(self.worktree_dir).resolve()}.\n"
-                "All file reads, writes, and edits MUST use absolute paths within that directory.\n\n"
+                "All file reads, writes, and edits MUST use absolute paths within that directory.\n"
+                "WARNING: Do NOT modify any files outside that directory. Do NOT use relative paths.\n\n"
                 "You have been given a batch of tasks to address in a single comprehensive change.\n\n"
                 f"TASKS:\n{task_list}\n\n"
                 "INSTRUCTIONS:\n"
@@ -278,7 +301,8 @@ class Worker:
             context_section = f"\nCONTEXT:\n{task.context}\n"
         return (
             f"You are working on the project at {Path(self.worktree_dir).resolve()}.\n"
-            "All file reads, writes, and edits MUST use absolute paths within that directory.\n\n"
+            "All file reads, writes, and edits MUST use absolute paths within that directory.\n"
+            "WARNING: Do NOT modify any files outside that directory. Do NOT use relative paths.\n\n"
             f"TASK: {task.description}\n"
             f"{context_section}\n"
             "INSTRUCTIONS:\n"
