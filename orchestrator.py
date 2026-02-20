@@ -207,21 +207,7 @@ class Orchestrator:
     def __init__(self, config: Config):
         self.config = config
 
-        # Fix 10: Validate target_dir at startup
-        target = config.target_dir
-        if not os.path.isdir(target):
-            raise RuntimeError(
-                f"target_dir does not exist or is not a directory: {target}"
-            )
-        import subprocess as _sp
-        git_check = _sp.run(
-            ["git", "rev-parse", "--git-dir"],
-            cwd=target, capture_output=True, text=True,
-        )
-        if git_check.returncode != 0:
-            raise RuntimeError(
-                f"target_dir is not a git repository: {target}"
-            )
+        # target_dir validation is now handled by validate_config() at config load time
 
         # Fix 11: Resolve model alias to actual model ID with retry
         resolved = resolve_model_id(

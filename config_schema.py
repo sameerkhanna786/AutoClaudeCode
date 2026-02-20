@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, get_type_hints
@@ -363,3 +364,31 @@ def validate_config(config: Config) -> None:
                     f"agent_pipeline.{agent_name}.timeout_seconds must be positive "
                     f"when agent_pipeline is enabled, got {agent_cfg.timeout_seconds}"
                 )
+
+    # Validate target_dir exists and is a git repository
+    target = config.target_dir
+    if not os.path.isdir(target):
+        raise ValueError(
+            f"target_dir does not exist or is not a directory: {target}"
+        )
+    git_check = subprocess.run(
+        ["git", "rev-parse", "--git-dir"],
+        cwd=target, capture_output=True, text=True,
+    )
+    if git_check.returncode != 0:
+        raise ValueError(
+            f"target_dir is not a git repository: {target}"
+        )
+
+    # Validate batch size ordering: min <= initial <= max
+    orch = config.orchestrator
+    if orch.min_batch_size > orch.initial_batch_size:
+        raise ValueError(
+            f"orchestrator.min_batch_size ({orch.min_batch_size}) must be <= "
+            f"orchestrator.initial_batch_size ({orch.initial_batch_size})"
+        )
+    if orch.initial_batch_size > orch.max_batch_size:
+        raise ValueError(
+            f"orchestrator.initial_batch_size ({orch.initial_batch_size}) must be <= "
+            f"orchestrator.max_batch_size ({orch.max_batch_size})"
+        )

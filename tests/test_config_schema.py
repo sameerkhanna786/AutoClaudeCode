@@ -1,5 +1,6 @@
 """Tests for config_schema module."""
 
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -9,6 +10,15 @@ from config_schema import (
     Config, load_config,
     ClaudeConfig, DiscoveryConfig, AgentPipelineConfig, ParallelConfig,
 )
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    """Create a temporary git repository and return its path."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo), capture_output=True, check=True)
+    return repo
 
 
 class TestConfigDefaults:
@@ -48,26 +58,26 @@ class TestLoadConfig:
         config = load_config(str(f))
         assert config.target_dir == "."
 
-    def test_load_config_partial_override(self, tmp_path):
+    def test_load_config_partial_override(self, tmp_path, git_repo):
         f = tmp_path / "config.yaml"
         f.write_text(
-            "target_dir: /my/project\n"
+            f"target_dir: {git_repo}\n"
             "claude:\n"
             "  model: opus\n"
             "  max_turns: 10\n"
         )
         config = load_config(str(f))
-        assert config.target_dir == "/my/project"
+        assert config.target_dir == str(git_repo)
         assert config.claude.model == "opus"
         assert config.claude.max_turns == 10
         # Unset values keep defaults
         assert config.claude.timeout_seconds == ClaudeConfig().timeout_seconds
         assert config.orchestrator.loop_interval_seconds == 30
 
-    def test_load_config_full_file(self, tmp_path):
+    def test_load_config_full_file(self, tmp_path, git_repo):
         f = tmp_path / "config.yaml"
         f.write_text(
-            "target_dir: /proj\n"
+            f"target_dir: {git_repo}\n"
             "safety:\n"
             "  max_consecutive_failures: 3\n"
             "  protected_files:\n"
@@ -76,7 +86,7 @@ class TestLoadConfig:
             "    - secret.py\n"
         )
         config = load_config(str(f))
-        assert config.target_dir == "/proj"
+        assert config.target_dir == str(git_repo)
         assert config.safety.max_consecutive_failures == 3
         assert "secret.py" in config.safety.protected_files
 
@@ -429,3 +439,108 @@ class TestValidateConfig:
         config.agent_pipeline.planner.timeout_seconds = 0
         with pytest.raises(ValueError, match="agent_pipeline.planner.timeout_seconds"):
             validate_config(config)
+
+
+class TestValidateTargetDir:
+    """Tests for target_dir validation in validate_config()."""
+
+    def test_nonexistent_target_dir_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.target_dir = "/nonexistent/path/that/does/not/exist"
+        with pytest.raises(ValueError, match="target_dir does not exist"):
+            validate_config(config)
+
+    def test_target_dir_is_file_raises(self, tmp_path):
+        from config_schema import validate_config
+        f = tmp_path / "afile.txt"
+        f.write_text("hello")
+        config = Config()
+        config.target_dir = str(f)
+        with pytest.raises(ValueError, match="target_dir does not exist"):
+            validate_config(config)
+
+    def test_target_dir_not_git_repo_raises(self, tmp_path):
+        from config_schema import validate_config
+        non_git_dir = tmp_path / "not_a_repo"
+        non_git_dir.mkdir()
+        config = Config()
+        config.target_dir = str(non_git_dir)
+        with pytest.raises(ValueError, match="target_dir is not a git repository"):
+            validate_config(config)
+
+    def test_valid_git_repo_passes(self, tmp_path):
+        import subprocess
+        from config_schema import validate_config
+        repo_dir = tmp_path / "valid_repo"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init"], cwd=str(repo_dir),
+                        capture_output=True, check=True)
+        config = Config()
+        config.target_dir = str(repo_dir)
+        # Should not raise
+        validate_config(config)
+
+
+class TestValidateBatchSizeOrdering:
+    """Tests for batch size ordering validation in validate_config()."""
+
+    def test_min_greater_than_initial_raises(self, tmp_path):
+        import subprocess
+        from config_schema import validate_config
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init"], cwd=str(repo_dir),
+                        capture_output=True, check=True)
+        config = Config()
+        config.target_dir = str(repo_dir)
+        config.orchestrator.min_batch_size = 5
+        config.orchestrator.initial_batch_size = 3
+        config.orchestrator.max_batch_size = 10
+        with pytest.raises(ValueError, match="min_batch_size.*must be <=.*initial_batch_size"):
+            validate_config(config)
+
+    def test_initial_greater_than_max_raises(self, tmp_path):
+        import subprocess
+        from config_schema import validate_config
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init"], cwd=str(repo_dir),
+                        capture_output=True, check=True)
+        config = Config()
+        config.target_dir = str(repo_dir)
+        config.orchestrator.min_batch_size = 1
+        config.orchestrator.initial_batch_size = 15
+        config.orchestrator.max_batch_size = 10
+        with pytest.raises(ValueError, match="initial_batch_size.*must be <=.*max_batch_size"):
+            validate_config(config)
+
+    def test_valid_ordering_passes(self, tmp_path):
+        import subprocess
+        from config_schema import validate_config
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init"], cwd=str(repo_dir),
+                        capture_output=True, check=True)
+        config = Config()
+        config.target_dir = str(repo_dir)
+        config.orchestrator.min_batch_size = 2
+        config.orchestrator.initial_batch_size = 5
+        config.orchestrator.max_batch_size = 10
+        # Should not raise
+        validate_config(config)
+
+    def test_equal_values_passes(self, tmp_path):
+        import subprocess
+        from config_schema import validate_config
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        subprocess.run(["git", "init"], cwd=str(repo_dir),
+                        capture_output=True, check=True)
+        config = Config()
+        config.target_dir = str(repo_dir)
+        config.orchestrator.min_batch_size = 5
+        config.orchestrator.initial_batch_size = 5
+        config.orchestrator.max_batch_size = 5
+        # Should not raise — all equal is valid
+        validate_config(config)
