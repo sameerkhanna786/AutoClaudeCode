@@ -5,7 +5,7 @@ target_dir: "."
 claude:
   model: opus
   max_turns: 25
-  timeout_seconds: 1800
+  timeout_seconds: 3600
   command: claude
 
 orchestrator:

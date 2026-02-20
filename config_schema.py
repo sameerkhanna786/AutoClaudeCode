@@ -186,6 +186,7 @@ def _merge_dataclass(dc_instance, overrides: dict):
     dc_class = type(dc_instance)
     for key, value in overrides.items():
         if not hasattr(dc_instance, key):
+            logger.warning("Unknown config key '%s.%s' — ignoring (typo?)", dc_class.__name__, key)
             continue
         expected = _get_expected_type(dc_class, key)
         if expected is not None and value is not None:

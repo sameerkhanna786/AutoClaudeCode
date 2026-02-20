@@ -266,6 +266,21 @@ class TestTaskDiscovery:
         tasks = discovery._discover_claude_ideas()
         assert tasks == []
 
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_warns_on_unexpected_json_structure(self, mock_run, discovery, caplog):
+        """When JSON parses but lacks the expected structure, a warning is logged."""
+        import logging
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"status": "ok", "data": "no result key here"}',
+        )
+        with caplog.at_level(logging.WARNING):
+            tasks = discovery._discover_claude_ideas()
+        assert tasks == []
+        assert any("unexpected" in r.message.lower() or "not the expected" in r.message.lower()
+                    for r in caplog.records)
+
 
 class TestTaskDescriptionValidation:
     def test_task_description_truncation(self):

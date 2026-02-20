@@ -104,17 +104,7 @@ class Validator:
         ]
 
         for name, command, timeout in commands:
-            try:
-                step = self._run_command(name, command, timeout, cwd)
-            except Exception as e:
-                logger.warning("Unexpected error during %s validation: %s", name, e)
-                step = ValidationStep(
-                    name=name,
-                    command=command,
-                    passed=False,
-                    output=f"Unexpected error: {e}",
-                    return_code=-1,
-                )
+            step = self._run_command(name, command, timeout, cwd)
             steps.append(step)
             if not step.passed and command.strip():
                 logger.warning("%s failed (rc=%d)", name, step.return_code)

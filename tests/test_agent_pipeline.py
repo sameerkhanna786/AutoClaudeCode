@@ -379,12 +379,16 @@ class TestAgentPipelineFlow:
         assert "Task B" in first_call_prompt
 
     def test_resolved_model_propagated_to_agent_runner(self, tmp_path):
-        """When resolved_model is set, agent runners should inherit it."""
+        """Agent runners should use their role-specific model, not the parent's resolved_model."""
         self.config.target_dir = str(tmp_path)
         self.config.claude.resolved_model = "claude-opus-4-6"
+        self.config.agent_pipeline.planner.model = "haiku"
         pipeline = AgentPipeline(self.config)
 
         runner = pipeline._build_runner_for_agent(AgentRole.PLANNER)
-        assert runner.config.claude.resolved_model == "claude-opus-4-6"
+        # resolved_model should be cleared so the agent's own model alias is used
+        assert runner.config.claude.resolved_model == ""
+        assert runner.config.claude.model == "haiku"
         cmd = runner._build_command("test prompt")
-        assert "claude-opus-4-6" in cmd
+        assert "haiku" in cmd
+        assert "claude-opus-4-6" not in cmd

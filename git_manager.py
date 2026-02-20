@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,14 +35,9 @@ class GitManager:
         """Validate that repo_dir is a git repository (cached after first success)."""
         if self._repo_validated:
             return
-        result = subprocess.run(
-            ["git", "rev-parse", "--git-dir"],
-            cwd=self.repo_dir,
-            capture_output=True,
-            text=True,
-            timeout=GIT_DEFAULT_TIMEOUT,
-        )
-        if result.returncode != 0:
+        cmd = ["git", "rev-parse", "--git-dir"]
+        result = run_with_group_kill(cmd, cwd=self.repo_dir, timeout=GIT_DEFAULT_TIMEOUT)
+        if result.timed_out or result.returncode != 0:
             raise RuntimeError(f"Not a git repository: {self.repo_dir}")
         self._repo_validated = True
 
@@ -131,7 +127,10 @@ class GitManager:
                         if status.returncode != 0:
                             # Untracked — remove it
                             try:
-                                fpath.unlink()
+                                if fpath.is_dir():
+                                    shutil.rmtree(fpath, ignore_errors=True)
+                                else:
+                                    fpath.unlink()
                             except OSError:
                                 pass
             logger.info("Targeted rollback: reverted %d files", len(files_to_revert))
@@ -152,6 +151,21 @@ class GitManager:
         if files is not None and len(files) == 0:
             logger.warning("commit() called with empty file list, nothing to commit")
             return ""
+
+        # Git has a hard limit of 65536 bytes for commit messages.
+        # Truncate to prevent a hard git failure.
+        GIT_MAX_COMMIT_MSG_BYTES = 65536
+        msg_bytes = len(message.encode("utf-8"))
+        if msg_bytes > GIT_MAX_COMMIT_MSG_BYTES:
+            logger.warning(
+                "Commit message too long (%d bytes, limit %d), truncating",
+                msg_bytes, GIT_MAX_COMMIT_MSG_BYTES,
+            )
+            suffix = "\n\n[message truncated]"
+            # Truncate at a safe byte boundary
+            truncated = message.encode("utf-8")[:GIT_MAX_COMMIT_MSG_BYTES - len(suffix.encode("utf-8"))]
+            message = truncated.decode("utf-8", errors="ignore") + suffix
+
         if files:
             self._run("add", "--", *files)
         else:

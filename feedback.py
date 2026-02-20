@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -30,27 +31,59 @@ class FeedbackManager:
         self.failed_dir.mkdir(parents=True, exist_ok=True)
 
     def _atomic_move(self, src: Path, dst: Path) -> None:
-        """Move src to dst atomically using write-then-rename to prevent corruption."""
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            dir=str(dst.parent), suffix=".tmp"
-        )
-        try:
-            content = src.read_text()
+        """Move src to dst atomically using write-then-rename to prevent corruption.
+
+        Retries up to 3 times with increasing delays to handle race conditions
+        when multiple processes attempt file operations simultaneously.
+        """
+        retry_delays = [0.05, 0.2, 0.5]
+        last_exc: Optional[Exception] = None
+
+        for attempt, delay in enumerate(retry_delays):
+            # If the source file no longer exists on a retry, another process
+            # already moved it — treat as success.
+            if attempt > 0 and not src.exists():
+                logger.debug(
+                    "Source file %s no longer exists on retry %d, treating as success",
+                    src, attempt,
+                )
+                return
+
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=str(dst.parent), suffix=".tmp"
+            )
             try:
-                f = os.fdopen(tmp_fd, "w")
-            except Exception:
-                os.close(tmp_fd)
+                content = src.read_text()
+                try:
+                    f = os.fdopen(tmp_fd, "w")
+                except Exception:
+                    os.close(tmp_fd)
+                    raise
+                with f:
+                    f.write(content)
+                os.replace(tmp_path, str(dst))
+                src.unlink()
+                return  # Success
+            except (OSError, FileNotFoundError) as e:
+                last_exc = e
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                if attempt < len(retry_delays) - 1:
+                    logger.debug(
+                        "Atomic move %s -> %s failed (attempt %d/%d): %s — retrying in %.2fs",
+                        src, dst, attempt + 1, len(retry_delays), e, delay,
+                    )
+                    time.sleep(delay)
+                    continue
                 raise
-            with f:
-                f.write(content)
-            os.replace(tmp_path, str(dst))
-            src.unlink()
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
     def get_pending_feedback(self) -> List[Task]:
         """Read pending feedback files and return them as Tasks.
@@ -68,9 +101,11 @@ class FeedbackManager:
             if f.is_file() and f.suffix in (".md", ".txt") and f.name != ".gitkeep"
         )
 
+        MAX_FEEDBACK_SIZE = 64 * 1024
         for fpath in files:
             try:
-                content = fpath.read_text().strip()
+                with open(fpath, 'r') as f:
+                    content = f.read(MAX_FEEDBACK_SIZE).strip()
             except OSError as e:
                 logger.warning("Failed to read feedback file %s: %s", fpath, e)
                 continue

@@ -405,6 +405,16 @@ class TaskDiscovery:
         except Exception:
             pass
 
+        # Warn if JSON was parsed but had an unexpected structure (no "result" key
+        # with a string value).  The code degrades gracefully — it falls through to
+        # IDEA-line extraction on the raw text — but log a warning so operators
+        # can investigate.
+        if result_text is result.stdout and result.stdout.strip()[:1] in ("{", "["):
+            logger.warning(
+                "Claude idea response contained JSON but not the expected "
+                "{\"result\": \"...\"} structure — falling back to raw text extraction"
+            )
+
         # Extract IDEA lines
         MIN_IDEA_LENGTH = 10
         tasks = []

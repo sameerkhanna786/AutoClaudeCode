@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -184,8 +185,23 @@ class StateManager:
                 raise last_err
             self._cache = records
             self._cache_mtime = self.history_file.stat().st_mtime
-        except Exception:
+        except OSError as e:
             # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            # Graceful degradation: if disk is full, log a warning and
+            # continue instead of crashing the orchestrator.
+            if e.errno == errno.ENOSPC:
+                logger.warning(
+                    "Disk full: unable to save cycle history. "
+                    "Cycle data will be lost. Free disk space to resume normal operation."
+                )
+                return
+            raise
+        except Exception:
+            # Clean up temp file on failure (non-OSError cases)
             try:
                 os.unlink(tmp_path)
             except OSError:
@@ -201,7 +217,7 @@ class StateManager:
 
     def record_cycle(self, record: CycleRecord) -> None:
         """Append a cycle record to history."""
-        records = self._load_history()
+        records = list(self._load_history())
         records.append(asdict(record))
         records = self._prune_history(records)
         self._save_history(records)

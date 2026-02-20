@@ -214,24 +214,27 @@ class ClaudeRunner:
                     error=f"Claude CLI exited with code {proc.returncode}: {proc.stderr.strip()}",
                 )
 
-            break
+            # Parse JSON before exiting the loop — retry on truncated output
+            try:
+                data = self._parse_json_response(proc.stdout)
+            except (ValueError, json.JSONDecodeError) as e:
+                stdout_stripped = proc.stdout.strip()
+                looks_truncated = "{" in stdout_stripped and not stdout_stripped.endswith("}")
+                if looks_truncated and attempt < self.max_retries:
+                    delay = self.retry_delays[min(attempt, len(self.retry_delays) - 1)]
+                    logger.warning(
+                        "Output appears truncated (attempt %d/%d), retrying in %ds",
+                        attempt + 1, self.max_retries + 1, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                return ClaudeResult(
+                    success=False,
+                    error=f"Failed to parse Claude CLI output: {e}",
+                    result_text=proc.stdout,
+                )
 
-        # Parse JSON response — retry on truncated output
-        try:
-            data = self._parse_json_response(proc.stdout)
-        except (ValueError, json.JSONDecodeError) as e:
-            # Check if output looks truncated (has opening brace but doesn't
-            # end with closing brace), suggesting network/pipe truncation
-            stdout_stripped = proc.stdout.strip()
-            looks_truncated = "{" in stdout_stripped and not stdout_stripped.endswith("}")
-            if looks_truncated:
-                # Exhausted retries or will be retried above — return failure
-                pass
-            return ClaudeResult(
-                success=False,
-                error=f"Failed to parse Claude CLI output: {e}",
-                result_text=proc.stdout,
-            )
+            break  # successful parse — exit retry loop
 
         result_text = data.get("result", "")
         cost_usd = data.get("total_cost_usd", data.get("cost_usd", 0.0))

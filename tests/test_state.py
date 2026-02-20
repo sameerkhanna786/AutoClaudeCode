@@ -1,5 +1,6 @@
 """Tests for state module."""
 
+import errno
 import json
 import os
 import tempfile
@@ -587,3 +588,37 @@ class TestSaveHistoryFdLeak:
         # Verify no leftover .tmp files in the history directory
         tmp_files = list(Path(state_mgr.history_file).parent.glob("*.tmp"))
         assert tmp_files == []
+
+
+class TestSaveHistoryENOSPC:
+    def test_save_history_enospc_logs_warning(self, state_mgr, caplog):
+        """ENOSPC during save should log a warning and not raise."""
+        import logging
+
+        enospc_err = OSError(errno.ENOSPC, "No space left on device")
+
+        with patch("state.json.dump", side_effect=enospc_err):
+            with caplog.at_level(logging.WARNING):
+                # Should NOT raise
+                state_mgr._save_history([{"test": True}])
+
+        assert any("Disk full" in r.message for r in caplog.records)
+
+    def test_save_history_enospc_cleans_temp_file(self, state_mgr):
+        """ENOSPC should clean up the temp file."""
+        enospc_err = OSError(errno.ENOSPC, "No space left on device")
+
+        with patch("state.json.dump", side_effect=enospc_err):
+            state_mgr._save_history([{"test": True}])
+
+        # No temp files should remain
+        tmp_files = list(Path(state_mgr.history_file).parent.glob("*.tmp"))
+        assert tmp_files == []
+
+    def test_save_history_non_enospc_oserror_still_raises(self, state_mgr):
+        """Non-ENOSPC OSError should still propagate."""
+        perm_err = OSError(errno.EACCES, "Permission denied")
+
+        with patch("state.json.dump", side_effect=perm_err):
+            with pytest.raises(OSError, match="Permission denied"):
+                state_mgr._save_history([{"test": True}])

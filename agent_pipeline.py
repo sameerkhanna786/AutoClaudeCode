@@ -115,6 +115,7 @@ class AgentPipeline:
         agent_config = copy.deepcopy(self.config)
         role_cfg = getattr(self.config.agent_pipeline, role.value)
         agent_config.claude.model = role_cfg.model
+        agent_config.claude.resolved_model = ""
         agent_config.claude.max_turns = role_cfg.max_turns
         agent_config.claude.timeout_seconds = role_cfg.timeout_seconds
         return ClaudeRunner(agent_config)

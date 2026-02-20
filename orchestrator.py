@@ -18,7 +18,7 @@ from claude_runner import ClaudeRunner, ClaudeResult
 from config_schema import Config
 from cycle_state import CycleState, CycleStateWriter
 from feedback import FeedbackManager
-from git_manager import GitManager
+from git_manager import GitManager, Snapshot
 from model_resolver import resolve_model_id
 from safety import SafetyError, SafetyGuard
 from state import CycleRecord, StateManager
@@ -624,6 +624,19 @@ class Orchestrator:
         extra = extra_record_kwargs or {}
         retry_count = 0
 
+        # Fast path: if no files changed before we even enter the retry loop,
+        # skip the loop entirely to avoid unnecessary overhead.
+        changed_files = self.git.get_new_changed_files(pre_existing_files)
+        if not changed_files:
+            logger.info("No files changed, skipping validation")
+            self.state.record_cycle(self._make_cycle_record(
+                tasks, success=False,
+                cost_usd=total_cost, duration_seconds=total_duration,
+                error="No files changed",
+                validation_retry_count=0, **extra,
+            ))
+            return
+
         for attempt in range(max_retries + 1):
             # Re-capture changed files (may differ after retry)
             changed_files = self.git.get_new_changed_files(pre_existing_files)
@@ -1027,7 +1040,7 @@ class Orchestrator:
             self.cycle_state.clear()
 
     def _cycle_multi_agent(
-        self, tasks: List[Task], snapshot: str,
+        self, tasks: List[Task], snapshot: Snapshot,
         pre_existing_files: dict, is_batch: bool,
     ) -> None:
         """Run a cycle using the multi-agent pipeline."""

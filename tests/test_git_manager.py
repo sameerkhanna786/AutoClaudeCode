@@ -1,7 +1,9 @@
 """Tests for git_manager module."""
 
+import logging
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -240,3 +242,25 @@ class TestRollbackSafety:
         gm.rollback(snap)
         assert gm.is_clean() is True
         assert not Path(tmp_git_repo, "anything.txt").exists()
+
+
+class TestCommitMessageLengthValidation:
+    def test_commit_truncates_oversized_message(self, tmp_git_repo, caplog):
+        """Commit messages exceeding 65536 bytes are truncated."""
+        gm = GitManager(tmp_git_repo)
+        Path(tmp_git_repo, "file.txt").write_text("content")
+        # Create a message well over 65536 bytes
+        oversized_message = "A" * 70000
+        with caplog.at_level(logging.WARNING):
+            commit_hash = gm.commit(oversized_message, files=["file.txt"])
+        assert len(commit_hash) == 40
+        assert any("too long" in r.message for r in caplog.records)
+        # Verify the commit actually succeeded
+        assert gm.is_clean() is True
+
+    def test_commit_accepts_normal_message(self, tmp_git_repo):
+        """Messages under 65536 bytes work normally."""
+        gm = GitManager(tmp_git_repo)
+        Path(tmp_git_repo, "file.txt").write_text("content")
+        commit_hash = gm.commit("Normal length message", files=["file.txt"])
+        assert len(commit_hash) == 40
