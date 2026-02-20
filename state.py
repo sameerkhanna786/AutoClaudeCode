@@ -6,6 +6,7 @@ import errno
 import json
 import logging
 import os
+import shutil
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
@@ -134,6 +135,9 @@ class StateManager:
 
         Refuses to overwrite the history file if it was flagged as corrupt
         and unrecoverable, to prevent data loss.
+
+        Pre-checks available disk space (10 MB threshold) before attempting
+        to write, allowing graceful degradation when disk is near full.
         """
         if self._history_corrupt:
             logger.error(
@@ -141,6 +145,24 @@ class StateManager:
                 "Manually fix or remove %s to resume.", self.history_file,
             )
             return
+
+        # Disk space pre-check: require at least 10 MB free
+        _MIN_FREE_BYTES = 10 * 1024 * 1024
+        try:
+            usage = shutil.disk_usage(str(self.history_file.parent))
+            if usage.free < _MIN_FREE_BYTES:
+                logger.warning(
+                    "Low disk space: only %.1f MB free (need %.1f MB). "
+                    "Skipping history save to prevent silent write failure.",
+                    usage.free / (1024 * 1024),
+                    _MIN_FREE_BYTES / (1024 * 1024),
+                )
+                return
+        except OSError as e:
+            # If the disk check itself fails (e.g., path not mounted),
+            # log and continue — don't block writes over a check failure
+            logger.debug("Disk space check failed (continuing anyway): %s", e)
+
         self._ensure_dir()
         # Pre-check: verify records are JSON-serializable before writing.
         # This catches circular references, non-serializable types (e.g.,

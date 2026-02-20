@@ -622,3 +622,48 @@ class TestSaveHistoryENOSPC:
         with patch("state.json.dump", side_effect=perm_err):
             with pytest.raises(OSError, match="Permission denied"):
                 state_mgr._save_history([{"test": True}])
+
+
+class TestDiskSpacePreCheck:
+    def test_low_disk_space_skips_save(self, state_mgr, caplog):
+        """When disk space is below 10 MB, save should be skipped with a warning."""
+        import logging
+        from collections import namedtuple
+
+        DiskUsage = namedtuple("DiskUsage", ["total", "used", "free"])
+        low_space = DiskUsage(total=100 * 1024 * 1024, used=95 * 1024 * 1024, free=5 * 1024 * 1024)
+
+        with patch("state.shutil.disk_usage", return_value=low_space):
+            with caplog.at_level(logging.WARNING):
+                state_mgr._save_history([{"test": True}])
+
+        assert any("Low disk space" in r.message for r in caplog.records)
+        # File should NOT have been written
+        assert not Path(state_mgr.history_file).exists()
+
+    def test_sufficient_disk_space_proceeds(self, state_mgr):
+        """When disk space is above 10 MB, save should proceed normally."""
+        from collections import namedtuple
+
+        DiskUsage = namedtuple("DiskUsage", ["total", "used", "free"])
+        plenty = DiskUsage(total=100 * 1024 * 1024, used=50 * 1024 * 1024, free=50 * 1024 * 1024)
+
+        with patch("state.shutil.disk_usage", return_value=plenty):
+            state_mgr._save_history([{"task": "test", "success": True}])
+
+        assert Path(state_mgr.history_file).exists()
+        data = json.loads(Path(state_mgr.history_file).read_text())
+        assert len(data) == 1
+
+    def test_disk_check_failure_continues(self, state_mgr, caplog):
+        """If shutil.disk_usage itself raises, save should still proceed."""
+        import logging
+
+        with patch("state.shutil.disk_usage", side_effect=OSError("no mount")):
+            with caplog.at_level(logging.DEBUG):
+                state_mgr._save_history([{"task": "test", "success": True}])
+
+        # Save should have completed despite the disk check failure
+        assert Path(state_mgr.history_file).exists()
+        data = json.loads(Path(state_mgr.history_file).read_text())
+        assert len(data) == 1

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 import signal
+import threading
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -157,12 +158,7 @@ class ParallelCoordinator:
                     worker.worker_id,
                 )
             finally:
-                try:
-                    worker.cleanup()
-                except Exception:
-                    logger.warning(
-                        "Failed to cleanup worker %d", worker.worker_id,
-                    )
+                self._cleanup_worker_with_timeout(worker)
 
         self._workers.clear()
         self.git.prune_worktrees()
@@ -387,24 +383,95 @@ class ParallelCoordinator:
         signal.signal(signal.SIGINT, handler)
         signal.signal(signal.SIGTERM, handler)
 
+    def _cleanup_worker_with_timeout(self, worker: Worker, timeout: float = 30) -> None:
+        """Clean up a single worker's worktree and branch with a timeout.
+
+        Isolates errors between remove_worktree, delete_branch, and
+        prune_worktrees so that a failure in one step doesn't prevent
+        the others from running. Falls back to shutil.rmtree if
+        git worktree remove fails or times out.
+        """
+        def _do_cleanup():
+            main_git = GitManager(self.config.target_dir)
+            # Step 1: remove worktree via git
+            try:
+                main_git.remove_worktree(worker.worktree_dir, force=True)
+            except Exception:
+                logger.warning(
+                    "Worker %d: git worktree remove failed, falling back to rmtree",
+                    worker.worker_id,
+                )
+                wt_path = Path(worker.worktree_dir)
+                if wt_path.exists():
+                    shutil.rmtree(str(wt_path), ignore_errors=True)
+
+            # Step 2: force-remove the directory if it still exists
+            wt_path = Path(worker.worktree_dir)
+            if wt_path.exists():
+                shutil.rmtree(str(wt_path), ignore_errors=True)
+
+            # Step 3: delete the branch
+            try:
+                main_git.delete_branch(worker.branch_name, force=True)
+            except Exception:
+                logger.warning(
+                    "Worker %d: branch deletion failed for %s",
+                    worker.worker_id, worker.branch_name,
+                )
+
+        thread = threading.Thread(target=_do_cleanup, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            logger.warning(
+                "Worker %d: cleanup timed out after %.0fs, abandoning",
+                worker.worker_id, timeout,
+            )
+
     def _cleanup_all_worktrees(self) -> None:
-        """Remove all worktree directories on shutdown."""
+        """Remove all worktree directories on shutdown.
+
+        Runs the cleanup in a daemon thread with a 60s overall timeout
+        to prevent indefinite hangs when worktrees are locked or
+        corrupted. Each per-worktree operation is error-isolated with
+        a shutil.rmtree fallback.
+        """
         if not self.config.parallel.cleanup_on_exit:
             return
 
-        worktree_base = Path(self.config.target_dir) / self.config.parallel.worktree_base_dir
-        if worktree_base.exists():
-            # Clean up each worker directory
-            for child in worktree_base.iterdir():
-                if child.is_dir() and child.name.startswith("worker-"):
-                    self.git.remove_worktree(str(child), force=True)
+        def _do_cleanup():
+            worktree_base = Path(self.config.target_dir) / self.config.parallel.worktree_base_dir
+            if worktree_base.exists():
+                # Clean up each worker directory with error isolation
+                for child in worktree_base.iterdir():
+                    if child.is_dir() and child.name.startswith("worker-"):
+                        try:
+                            self.git.remove_worktree(str(child), force=True)
+                        except Exception:
+                            logger.warning(
+                                "Failed to git-remove worktree %s, falling back to rmtree",
+                                child,
+                            )
+                            shutil.rmtree(str(child), ignore_errors=True)
 
-            # Remove the base directory if empty
+                # Remove the base directory if empty
+                try:
+                    if worktree_base.exists() and not any(worktree_base.iterdir()):
+                        worktree_base.rmdir()
+                except OSError:
+                    pass
+
             try:
-                if worktree_base.exists() and not any(worktree_base.iterdir()):
-                    worktree_base.rmdir()
-            except OSError:
-                pass
+                self.git.prune_worktrees()
+            except Exception:
+                logger.warning("Failed to prune worktrees during cleanup")
 
-        self.git.prune_worktrees()
-        logger.info("Cleaned up all worktrees")
+        thread = threading.Thread(target=_do_cleanup, daemon=True)
+        thread.start()
+        thread.join(timeout=60)
+        if thread.is_alive():
+            logger.warning(
+                "Worktree cleanup timed out after 60s, abandoning remaining cleanup"
+            )
+        else:
+            logger.info("Cleaned up all worktrees")

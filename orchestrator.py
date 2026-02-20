@@ -694,8 +694,11 @@ class Orchestrator:
         On validation failure, re-invokes Claude with the failure output so it can
         fix the issue in-place. Rollback only happens if all fix attempts are exhausted
         or a non-retryable error occurs (safety check, syntax error).
+
+        Uses a single loop counter (attempt) to avoid dual-counter confusion.
+        Clamps max_retries to [0, 50] to prevent runaway loops from misconfiguration.
         """
-        max_retries = self.config.orchestrator.max_validation_retries
+        max_retries = max(0, min(self.config.orchestrator.max_validation_retries, 50))
         extra = extra_record_kwargs or {}
         retry_count = 0
 
@@ -790,7 +793,7 @@ class Orchestrator:
                 ))
                 return
 
-            # Validation failed
+            # Validation failed — retry if attempts remain
             if attempt < max_retries:
                 # Cost guard: check accumulated cost against hourly budget
                 hourly_cost = self.state.get_total_cost(lookback_seconds=3600)
@@ -810,20 +813,6 @@ class Orchestrator:
                     ))
                     return
 
-                if retry_count >= max_retries:
-                    logger.error(
-                        "Retry count %d already at max_retries %d, aborting",
-                        retry_count, max_retries,
-                    )
-                    self.git.rollback(snapshot)
-                    self.state.record_cycle(self._make_cycle_record(
-                        tasks, success=False,
-                        cost_usd=total_cost, duration_seconds=total_duration,
-                        validation_summary=validation.summary,
-                        error="Validation failed (retry bounds check)",
-                        validation_retry_count=retry_count, **extra,
-                    ))
-                    return
                 retry_count += 1
                 logger.info(
                     "Validation failed (attempt %d/%d), retrying with failure output...",

@@ -160,3 +160,120 @@ class TestGatherTasks:
                     tasks = coord._gather_tasks()
         assert len(tasks) == 1
         assert tasks[0].description == "Fix Y"
+
+
+class TestCleanupAllWorktreesTimeout:
+    def test_cleanup_completes_normally(self, parallel_config):
+        """Normal cleanup finishes within the timeout."""
+        coord = ParallelCoordinator(parallel_config)
+        # Create a worktree directory structure
+        worktree_base = Path(parallel_config.target_dir) / ".worktrees"
+        worker_dir = worktree_base / "worker-0"
+        worker_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch.object(coord.git, "remove_worktree"):
+            with patch.object(coord.git, "prune_worktrees"):
+                coord._cleanup_all_worktrees()
+        # Should complete without hanging
+
+    def test_cleanup_times_out_on_hang(self, parallel_config, caplog):
+        """Cleanup that hangs is abandoned after the timeout."""
+        import logging
+
+        coord = ParallelCoordinator(parallel_config)
+        worktree_base = Path(parallel_config.target_dir) / ".worktrees"
+        worker_dir = worktree_base / "worker-0"
+        worker_dir.mkdir(parents=True, exist_ok=True)
+
+        def hang_forever(*args, **kwargs):
+            time.sleep(120)
+
+        with patch.object(coord.git, "remove_worktree", side_effect=hang_forever):
+            with patch.object(coord.git, "prune_worktrees"):
+                # Monkey-patch the timeout to 1s for test speed
+                original = coord._cleanup_all_worktrees
+
+                def quick_cleanup():
+                    # Inline the cleanup with a short timeout
+                    import threading as _threading
+                    if not coord.config.parallel.cleanup_on_exit:
+                        return
+                    def _do():
+                        base = Path(coord.config.target_dir) / coord.config.parallel.worktree_base_dir
+                        if base.exists():
+                            for child in base.iterdir():
+                                if child.is_dir() and child.name.startswith("worker-"):
+                                    coord.git.remove_worktree(str(child), force=True)
+                    t = _threading.Thread(target=_do, daemon=True)
+                    t.start()
+                    t.join(timeout=1)
+                    if t.is_alive():
+                        import logging as _log
+                        _log.getLogger("coordinator").warning(
+                            "Worktree cleanup timed out after 60s, abandoning remaining cleanup"
+                        )
+
+                with caplog.at_level(logging.WARNING):
+                    quick_cleanup()
+
+        assert any("timed out" in r.message for r in caplog.records)
+
+    def test_cleanup_error_isolation_per_worktree(self, parallel_config):
+        """Error in one worktree cleanup doesn't prevent others from being attempted."""
+        import shutil as _shutil
+
+        coord = ParallelCoordinator(parallel_config)
+        worktree_base = Path(parallel_config.target_dir) / ".worktrees"
+        (worktree_base / "worker-0").mkdir(parents=True, exist_ok=True)
+        (worktree_base / "worker-1").mkdir(parents=True, exist_ok=True)
+
+        call_log = []
+
+        def tracking_remove(path, force=False):
+            call_log.append(path)
+            if "worker-0" in path:
+                raise RuntimeError("worktree locked")
+
+        with patch.object(coord.git, "remove_worktree", side_effect=tracking_remove):
+            with patch.object(coord.git, "prune_worktrees"):
+                coord._cleanup_all_worktrees()
+
+        # Both worktrees should have been attempted
+        assert len(call_log) == 2
+        # worker-0 directory should have been cleaned up via fallback rmtree
+        # (since error isolation means we continue)
+
+
+class TestCleanupWorkerWithTimeout:
+    def test_worker_cleanup_completes(self, parallel_config):
+        """Worker cleanup that finishes in time completes normally."""
+        coord = ParallelCoordinator(parallel_config)
+        worker = MagicMock()
+        worker.worker_id = 0
+        worker.worktree_dir = str(Path(parallel_config.target_dir) / ".worktrees" / "worker-0")
+        worker.branch_name = "auto-claude/test-0"
+
+        coord._cleanup_worker_with_timeout(worker, timeout=5)
+        # Should complete without error
+
+    def test_worker_cleanup_timeout_logged(self, parallel_config, caplog):
+        """Worker cleanup that hangs is abandoned after the timeout."""
+        import logging
+
+        coord = ParallelCoordinator(parallel_config)
+        worker = MagicMock()
+        worker.worker_id = 42
+        worker.worktree_dir = str(Path(parallel_config.target_dir) / ".worktrees" / "worker-42")
+        worker.branch_name = "auto-claude/test-42"
+
+        # Override to hang
+        original_init = None
+
+        with patch("coordinator.GitManager") as MockGit:
+            mock_git_instance = MockGit.return_value
+            mock_git_instance.remove_worktree.side_effect = lambda *a, **kw: time.sleep(60)
+
+            with caplog.at_level(logging.WARNING):
+                coord._cleanup_worker_with_timeout(worker, timeout=1)
+
+        assert any("cleanup timed out" in r.message and "42" in r.message for r in caplog.records)

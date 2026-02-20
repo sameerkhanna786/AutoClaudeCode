@@ -1065,3 +1065,124 @@ class TestCommitMessageStyling:
         msg = msg_orch._build_commit_message(task)
         subject = msg.split("\n")[0]
         assert subject.startswith("Refactor")
+
+
+class TestRetryLoopClamping:
+    """Tests for max_retries clamping and dual-counter elimination."""
+
+    @pytest.fixture
+    def clamp_orch(self, tmp_path):
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.validation.test_command = ""
+        cfg.validation.lint_command = ""
+        cfg.validation.build_command = ""
+        cfg.orchestrator.batch_mode = False
+
+        with patch("orchestrator.GitManager") as MockGit, \
+             patch("orchestrator.ClaudeRunner") as MockClaude, \
+             patch("orchestrator.TaskDiscovery") as MockDisc, \
+             patch("orchestrator.Validator") as MockVal, \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
+
+            mock_sp.return_value = MagicMock(returncode=0)
+            mock_git = MockGit.return_value
+            mock_git.create_snapshot.return_value = Snapshot(commit_hash="a" * 40)
+            mock_git.capture_worktree_state.return_value = set()
+            mock_git.get_new_changed_files.return_value = ["fix.py"]
+            mock_git.is_clean.return_value = True
+            mock_git.commit.return_value = "b" * 40
+
+            mock_claude = MockClaude.return_value
+            mock_claude.run.return_value = ClaudeResult(
+                success=True, result_text="Fixed",
+                cost_usd=0.01, duration_seconds=1.0,
+            )
+
+            mock_val = MockVal.return_value
+
+            o = Orchestrator(cfg)
+            o.git = mock_git
+            o.claude = mock_claude
+            o.validator = mock_val
+            yield o
+
+    def test_negative_max_retries_clamped_to_zero(self, clamp_orch):
+        """Negative max_validation_retries is clamped to 0 (no retries)."""
+        clamp_orch.config.orchestrator.max_validation_retries = -5
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED", return_code=1,
+            )],
+        )
+        clamp_orch.validator.validate.return_value = fail_result
+        clamp_orch.state.record_cycle = MagicMock()
+
+        tasks = [Task(description="Test", priority=2, source="test_failure")]
+        clamp_orch._validate_with_retries(
+            tasks=tasks, snapshot=Snapshot(commit_hash="a" * 40),
+            pre_existing_files=set(),
+            total_cost=0.01, total_duration=1.0, is_batch=False,
+        )
+
+        # Should not retry at all — only 1 validation call
+        assert clamp_orch.validator.validate.call_count == 1
+        clamp_orch.git.rollback.assert_called_once()
+
+    def test_excessive_max_retries_clamped_to_50(self, clamp_orch):
+        """max_validation_retries > 50 is clamped to 50."""
+        clamp_orch.config.orchestrator.max_validation_retries = 1000
+        # Make validation pass on the first try
+        clamp_orch.validator.validate.return_value = ValidationResult(passed=True, steps=[])
+        clamp_orch.state.record_cycle = MagicMock()
+
+        tasks = [Task(description="Test", priority=2, source="test_failure")]
+        clamp_orch._validate_with_retries(
+            tasks=tasks, snapshot=Snapshot(commit_hash="a" * 40),
+            pre_existing_files=set(),
+            total_cost=0.01, total_duration=1.0, is_batch=False,
+        )
+
+        # Should succeed on first try — clamping doesn't affect success path
+        record = clamp_orch.state.record_cycle.call_args[0][0]
+        assert record.success is True
+        assert record.validation_retry_count == 0
+
+    def test_retry_count_matches_attempt(self, clamp_orch):
+        """retry_count should equal number of actual retries performed."""
+        clamp_orch.config.orchestrator.max_validation_retries = 3
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED", return_code=1,
+            )],
+        )
+        pass_result = ValidationResult(passed=True, steps=[])
+        # Fail twice, then pass
+        clamp_orch.validator.validate.side_effect = [fail_result, fail_result, pass_result]
+        clamp_orch.claude.run.return_value = ClaudeResult(
+            success=True, result_text="Fixed",
+            cost_usd=0.01, duration_seconds=1.0,
+        )
+        clamp_orch.state.record_cycle = MagicMock()
+
+        tasks = [Task(description="Test", priority=2, source="test_failure")]
+        clamp_orch._validate_with_retries(
+            tasks=tasks, snapshot=Snapshot(commit_hash="a" * 40),
+            pre_existing_files=set(),
+            total_cost=0.01, total_duration=1.0, is_batch=False,
+        )
+
+        record = clamp_orch.state.record_cycle.call_args[0][0]
+        assert record.success is True
+        assert record.validation_retry_count == 2
