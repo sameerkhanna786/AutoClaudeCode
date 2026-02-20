@@ -2,7 +2,7 @@
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -79,6 +79,16 @@ class TestWorkerExecute:
                 with patch('worker.CycleStateWriter'):
                     result = worker.execute()
 
+                # Verify add_dirs is passed (not working_dir)
+                run_call = mock_runner.run.call_args
+                assert "add_dirs" in run_call.kwargs or (
+                    len(run_call.args) == 1  # only prompt positional
+                )
+                if "add_dirs" in run_call.kwargs:
+                    add_dirs = run_call.kwargs["add_dirs"]
+                    assert len(add_dirs) == 1
+                    assert str(Path(tmp_git_repo).resolve()) in add_dirs[0]
+
         assert result.success is False
         assert "No files changed" in result.error
 
@@ -127,6 +137,11 @@ class TestWorkerPrompt:
         assert "Fix the bug" in prompt
         assert "TASK:" in prompt
         assert "protected files" in prompt.lower()
+        # Worktree absolute path should appear in the prompt
+        assert str(Path(worker.worktree_dir).resolve()) in prompt
+        assert "absolute paths" in prompt.lower()
+        # Should NOT tell Claude to run tests
+        assert "Do NOT run tests" in prompt
 
     def test_batch_prompt(self, worker_config, tmp_git_repo):
         state = MagicMock(spec=LockedStateManager)
@@ -140,6 +155,11 @@ class TestWorkerPrompt:
         assert "TASKS:" in prompt
         assert "Fix bug 1" in prompt
         assert "Fix bug 2" in prompt
+        # Worktree absolute path should appear in the prompt
+        assert str(Path(worker.worktree_dir).resolve()) in prompt
+        assert "absolute paths" in prompt.lower()
+        # Should NOT tell Claude to run tests
+        assert "Do NOT run tests" in prompt
 
 
 class TestWorkerCommitMessage:

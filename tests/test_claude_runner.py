@@ -209,6 +209,44 @@ class TestRun:
         assert result.duration_seconds == 12.5
 
     @patch("claude_runner.subprocess.Popen")
+    def test_cwd_always_uses_target_dir(self, mock_popen, runner):
+        """cwd should always be config.target_dir, even if working_dir is passed."""
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"result": "Done", "cost_usd": 0.01}',
+        )
+        runner.run("Fix the bug", working_dir="/some/other/dir")
+        popen_call = mock_popen.call_args
+        assert popen_call.kwargs["cwd"] == runner.config.target_dir
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_add_dirs_appends_flags(self, mock_popen, runner):
+        """add_dirs should append --add-dir flags to the command."""
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"result": "Done", "cost_usd": 0.01}',
+        )
+        runner.run("Fix the bug", add_dirs=["/tmp/worktree-0", "/tmp/worktree-1"])
+        cmd = mock_popen.call_args[0][0]
+        # Find all --add-dir flags
+        add_dir_indices = [i for i, x in enumerate(cmd) if x == "--add-dir"]
+        assert len(add_dir_indices) == 2
+        dirs = [cmd[i + 1] for i in add_dir_indices]
+        assert "/tmp/worktree-0" in dirs[0]
+        assert "/tmp/worktree-1" in dirs[1]
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_add_dirs_none_no_flags(self, mock_popen, runner):
+        """When add_dirs is None, no --add-dir flags should be added."""
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"result": "Done", "cost_usd": 0.01}',
+        )
+        runner.run("Fix the bug")
+        cmd = mock_popen.call_args[0][0]
+        assert "--add-dir" not in cmd
+
+    @patch("claude_runner.subprocess.Popen")
     def test_timeout(self, mock_popen, runner):
         mock_popen.return_value = _make_popen_mock(
             communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300),

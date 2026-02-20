@@ -122,10 +122,16 @@ class ClaudeRunner:
 
         raise ValueError("No JSON object found in Claude CLI output")
 
-    def run(self, prompt: str, working_dir: Optional[str] = None) -> ClaudeResult:
+    def run(self, prompt: str, working_dir: Optional[str] = None,
+            add_dirs: Optional[List[str]] = None) -> ClaudeResult:
         """Run Claude CLI with the given prompt and return parsed result."""
         cmd = self._build_command(prompt)
-        cwd = working_dir or self.config.target_dir
+        # Always use the main project dir as cwd (macOS sandbox restriction:
+        # sandbox_apply fails with exit 71 when cwd is outside the project).
+        cwd = self.config.target_dir
+        if add_dirs:
+            for d in add_dirs:
+                cmd.extend(["--add-dir", str(Path(d).resolve())])
 
         logger.info("Running Claude CLI in %s", cwd)
         logger.debug("Command: %s", " ".join(cmd))

@@ -111,7 +111,10 @@ class Worker:
                 "Worker %d: invoking Claude for %d task(s) in %s",
                 self.worker_id, len(self.tasks), self.worktree_dir,
             )
-            claude_result = self._claude.run(prompt, working_dir=self.worktree_dir)
+            claude_result = self._claude.run(
+                prompt,
+                add_dirs=[str(Path(self.worktree_dir).resolve())],
+            )
             total_cost += claude_result.cost_usd
 
             if not claude_result.success:
@@ -257,14 +260,15 @@ class Worker:
         if is_batch:
             task_list = self._format_task_list(tasks)
             return (
-                "You are working on the project in the current directory.\n\n"
+                f"You are working on the project at {Path(self.worktree_dir).resolve()}.\n"
+                "All file reads, writes, and edits MUST use absolute paths within that directory.\n\n"
                 "You have been given a batch of tasks to address in a single comprehensive change.\n\n"
                 f"TASKS:\n{task_list}\n\n"
                 "INSTRUCTIONS:\n"
                 "- Make the minimal changes needed to complete ALL tasks above.\n"
                 "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
                 f"- Do NOT modify these protected files: {protected}\n"
-                "- Focus on correctness. Run tests if available.\n"
+                "- Focus on correctness. Do NOT run tests — the orchestrator handles testing.\n"
                 "- If a task is unclear or impossible, make your best effort and explain what you did.\n"
             )
 
@@ -273,14 +277,15 @@ class Worker:
         if task.context:
             context_section = f"\nCONTEXT:\n{task.context}\n"
         return (
-            "You are working on the project in the current directory.\n\n"
+            f"You are working on the project at {Path(self.worktree_dir).resolve()}.\n"
+            "All file reads, writes, and edits MUST use absolute paths within that directory.\n\n"
             f"TASK: {task.description}\n"
             f"{context_section}\n"
             "INSTRUCTIONS:\n"
             "- Make the minimal changes needed to complete this task.\n"
             "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
             f"- Do NOT modify these protected files: {protected}\n"
-            "- Focus on correctness. Run tests if available.\n"
+            "- Focus on correctness. Do NOT run tests — the orchestrator handles testing.\n"
             "- If the task is unclear or impossible, make your best effort and explain what you did.\n"
         )
 
