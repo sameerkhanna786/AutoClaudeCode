@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from config_schema import Config
 from process_utils import kill_process_group
@@ -61,10 +61,12 @@ class CircuitBreaker:
         failure_threshold: int = CB_FAILURE_THRESHOLD,
         recovery_timeout: float = CB_RECOVERY_TIMEOUT,
         half_open_max_calls: int = CB_HALF_OPEN_MAX_CALLS,
+        on_open: Optional[Callable[[int, float], None]] = None,
     ):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.half_open_max_calls = half_open_max_calls
+        self._on_open = on_open
         self._state = self.STATE_CLOSED
         self._consecutive_failures = 0
         self._opened_at: float = 0.0
@@ -118,12 +120,14 @@ class CircuitBreaker:
 
     def record_failure(self) -> None:
         """Record a failed call — may trip the circuit breaker to OPEN."""
+        notify = False
         with self._lock:
             self._consecutive_failures += 1
             if self._state == self.STATE_HALF_OPEN:
                 # Failed during probe — re-open
                 self._state = self.STATE_OPEN
                 self._opened_at = time.monotonic()
+                notify = True
                 logger.warning(
                     "Circuit breaker re-opening after failed probe call "
                     "(%d consecutive failures)",
@@ -135,11 +139,18 @@ class CircuitBreaker:
             ):
                 self._state = self.STATE_OPEN
                 self._opened_at = time.monotonic()
+                notify = True
                 logger.warning(
                     "Circuit breaker OPEN after %d consecutive failures. "
                     "API calls blocked for %.0fs.",
                     self._consecutive_failures, self.recovery_timeout,
                 )
+        # Fire notification callback outside the lock to avoid deadlocks
+        if notify and self._on_open is not None:
+            try:
+                self._on_open(self._consecutive_failures, self.recovery_timeout)
+            except Exception:
+                logger.debug("Circuit breaker on_open callback raised", exc_info=True)
 
     def reset(self) -> None:
         """Manually reset the circuit breaker to CLOSED state."""
@@ -169,7 +180,9 @@ class ClaudeRunner:
         self.rate_limit_multiplier = config.claude.rate_limit_multiplier
         self._current_process: subprocess.Popen | None = None
         self._process_lock = threading.Lock()
-        self.circuit_breaker = CircuitBreaker()
+        self.circuit_breaker = CircuitBreaker(
+            on_open=self._on_circuit_breaker_open,
+        )
 
     def _build_command(self, prompt: str) -> List[str]:
         """Build the CLI command list."""
@@ -183,6 +196,31 @@ class ClaudeRunner:
             "--output-format", "json",
         ]
         return cmd
+
+    def _on_circuit_breaker_open(self, failures: int, recovery_timeout: float) -> None:
+        """Notification callback invoked when the circuit breaker opens.
+
+        Writes a notification file to the state directory so external
+        monitoring tools and users can detect the outage.
+        """
+        import datetime as dt
+        state_dir = Path(self.config.paths.state_dir)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        notification_file = state_dir / "circuit_breaker_open"
+        try:
+            notification_file.write_text(
+                f"Circuit breaker OPEN\n"
+                f"Timestamp: {dt.datetime.now(dt.timezone.utc).isoformat()}\n"
+                f"Consecutive failures: {failures}\n"
+                f"Recovery timeout: {recovery_timeout}s\n"
+                f"API calls are blocked until recovery.\n"
+            )
+            logger.warning(
+                "Circuit breaker notification written to %s",
+                notification_file,
+            )
+        except OSError as e:
+            logger.debug("Failed to write circuit breaker notification: %s", e)
 
     @staticmethod
     def _kill_process(proc: subprocess.Popen) -> None:

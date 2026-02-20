@@ -46,6 +46,8 @@ class OrchestratorConfig:
     batch_grow_step: int = 1
     batch_shrink_step: int = 2
     adaptive_batch_window: int = 10
+    # Task priority decay: hours before a skipped task is promoted by 1 level
+    priority_decay_hours: float = 24.0
     # Validation retry — re-invoke Claude with failure output to fix in-place
     max_validation_retries: int = 5
     retry_include_full_output: bool = True
@@ -145,6 +147,7 @@ class LoggingConfig:
     file: str = "state/auto_claude.log"
     max_bytes: int = 5_000_000
     backup_count: int = 3
+    format: str = "text"  # "text" or "json"
 
 
 @dataclass

@@ -25,6 +25,8 @@ from state import CycleRecord, StateManager
 from task_discovery import Task, TaskDiscovery
 from validator import ValidationResult, Validator
 from agent_pipeline import AgentPipeline
+from structured_logging import apply_json_logging
+from cost_predictor import check_cost_budget
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +235,10 @@ class Orchestrator:
 
         self.state = StateManager(config)
         self.safety = SafetyGuard(config, self.state)
+
+        # Apply structured JSON logging if configured
+        if config.logging.format == "json":
+            apply_json_logging()
         self.claude = ClaudeRunner(config)
         self.git = GitManager(config.target_dir)
         self.validator = Validator(config)
@@ -1011,6 +1017,18 @@ class Orchestrator:
             # 6. Record git snapshot
             snapshot = self.git.create_snapshot()
             pre_existing_files = self.git.capture_worktree_state()
+
+            # Cost prediction: estimate whether we can afford this cycle
+            cost_ok, est_cost, remaining = check_cost_budget(
+                tasks, self.config, self.state,
+            )
+            if not cost_ok:
+                logger.warning(
+                    "Skipping cycle: estimated cost $%.4f exceeds remaining "
+                    "budget $%.4f",
+                    est_cost, remaining,
+                )
+                return
 
             # Multi-agent pipeline dispatch
             if self.config.agent_pipeline.enabled:
