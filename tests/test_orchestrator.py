@@ -30,6 +30,9 @@ def config(tmp_path):
     cfg.validation.build_command = ""
     # Disable batch mode for existing tests
     cfg.orchestrator.batch_mode = False
+    # Disable memory check — subprocess.run is mocked globally in these tests,
+    # which breaks vm_stat parsing and causes a spurious SafetyError.
+    cfg.safety.min_memory_mb = 0
     return cfg
 
 
@@ -248,6 +251,9 @@ def batch_config(tmp_path):
     cfg.orchestrator.max_tasks_per_cycle = 10
     cfg.orchestrator.initial_batch_size = 10
     cfg.orchestrator.max_batch_size = 10
+    # Disable memory check — subprocess.run is mocked globally in these tests,
+    # which breaks vm_stat parsing and causes a spurious SafetyError.
+    cfg.safety.min_memory_mb = 0
     return cfg
 
 
@@ -606,6 +612,9 @@ class TestValidationRetry:
         cfg.validation.build_command = ""
         cfg.orchestrator.batch_mode = False
         cfg.orchestrator.max_validation_retries = 5
+        # Disable memory check — subprocess.run is mocked globally in these tests,
+        # which breaks vm_stat parsing and causes a spurious SafetyError.
+        cfg.safety.min_memory_mb = 0
 
         with patch("orchestrator.GitManager") as MockGit, \
              patch("orchestrator.ClaudeRunner") as MockClaude, \

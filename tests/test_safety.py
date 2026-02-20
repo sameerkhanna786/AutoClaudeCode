@@ -231,3 +231,74 @@ class TestFailureRecoveryGuard:
             ))
         with pytest.raises(SafetyError, match="touch state/reset_failures"):
             guard.check_consecutive_failures()
+
+
+class TestMemoryCheck:
+    def test_check_memory_ok_on_current_system(self, guard):
+        """Memory check should not raise on a system with sufficient RAM."""
+        guard.config.safety.min_memory_mb = 1  # 1 MB — any system has this
+        guard.check_memory()
+
+    def test_check_memory_disabled_when_zero(self, guard):
+        """Memory check should be skipped when min_memory_mb is 0."""
+        guard.config.safety.min_memory_mb = 0
+        guard.check_memory()  # Should not raise
+
+    @patch("platform.system", return_value="Linux")
+    def test_check_memory_low_on_linux(self, mock_system, guard):
+        """Memory check raises SafetyError when available RAM is low (Linux)."""
+        guard.config.safety.min_memory_mb = 999_999
+        meminfo = "MemTotal:       16384000 kB\nMemAvailable:       1024 kB\n"
+        with patch("builtins.open", create=True) as mock_open:
+            from unittest.mock import mock_open as _mock_open
+            mock_open.return_value = _mock_open(read_data=meminfo)()
+            with pytest.raises(SafetyError, match="Low memory"):
+                guard.check_memory()
+
+    @patch("platform.system", return_value="Linux")
+    def test_check_memory_sufficient_on_linux(self, mock_system, guard):
+        """Memory check passes when available RAM exceeds minimum (Linux)."""
+        guard.config.safety.min_memory_mb = 100
+        meminfo = "MemTotal:       16384000 kB\nMemAvailable:       512000 kB\n"
+        with patch("builtins.open", create=True) as mock_open:
+            from unittest.mock import mock_open as _mock_open
+            mock_open.return_value = _mock_open(read_data=meminfo)()
+            guard.check_memory()
+
+    @patch("platform.system", return_value="Linux")
+    def test_check_memory_proc_unreadable(self, mock_system, guard):
+        """Memory check is skipped gracefully when /proc/meminfo is unreadable."""
+        guard.config.safety.min_memory_mb = 256
+        with patch("builtins.open", side_effect=OSError("Permission denied")):
+            guard.check_memory()  # Should not raise
+
+    @patch("platform.system", return_value="Windows")
+    def test_check_memory_unsupported_platform(self, mock_system, guard):
+        """Memory check is skipped on unsupported platforms."""
+        guard.config.safety.min_memory_mb = 256
+        guard.check_memory()  # Should not raise
+
+    @patch("platform.system", return_value="Linux")
+    def test_check_memory_warning_threshold(self, mock_system, guard, caplog):
+        """Memory check logs warning when approaching minimum."""
+        import logging
+        guard.config.safety.min_memory_mb = 300
+        # 350 MB is between min (300) and 1.5x min (450), should warn
+        meminfo = "MemAvailable:       358400 kB\n"  # ~350 MB
+        with patch("builtins.open", create=True) as mock_open:
+            from unittest.mock import mock_open as _mock_open
+            mock_open.return_value = _mock_open(read_data=meminfo)()
+            with caplog.at_level(logging.WARNING):
+                guard.check_memory()
+        assert any("approaching minimum" in r.message for r in caplog.records)
+
+    def test_pre_flight_checks_includes_memory(self, guard):
+        """pre_flight_checks should call check_memory."""
+        guard.config.safety.min_memory_mb = 1
+        with patch.object(guard, 'check_memory') as mock_mem:
+            with patch.object(guard, 'check_disk_space'):
+                with patch.object(guard, 'check_rate_limit'):
+                    with patch.object(guard, 'check_cost_limit'):
+                        with patch.object(guard, 'check_consecutive_failures'):
+                            guard.pre_flight_checks()
+            mock_mem.assert_called_once()

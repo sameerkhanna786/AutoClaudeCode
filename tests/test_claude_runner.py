@@ -2,11 +2,12 @@
 
 import json
 import subprocess
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from claude_runner import ClaudeResult, ClaudeRunner
+from claude_runner import CircuitBreaker, ClaudeResult, ClaudeRunner
 from config_schema import Config
 
 
@@ -517,3 +518,146 @@ class TestMissingResultField:
         assert result.result_text == ""
         assert result.cost_usd == 0.03
         assert result.duration_seconds == 1.0
+
+
+class TestCircuitBreaker:
+    """Test circuit breaker state transitions and recovery behavior."""
+
+    def test_initial_state_is_closed(self):
+        cb = CircuitBreaker()
+        assert cb.state == CircuitBreaker.STATE_CLOSED
+
+    def test_allow_request_when_closed(self):
+        cb = CircuitBreaker()
+        assert cb.allow_request() is True
+
+    def test_stays_closed_below_threshold(self):
+        cb = CircuitBreaker(failure_threshold=5)
+        for _ in range(4):
+            cb.record_failure()
+        assert cb.state == CircuitBreaker.STATE_CLOSED
+        assert cb.allow_request() is True
+
+    def test_opens_at_failure_threshold(self):
+        cb = CircuitBreaker(failure_threshold=3)
+        for _ in range(3):
+            cb.record_failure()
+        assert cb.state == CircuitBreaker.STATE_OPEN
+        assert cb.allow_request() is False
+
+    def test_blocks_requests_when_open(self):
+        cb = CircuitBreaker(failure_threshold=2)
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.STATE_OPEN
+        assert cb.allow_request() is False
+        assert cb.allow_request() is False
+
+    def test_transitions_to_half_open_after_recovery_timeout(self):
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=1)
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.STATE_OPEN
+        # Wait for recovery timeout
+        time.sleep(1.1)
+        assert cb.state == CircuitBreaker.STATE_HALF_OPEN
+
+    def test_half_open_allows_limited_calls(self):
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0, half_open_max_calls=1)
+        cb.record_failure()
+        cb.record_failure()
+        # Recovery timeout is 0, should immediately transition
+        assert cb.state == CircuitBreaker.STATE_HALF_OPEN
+        # First call allowed
+        assert cb.allow_request() is True
+        # Second call blocked (max=1)
+        assert cb.allow_request() is False
+
+    def test_half_open_success_resets_to_closed(self):
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0)
+        cb.record_failure()
+        cb.record_failure()
+        # Force transition to HALF_OPEN
+        assert cb.state == CircuitBreaker.STATE_HALF_OPEN
+        cb.record_success()
+        assert cb.state == CircuitBreaker.STATE_CLOSED
+        assert cb.allow_request() is True
+
+    def test_half_open_failure_reopens(self):
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0, half_open_max_calls=1)
+        cb.record_failure()
+        cb.record_failure()
+        # Force transition to HALF_OPEN (recovery_timeout=0 means immediate transition)
+        _ = cb.state  # triggers transition
+        assert cb.allow_request() is True  # probe call
+        cb.record_failure()
+        # record_failure sets state to OPEN, but with recovery_timeout=0 the
+        # .state property immediately transitions back to HALF_OPEN.
+        # Verify the internal state was set to OPEN by record_failure:
+        assert cb._state == CircuitBreaker.STATE_OPEN
+        # And that accessing .state triggers the immediate recovery transition:
+        assert cb.state == CircuitBreaker.STATE_HALF_OPEN
+
+    def test_half_open_failure_reopens_with_timeout(self):
+        """Verify that a failure during HALF_OPEN re-opens the circuit with a real timeout."""
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=300, half_open_max_calls=1)
+        cb.record_failure()
+        cb.record_failure()
+        # Manually transition to HALF_OPEN for testing
+        cb._state = CircuitBreaker.STATE_HALF_OPEN
+        cb._half_open_calls = 0
+        assert cb.allow_request() is True  # probe call
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.STATE_OPEN
+
+    def test_success_resets_failure_count(self):
+        cb = CircuitBreaker(failure_threshold=5)
+        for _ in range(4):
+            cb.record_failure()
+        cb.record_success()
+        assert cb.state == CircuitBreaker.STATE_CLOSED
+        # Need 5 more failures to open again
+        for _ in range(4):
+            cb.record_failure()
+        assert cb.state == CircuitBreaker.STATE_CLOSED
+
+    def test_manual_reset(self):
+        cb = CircuitBreaker(failure_threshold=2)
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.STATE_OPEN
+        cb.reset()
+        assert cb.state == CircuitBreaker.STATE_CLOSED
+        assert cb.allow_request() is True
+
+    def test_custom_parameters(self):
+        cb = CircuitBreaker(failure_threshold=10, recovery_timeout=600, half_open_max_calls=3)
+        assert cb.failure_threshold == 10
+        assert cb.recovery_timeout == 600
+        assert cb.half_open_max_calls == 3
+
+
+class TestCircuitBreakerIntegration:
+    """Test circuit breaker integration with ClaudeRunner."""
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_run_blocked_by_open_circuit_breaker(self, mock_popen, runner):
+        """When circuit breaker is open, run() should return failure without calling subprocess."""
+        runner.circuit_breaker._state = CircuitBreaker.STATE_OPEN
+        runner.circuit_breaker._opened_at = time.monotonic()  # recent, so won't auto-transition
+        result = runner.run("Fix the bug")
+        assert result.success is False
+        assert "Circuit breaker" in result.error
+        mock_popen.assert_not_called()
+
+    def test_is_circuit_breaker_error_patterns(self):
+        """Verify all expected error patterns are detected."""
+        assert ClaudeRunner._is_circuit_breaker_error("rate limit exceeded") is True
+        assert ClaudeRunner._is_circuit_breaker_error("HTTP 429 Too Many Requests") is True
+        assert ClaudeRunner._is_circuit_breaker_error("Error 500 Internal") is True
+        assert ClaudeRunner._is_circuit_breaker_error("502 Bad Gateway") is True
+        assert ClaudeRunner._is_circuit_breaker_error("503 Service Unavailable") is True
+        assert ClaudeRunner._is_circuit_breaker_error("504 Gateway Timeout") is True
+        assert ClaudeRunner._is_circuit_breaker_error("server is overloaded") is True
+        assert ClaudeRunner._is_circuit_breaker_error("normal error") is False
+        assert ClaudeRunner._is_circuit_breaker_error("success") is False

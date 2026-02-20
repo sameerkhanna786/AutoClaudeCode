@@ -544,3 +544,139 @@ class TestValidateBatchSizeOrdering:
         config.orchestrator.max_batch_size = 5
         # Should not raise — all equal is valid
         validate_config(config)
+
+
+class TestValidateModelNames:
+    """Tests for model name validation in validate_config()."""
+
+    def test_empty_model_name_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.model = ""
+        with pytest.raises(ValueError, match="claude.model must be a non-empty string"):
+            validate_config(config)
+
+    def test_whitespace_only_model_name_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.model = "  "
+        with pytest.raises(ValueError, match="claude.model must be a non-empty string"):
+            validate_config(config)
+
+    def test_model_with_embedded_spaces_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.model = "claude opus"
+        with pytest.raises(ValueError, match="contains whitespace"):
+            validate_config(config)
+
+    def test_known_alias_passes(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.model = "opus"
+        validate_config(config)
+
+    def test_full_model_id_passes(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.model = "claude-opus-4-6"
+        validate_config(config)
+
+    def test_unknown_alias_warns(self, caplog):
+        import logging
+        from config_schema import validate_config
+        config = Config()
+        config.claude.model = "unknown-model"
+        with caplog.at_level(logging.WARNING):
+            validate_config(config)
+        assert any("not a recognized alias" in r.message for r in caplog.records)
+
+    def test_discovery_model_with_whitespace_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.discovery.discovery_model = "opus model"
+        with pytest.raises(ValueError, match="discovery.discovery_model contains whitespace"):
+            validate_config(config)
+
+
+class TestValidateMaxRetries:
+    """Tests for max_retries and max_turns validation."""
+
+    def test_negative_max_retries_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.max_retries = -1
+        with pytest.raises(ValueError, match="claude.max_retries"):
+            validate_config(config)
+
+    def test_zero_max_retries_passes(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.max_retries = 0
+        validate_config(config)
+
+    def test_zero_max_turns_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.max_turns = 0
+        with pytest.raises(ValueError, match="claude.max_turns"):
+            validate_config(config)
+
+
+class TestValidateFilePaths:
+    """Tests for file path validation."""
+
+    def test_empty_history_file_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.paths.history_file = ""
+        with pytest.raises(ValueError, match="paths.history_file"):
+            validate_config(config)
+
+    def test_empty_lock_file_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.paths.lock_file = ""
+        with pytest.raises(ValueError, match="paths.lock_file"):
+            validate_config(config)
+
+    def test_empty_state_dir_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.paths.state_dir = ""
+        with pytest.raises(ValueError, match="paths.state_dir"):
+            validate_config(config)
+
+    def test_empty_feedback_dir_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.paths.feedback_dir = ""
+        with pytest.raises(ValueError, match="paths.feedback_dir"):
+            validate_config(config)
+
+    def test_valid_paths_pass(self):
+        from config_schema import validate_config
+        config = Config()
+        # Default paths should be valid
+        validate_config(config)
+
+
+class TestValidateMemoryConfig:
+    """Tests for min_memory_mb validation."""
+
+    def test_negative_min_memory_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.safety.min_memory_mb = -1
+        with pytest.raises(ValueError, match="safety.min_memory_mb"):
+            validate_config(config)
+
+    def test_zero_min_memory_passes(self):
+        from config_schema import validate_config
+        config = Config()
+        config.safety.min_memory_mb = 0
+        validate_config(config)
+
+    def test_default_min_memory(self):
+        config = Config()
+        assert config.safety.min_memory_mb == 256

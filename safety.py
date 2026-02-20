@@ -121,6 +121,79 @@ class SafetyGuard:
                 f"minimum {self.config.safety.min_disk_space_mb} MB required"
             )
 
+    def check_memory(self) -> None:
+        """Ensure sufficient RAM is available.
+
+        Uses /proc/meminfo on Linux and vm_stat on macOS.
+        Skips the check gracefully on unsupported platforms.
+        """
+        import platform
+        min_mb = self.config.safety.min_memory_mb
+        if min_mb <= 0:
+            return
+
+        available_mb: Optional[float] = None
+
+        system = platform.system()
+        if system == "Linux":
+            try:
+                with open("/proc/meminfo", "r") as f:
+                    for line in f:
+                        if line.startswith("MemAvailable:"):
+                            parts = line.split()
+                            available_mb = int(parts[1]) / 1024  # kB -> MB
+                            break
+            except (OSError, ValueError, IndexError):
+                logger.debug("Could not read /proc/meminfo, skipping memory check")
+                return
+        elif system == "Darwin":
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["vm_stat"], capture_output=True, text=True, timeout=5,
+                )
+                if result.returncode == 0:
+                    page_size = 4096  # default macOS page size
+                    free_pages = 0
+                    for line in result.stdout.splitlines():
+                        if "page size of" in line:
+                            try:
+                                page_size = int(line.split()[-2])
+                            except (ValueError, IndexError):
+                                pass
+                        elif "Pages free:" in line:
+                            try:
+                                free_pages += int(line.split()[-1].rstrip("."))
+                            except (ValueError, IndexError):
+                                pass
+                        elif "Pages speculative:" in line or "Pages purgeable:" in line:
+                            try:
+                                free_pages += int(line.split()[-1].rstrip("."))
+                            except (ValueError, IndexError):
+                                pass
+                    available_mb = (free_pages * page_size) / (1024 * 1024)
+            except (OSError, subprocess.TimeoutExpired):
+                logger.debug("Could not run vm_stat, skipping memory check")
+                return
+        else:
+            logger.debug("Memory check not supported on %s", system)
+            return
+
+        if available_mb is None:
+            logger.debug("Could not determine available memory, skipping check")
+            return
+
+        if available_mb < min_mb:
+            raise SafetyError(
+                f"Low memory: {available_mb:.0f} MB available, "
+                f"minimum {min_mb} MB required"
+            )
+        elif available_mb < min_mb * 1.5:
+            logger.warning(
+                "Memory approaching minimum: %.0f MB available (minimum: %d MB)",
+                available_mb, min_mb,
+            )
+
     def check_rate_limit(self) -> None:
         """Ensure we haven't exceeded the cycles-per-hour limit."""
         count = self.state.get_cycle_count_last_hour()
@@ -217,6 +290,7 @@ class SafetyGuard:
     def pre_flight_checks(self) -> None:
         """Run all pre-cycle safety checks."""
         self.check_disk_space()
+        self.check_memory()
         self.check_rate_limit()
         self.check_cost_limit()
         self.check_consecutive_failures()

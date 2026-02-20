@@ -86,6 +86,7 @@ class SafetyConfig:
     max_cycles_per_hour: int = 30
     max_cost_usd_per_hour: float = 10.0
     min_disk_space_mb: int = 500
+    min_memory_mb: int = 256
     max_history_records: int = 1000
     protected_files: List[str] = field(default_factory=lambda: ["main.py", "config.yaml"])
 
@@ -283,6 +284,36 @@ def validate_config(config: Config) -> None:
 
     Raises ValueError if configuration is invalid.
     """
+    # Validate model names are non-empty strings without whitespace
+    _KNOWN_MODEL_ALIASES = {
+        "opus", "sonnet", "haiku",
+        "claude-opus-4-6", "claude-sonnet-4-20250514",
+        "claude-haiku-3-5-20241022",
+    }
+    if not config.claude.model or not config.claude.model.strip():
+        raise ValueError(
+            "claude.model must be a non-empty string"
+        )
+    model = config.claude.model.strip()
+    if " " in model or "\t" in model:
+        raise ValueError(
+            f"claude.model contains whitespace: {model!r}"
+        )
+    if model not in _KNOWN_MODEL_ALIASES and not model.startswith("claude-"):
+        logger.warning(
+            "claude.model '%s' is not a recognized alias or model ID. "
+            "Known aliases: %s. If this is intentional, ignore this warning.",
+            model, ", ".join(sorted(_KNOWN_MODEL_ALIASES)),
+        )
+
+    # Validate discovery model
+    if config.discovery.discovery_model:
+        dm = config.discovery.discovery_model.strip()
+        if " " in dm or "\t" in dm:
+            raise ValueError(
+                f"discovery.discovery_model contains whitespace: {dm!r}"
+            )
+
     # Validate timeout values are positive integers
     if config.claude.timeout_seconds <= 0:
         raise ValueError(
@@ -304,6 +335,16 @@ def validate_config(config: Config) -> None:
         raise ValueError(
             f"orchestrator.cycle_timeout_seconds must be a positive integer, "
             f"got {config.orchestrator.cycle_timeout_seconds}"
+        )
+
+    # Validate max_retries is non-negative
+    if config.claude.max_retries < 0:
+        raise ValueError(
+            f"claude.max_retries must be non-negative, got {config.claude.max_retries}"
+        )
+    if config.claude.max_turns <= 0:
+        raise ValueError(
+            f"claude.max_turns must be positive, got {config.claude.max_turns}"
         )
 
     # Cross-field: Claude timeout must exceed test timeout
@@ -328,6 +369,19 @@ def validate_config(config: Config) -> None:
             f"got {config.discovery.discovery_timeout}"
         )
 
+    # Validate file paths: ensure critical path fields are non-empty
+    _PATH_FIELDS = [
+        ("paths.history_file", config.paths.history_file),
+        ("paths.lock_file", config.paths.lock_file),
+        ("paths.state_dir", config.paths.state_dir),
+        ("paths.feedback_dir", config.paths.feedback_dir),
+    ]
+    for field_name, field_value in _PATH_FIELDS:
+        if not field_value or not field_value.strip():
+            raise ValueError(
+                f"{field_name} must be a non-empty path"
+            )
+
     # Validate safety fields
     if config.safety.max_consecutive_failures <= 0:
         raise ValueError(
@@ -348,6 +402,11 @@ def validate_config(config: Config) -> None:
         raise ValueError(
             f"safety.min_disk_space_mb must be positive, "
             f"got {config.safety.min_disk_space_mb}"
+        )
+    if config.safety.min_memory_mb < 0:
+        raise ValueError(
+            f"safety.min_memory_mb must be non-negative, "
+            f"got {config.safety.min_memory_mb}"
         )
 
     # Validate parallel config
