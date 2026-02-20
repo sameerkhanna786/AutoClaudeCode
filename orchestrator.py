@@ -1193,6 +1193,12 @@ class Orchestrator:
 
     def run(self, once: bool = False) -> None:
         """Run the main loop. If once=True, run a single cycle and exit."""
+        if self.config.parallel.enabled:
+            from coordinator import ParallelCoordinator
+            coordinator = ParallelCoordinator(self.config)
+            coordinator.run(once=once)
+            return
+
         self._setup_signals()
 
         try:

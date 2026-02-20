@@ -264,3 +264,128 @@ class TestCommitMessageLengthValidation:
         Path(tmp_git_repo, "file.txt").write_text("content")
         commit_hash = gm.commit("Normal length message", files=["file.txt"])
         assert len(commit_hash) == 40
+
+
+class TestWorktreeManagement:
+    def test_create_and_remove_worktree(self, tmp_git_repo):
+        """Can create and remove a worktree."""
+        gm = GitManager(tmp_git_repo)
+        wt_path = str(Path(tmp_git_repo) / ".worktrees" / "test-wt")
+        Path(wt_path).parent.mkdir(parents=True, exist_ok=True)
+
+        gm.create_worktree(wt_path, "test-branch")
+        assert Path(wt_path).exists()
+        assert Path(wt_path, "README.md").exists()
+
+        gm.remove_worktree(wt_path, force=True)
+        assert not Path(wt_path).exists()
+
+        gm.delete_branch("test-branch", force=True)
+
+    def test_get_current_branch(self, tmp_git_repo):
+        """Can get the current branch name."""
+        gm = GitManager(tmp_git_repo)
+        # In a new git repo the branch is typically "main" or "master"
+        branch = gm.get_current_branch()
+        assert branch in ("main", "master")
+
+    def test_checkout_branch(self, tmp_git_repo):
+        """Can checkout between branches."""
+        gm = GitManager(tmp_git_repo)
+        original = gm.get_current_branch()
+
+        # Create a worktree with a new branch, then remove it
+        wt_path = str(Path(tmp_git_repo) / ".worktrees" / "checkout-test")
+        Path(wt_path).parent.mkdir(parents=True, exist_ok=True)
+        gm.create_worktree(wt_path, "checkout-branch")
+        gm.remove_worktree(wt_path, force=True)
+
+        # Checkout the new branch
+        gm.checkout("checkout-branch")
+        assert gm.get_current_branch() == "checkout-branch"
+
+        # Return to original
+        gm.checkout(original)
+        assert gm.get_current_branch() == original
+
+        gm.delete_branch("checkout-branch", force=True)
+
+    def test_merge_ff_only(self, tmp_git_repo):
+        """Fast-forward merge works when possible."""
+        gm = GitManager(tmp_git_repo)
+        original = gm.get_current_branch()
+
+        # Create worktree, add commit
+        wt_path = str(Path(tmp_git_repo) / ".worktrees" / "ff-test")
+        Path(wt_path).parent.mkdir(parents=True, exist_ok=True)
+        gm.create_worktree(wt_path, "ff-branch")
+
+        wt_gm = GitManager(wt_path)
+        Path(wt_path, "ff_file.txt").write_text("fast forward")
+        wt_gm.commit("Add ff file", files=["ff_file.txt"])
+
+        gm.remove_worktree(wt_path, force=True)
+
+        # FF merge should succeed (main hasn't moved)
+        assert gm.merge_ff_only("ff-branch") is True
+        assert Path(tmp_git_repo, "ff_file.txt").exists()
+
+        gm.delete_branch("ff-branch", force=True)
+
+    def test_merge_ff_only_fails_on_diverged(self, tmp_git_repo):
+        """Fast-forward merge fails when branches have diverged."""
+        gm = GitManager(tmp_git_repo)
+
+        # Create worktree with a commit
+        wt_path = str(Path(tmp_git_repo) / ".worktrees" / "div-test")
+        Path(wt_path).parent.mkdir(parents=True, exist_ok=True)
+        gm.create_worktree(wt_path, "div-branch")
+
+        wt_gm = GitManager(wt_path)
+        Path(wt_path, "branch_file.txt").write_text("branch")
+        wt_gm.commit("Branch commit", files=["branch_file.txt"])
+        gm.remove_worktree(wt_path, force=True)
+
+        # Add a commit to main too (diverge)
+        Path(tmp_git_repo, "main_file.txt").write_text("main")
+        gm.commit("Main commit", files=["main_file.txt"])
+
+        # FF merge should fail
+        assert gm.merge_ff_only("div-branch") is False
+
+        gm.delete_branch("div-branch", force=True)
+
+    def test_merge_branch_with_no_conflicts(self, tmp_git_repo):
+        """Auto-merge succeeds when there are no conflicts."""
+        gm = GitManager(tmp_git_repo)
+
+        # Create branch with commit on a different file
+        wt_path = str(Path(tmp_git_repo) / ".worktrees" / "merge-test")
+        Path(wt_path).parent.mkdir(parents=True, exist_ok=True)
+        gm.create_worktree(wt_path, "merge-branch")
+
+        wt_gm = GitManager(wt_path)
+        Path(wt_path, "branch_only.txt").write_text("from branch")
+        wt_gm.commit("Branch file", files=["branch_only.txt"])
+        gm.remove_worktree(wt_path, force=True)
+
+        # Commit different file on main
+        Path(tmp_git_repo, "main_only.txt").write_text("from main")
+        gm.commit("Main file", files=["main_only.txt"])
+
+        # Merge should succeed
+        assert gm.merge_branch("merge-branch") is True
+        assert Path(tmp_git_repo, "branch_only.txt").exists()
+        assert Path(tmp_git_repo, "main_only.txt").exists()
+
+        gm.delete_branch("merge-branch", force=True)
+
+    def test_prune_worktrees(self, tmp_git_repo):
+        """prune_worktrees doesn't error on a clean repo."""
+        gm = GitManager(tmp_git_repo)
+        gm.prune_worktrees()  # Should not raise
+
+    def test_delete_branch_nonexistent(self, tmp_git_repo):
+        """Deleting a nonexistent branch doesn't raise (check=False)."""
+        gm = GitManager(tmp_git_repo)
+        gm.delete_branch("nonexistent-branch")  # Should not raise

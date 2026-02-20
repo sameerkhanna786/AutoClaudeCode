@@ -35,8 +35,12 @@ class CycleState:
 class CycleStateWriter:
     """Writes current cycle state atomically to a JSON file."""
 
-    def __init__(self, state_dir: str):
-        self._path = Path(state_dir) / "current_cycle.json"
+    def __init__(self, state_dir: str, worker_id: Optional[int] = None):
+        if worker_id is not None:
+            filename = f"current_cycle_worker_{worker_id}.json"
+        else:
+            filename = "current_cycle.json"
+        self._path = Path(state_dir) / filename
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
     @property

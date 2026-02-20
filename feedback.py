@@ -177,3 +177,77 @@ class FeedbackManager:
             logger.warning("Failed to move %s to %s: %s", src, dst, e)
             return
         logger.info("Marked feedback as failed: %s → %s", src.name, dst.name)
+
+    def claim_feedback(self, source_file: str) -> bool:
+        """Atomically claim a feedback file by renaming it with .claimed suffix.
+
+        Returns True if the file was successfully claimed, False if another
+        worker already claimed it (FileNotFoundError on rename).
+        """
+        src = Path(source_file)
+        claimed = src.with_suffix(src.suffix + ".claimed")
+        try:
+            os.rename(str(src), str(claimed))
+            return True
+        except FileNotFoundError:
+            return False  # another worker already claimed it
+
+    def unclaim_feedback(self, source_file: str) -> None:
+        """Restore a claimed feedback file back to its original name.
+
+        Used when a worker fails and the feedback task should be retried.
+        """
+        src = Path(source_file)
+        claimed = src.with_suffix(src.suffix + ".claimed")
+        try:
+            os.rename(str(claimed), str(src))
+        except FileNotFoundError:
+            pass  # file was already moved or doesn't exist
+
+    def mark_done_claimed(self, source_file: str) -> None:
+        """Move a claimed feedback file (.claimed suffix) to done/."""
+        src = Path(source_file)
+        claimed = src.with_suffix(src.suffix + ".claimed")
+        if not claimed.exists():
+            # Fall back to original path
+            if src.exists():
+                self.mark_done(source_file)
+            return
+        # Move the claimed file to done with the original name
+        dst = self.done_dir / src.name
+        if dst.exists():
+            stem = dst.stem
+            suffix = dst.suffix
+            counter = 1
+            while dst.exists():
+                dst = self.done_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+        try:
+            self._atomic_move(claimed, dst)
+        except OSError as e:
+            logger.warning("Failed to move %s to %s: %s", claimed, dst, e)
+            return
+        logger.info("Marked claimed feedback as done: %s → %s", src.name, dst.name)
+
+    def mark_failed_claimed(self, source_file: str) -> None:
+        """Move a claimed feedback file (.claimed suffix) to failed/."""
+        src = Path(source_file)
+        claimed = src.with_suffix(src.suffix + ".claimed")
+        if not claimed.exists():
+            if src.exists():
+                self.mark_failed(source_file)
+            return
+        dst = self.failed_dir / src.name
+        if dst.exists():
+            stem = dst.stem
+            suffix = dst.suffix
+            counter = 1
+            while dst.exists():
+                dst = self.failed_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+        try:
+            self._atomic_move(claimed, dst)
+        except OSError as e:
+            logger.warning("Failed to move %s to %s: %s", claimed, dst, e)
+            return
+        logger.info("Marked claimed feedback as failed: %s → %s", src.name, dst.name)

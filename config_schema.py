@@ -113,6 +113,16 @@ class AgentPipelineConfig:
 
 
 @dataclass
+class ParallelConfig:
+    enabled: bool = False
+    max_workers: int = 3
+    worktree_base_dir: str = ".worktrees"
+    merge_strategy: str = "rebase"  # "rebase" or "merge"
+    max_merge_retries: int = 2
+    cleanup_on_exit: bool = True
+
+
+@dataclass
 class PathsConfig:
     feedback_dir: str = "feedback"
     feedback_done_dir: str = "feedback/done"
@@ -143,6 +153,7 @@ class Config:
     paths: PathsConfig = field(default_factory=PathsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     agent_pipeline: AgentPipelineConfig = field(default_factory=AgentPipelineConfig)
+    parallel: ParallelConfig = field(default_factory=ParallelConfig)
 
 
 def _get_expected_type(dc_class, field_name: str):
@@ -236,6 +247,7 @@ def load_config(path: Optional[str] = None) -> Config:
         "safety": config.safety,
         "paths": config.paths,
         "logging": config.logging,
+        "parallel": config.parallel,
     }
 
     for section_name, dc_instance in section_map.items():

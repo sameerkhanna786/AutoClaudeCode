@@ -241,3 +241,58 @@ class GitManager:
         """Check if the working tree is clean (no changes or untracked files)."""
         status = self._run("status", "--porcelain", check=False)
         return status.stdout.strip() == ""
+
+    # ------------------------------------------------------------------
+    # Worktree and branch management (for parallel workers)
+    # ------------------------------------------------------------------
+
+    def create_worktree(self, path: str, branch: str) -> None:
+        """Create a new worktree with a new branch at the given path."""
+        self._run("worktree", "add", "-b", branch, path)
+
+    def remove_worktree(self, path: str, force: bool = False) -> None:
+        """Remove a worktree directory."""
+        args = ["worktree", "remove", path]
+        if force:
+            args.insert(2, "--force")
+        self._run(*args, check=False)
+
+    def delete_branch(self, branch: str, force: bool = False) -> None:
+        """Delete a local branch."""
+        flag = "-D" if force else "-d"
+        self._run("branch", flag, branch, check=False)
+
+    def merge_branch(self, branch: str) -> bool:
+        """Merge a branch into the current branch. Returns True on success."""
+        result = self._run("merge", branch, "--no-edit", check=False)
+        return result.returncode == 0
+
+    def merge_ff_only(self, branch: str) -> bool:
+        """Try a fast-forward-only merge. Returns True on success."""
+        result = self._run("merge", "--ff-only", branch, check=False)
+        return result.returncode == 0
+
+    def abort_merge(self) -> None:
+        """Abort an in-progress merge."""
+        self._run("merge", "--abort", check=False)
+
+    def rebase_onto(self, target: str, branch: str) -> bool:
+        """Rebase branch onto target. Returns True on success."""
+        result = self._run("rebase", target, branch, check=False)
+        if result.returncode != 0:
+            self._run("rebase", "--abort", check=False)
+            return False
+        return True
+
+    def get_current_branch(self) -> str:
+        """Get the current branch name."""
+        result = self._run("rev-parse", "--abbrev-ref", "HEAD")
+        return result.stdout.strip()
+
+    def checkout(self, branch: str) -> None:
+        """Checkout a branch."""
+        self._run("checkout", branch)
+
+    def prune_worktrees(self) -> None:
+        """Clean up stale worktree references."""
+        self._run("worktree", "prune", check=False)

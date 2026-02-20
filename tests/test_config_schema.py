@@ -7,7 +7,7 @@ import pytest
 
 from config_schema import (
     Config, load_config,
-    ClaudeConfig, DiscoveryConfig, AgentPipelineConfig,
+    ClaudeConfig, DiscoveryConfig, AgentPipelineConfig, ParallelConfig,
 )
 
 
@@ -282,3 +282,56 @@ class TestAgentPipelineConfig:
         # other agents fully default
         assert config.agent_pipeline.coder.model == "opus"
         assert config.agent_pipeline.tester.max_turns == 15
+
+
+class TestParallelConfig:
+    def test_default_parallel_disabled(self):
+        config = Config()
+        assert config.parallel.enabled is False
+
+    def test_default_max_workers(self):
+        config = Config()
+        assert config.parallel.max_workers == 3
+
+    def test_default_merge_strategy(self):
+        config = Config()
+        assert config.parallel.merge_strategy == "rebase"
+
+    def test_default_worktree_base_dir(self):
+        config = Config()
+        assert config.parallel.worktree_base_dir == ".worktrees"
+
+    def test_default_cleanup_on_exit(self):
+        config = Config()
+        assert config.parallel.cleanup_on_exit is True
+
+    def test_parallel_yaml_override(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text(
+            "parallel:\n"
+            "  enabled: true\n"
+            "  max_workers: 5\n"
+            "  merge_strategy: merge\n"
+            "  worktree_base_dir: custom_worktrees\n"
+            "  max_merge_retries: 4\n"
+            "  cleanup_on_exit: false\n"
+        )
+        config = load_config(str(f))
+        assert config.parallel.enabled is True
+        assert config.parallel.max_workers == 5
+        assert config.parallel.merge_strategy == "merge"
+        assert config.parallel.worktree_base_dir == "custom_worktrees"
+        assert config.parallel.max_merge_retries == 4
+        assert config.parallel.cleanup_on_exit is False
+
+    def test_parallel_partial_override(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text(
+            "parallel:\n"
+            "  enabled: true\n"
+        )
+        config = load_config(str(f))
+        assert config.parallel.enabled is True
+        # Other fields keep defaults
+        assert config.parallel.max_workers == 3
+        assert config.parallel.merge_strategy == "rebase"
