@@ -211,6 +211,25 @@ class AgentPipeline:
         plan_text = workspace.read("plan.md") or planner_result.output_text
 
         while True:
+            # Cost guard: abort if accumulated cost exceeds pipeline budget
+            pipeline_cost_limit = ap.max_pipeline_cost_usd
+            if pipeline_cost_limit <= 0:
+                pipeline_cost_limit = self.config.safety.max_cost_usd_per_hour * 0.5
+            if result.total_cost_usd >= pipeline_cost_limit:
+                logger.warning(
+                    "Pipeline cost guard: $%.2f accumulated (limit $%.2f), aborting",
+                    result.total_cost_usd, pipeline_cost_limit,
+                )
+                result.error = (
+                    f"Pipeline cost limit exceeded "
+                    f"(${result.total_cost_usd:.2f} >= ${pipeline_cost_limit:.2f})"
+                )
+                return result
+
+            if self._terminated:
+                result.error = "Pipeline was terminated"
+                return result
+
             # Read review feedback before cleaning workspace (reviewer wrote it last iteration)
             review_text = workspace.read("review.md") or ""
             workspace.clean()

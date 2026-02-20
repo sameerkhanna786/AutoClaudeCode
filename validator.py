@@ -98,8 +98,8 @@ class Validator:
         steps: List[ValidationStep] = []
 
         commands = [
-            ("tests", vc.test_command, vc.test_timeout),
             ("lint", vc.lint_command, vc.lint_timeout),
+            ("tests", vc.test_command, vc.test_timeout),
             ("build", vc.build_command, vc.build_timeout),
         ]
 

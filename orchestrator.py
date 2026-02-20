@@ -33,33 +33,35 @@ CLAUDE_PROMPT_TEMPLATE = """\
 You are working on the project in the current directory.
 
 TASK: {task_description}
-
+{context_section}
 INSTRUCTIONS:
 - Make the minimal changes needed to complete this task.
 - Do NOT run git commands (add, commit, push). The orchestrator handles git.
 - Do NOT modify these protected files: {protected_files}
 - Focus on correctness. Run tests if available.
 - If the task is unclear or impossible, make your best effort and explain what you did.
+{specific_instructions}
 """
 
 CLAUDE_PLAN_TEMPLATE = """\
 You are working on the project in the current directory.
 
 TASK: {task_description}
-
+{context_section}
 INSTRUCTIONS:
 - Analyze the codebase and create a detailed plan to complete this task.
 - Do NOT make any changes yet. Only output a plan.
 - List the files you would modify and what changes you would make.
 - Do NOT modify these protected files: {protected_files}
 - Be specific about the changes (function names, line numbers, etc.).
+{specific_instructions}
 """
 
 CLAUDE_EXECUTE_TEMPLATE = """\
 You are working on the project in the current directory.
 
 TASK: {task_description}
-
+{context_section}
 PLAN TO EXECUTE:
 {plan}
 
@@ -69,6 +71,7 @@ INSTRUCTIONS:
 - Do NOT modify these protected files: {protected_files}
 - Focus on correctness. Run tests if available.
 - Stick to the plan. Do not deviate unless the plan has an obvious error.
+{specific_instructions}
 """
 
 BATCH_PLAN_TEMPLATE = """\
@@ -93,6 +96,7 @@ INSTRUCTIONS:
 - Be specific about the changes (function names, line numbers, etc.).
 - Group related changes together where possible for clarity.
 - Address the tasks in priority order but look for opportunities to combine related changes.
+- Use the CONTEXT provided with each task to understand the code and errors involved.
 """
 
 BATCH_EXECUTE_TEMPLATE = """\
@@ -113,6 +117,7 @@ INSTRUCTIONS:
 - Focus on correctness. Run tests after making changes.
 - Stick to the plan. Do not deviate unless the plan has an obvious error.
 - Make ALL changes in this single session. This is a comprehensive revamp, not incremental.
+- Use the CONTEXT provided with each task to understand the code and errors involved.
 """
 
 BATCH_PROMPT_TEMPLATE = """\
@@ -129,6 +134,7 @@ INSTRUCTIONS:
 - Do NOT modify these protected files: {protected_files}
 - Focus on correctness. Run tests if available.
 - If a task is unclear or impossible, make your best effort and explain what you did.
+- Use the CONTEXT provided with each task to understand the code and errors involved.
 """
 
 VALIDATION_RETRY_PROMPT_TEMPLATE = """\
@@ -152,6 +158,49 @@ INSTRUCTIONS:
 - Your previous changes are still in the working tree. Build on them, do not start over.
 - Focus on making ALL validations pass.
 """
+
+
+_TASK_TYPE_INSTRUCTIONS = {
+    "test_failure": """\
+- Read the failing test(s) carefully. Understand what the test expects.
+- The traceback in the CONTEXT section shows exactly where the failure occurs.
+- Determine whether the bug is in the implementation or the test.
+- Fix whichever side is wrong. You may fix the code, fix the tests, or both.
+- Run the specific failing test to verify your fix.""",
+
+    "lint": """\
+- The lint error details are in the CONTEXT section showing the exact line.
+- Fix only the specific lint violations listed. Do not refactor unrelated code.
+- For style issues (line length, whitespace), make minimal formatting changes.
+- For semantic issues (unused imports, undefined names), fix the root cause.""",
+
+    "todo": """\
+- The TODO/FIXME comment and surrounding code are in the CONTEXT section.
+- Address the intent of the comment. Remove the TODO/FIXME marker when done.
+- If the TODO requires significant design decisions, implement the simplest correct approach.
+- Add or update tests if your change modifies behavior.""",
+
+    "coverage": """\
+- Write tests for the uncovered code paths in the specified file.
+- Focus on testing meaningful behavior, not just line coverage.
+- Follow the existing test patterns in the project's test directory.
+- Use descriptive test names that explain what scenario is being tested.""",
+
+    "quality": """\
+- Focus on improving code clarity and maintainability.
+- Break up overly long functions or files into logical units.
+- Do NOT change behavior. All existing tests must continue to pass.""",
+
+    "claude_idea": """\
+- Implement the improvement described above.
+- Be thorough but conservative. Follow existing code patterns.
+- Add tests for any new functionality you introduce.""",
+
+    "feedback": """\
+- This task was written by a human developer. Follow it precisely.
+- If the instructions are ambiguous, make the most reasonable interpretation.
+- After implementing, verify that your changes match the developer's intent.""",
+}
 
 
 class Orchestrator:
@@ -207,6 +256,7 @@ class Orchestrator:
         self._running = True
         self._consecutive_exceptions = 0
         self._backoff_seconds = 0
+        self._active_pipeline: Optional[AgentPipeline] = None
 
     def _setup_signals(self) -> None:
         """Register signal handlers for graceful shutdown."""
@@ -214,6 +264,9 @@ class Orchestrator:
             logger.info("Received signal %d, shutting down gracefully...", signum)
             self._running = False
             self.claude.terminate()
+            pipeline = self._active_pipeline
+            if pipeline is not None:
+                pipeline.terminate()
 
         signal.signal(signal.SIGINT, handler)
         signal.signal(signal.SIGTERM, handler)
@@ -221,26 +274,44 @@ class Orchestrator:
     def _build_prompt(self, task: Task) -> str:
         """Build the Claude prompt for a given task."""
         protected = ", ".join(self.config.safety.protected_files)
+        context_section = ""
+        if task.context:
+            context_section = f"\nCONTEXT:\n{task.context}\n"
+        specific_instructions = _TASK_TYPE_INSTRUCTIONS.get(task.source, "")
         return CLAUDE_PROMPT_TEMPLATE.format(
             task_description=task.description,
             protected_files=protected,
+            context_section=context_section,
+            specific_instructions=specific_instructions,
         )
 
     def _build_plan_prompt(self, task: Task) -> str:
         """Build a planning-only prompt for a task."""
         protected = ", ".join(self.config.safety.protected_files)
+        context_section = ""
+        if task.context:
+            context_section = f"\nCONTEXT:\n{task.context}\n"
+        specific_instructions = _TASK_TYPE_INSTRUCTIONS.get(task.source, "")
         return CLAUDE_PLAN_TEMPLATE.format(
             task_description=task.description,
             protected_files=protected,
+            context_section=context_section,
+            specific_instructions=specific_instructions,
         )
 
     def _build_execute_prompt(self, task: Task, plan: str) -> str:
         """Build an execution prompt with a pre-approved plan."""
         protected = ", ".join(self.config.safety.protected_files)
+        context_section = ""
+        if task.context:
+            context_section = f"\nCONTEXT:\n{task.context}\n"
+        specific_instructions = _TASK_TYPE_INSTRUCTIONS.get(task.source, "")
         return CLAUDE_EXECUTE_TEMPLATE.format(
             task_description=task.description,
             plan=plan,
             protected_files=protected,
+            context_section=context_section,
+            specific_instructions=specific_instructions,
         )
 
     def _pick_task(self) -> Optional[Task]:
@@ -283,10 +354,14 @@ class Orchestrator:
         return tasks[:batch_size]
 
     def _format_task_list(self, tasks: List[Task]) -> str:
-        """Format tasks as a numbered list with source tags."""
+        """Format tasks as a numbered list with source tags and context."""
         lines = []
         for i, task in enumerate(tasks, 1):
             lines.append(f"{i}. {task.description} [{task.source}]")
+            if task.context:
+                lines.append(f"   CONTEXT:")
+                for ctx_line in task.context.split("\n"):
+                    lines.append(f"   {ctx_line}")
         return "\n".join(lines)
 
     def _build_batch_plan_prompt(self, tasks: List[Task]) -> str:
@@ -1047,6 +1122,7 @@ class Orchestrator:
         logger.info("Running multi-agent pipeline")
         self.cycle_state.update(phase="pipeline")
         pipeline = AgentPipeline(self.config, cycle_state=self.cycle_state)
+        self._active_pipeline = pipeline
 
         # Wrap pipeline.run() in a thread pool with cycle-level timeout
         timeout = self.config.orchestrator.cycle_timeout_seconds
@@ -1082,6 +1158,7 @@ class Orchestrator:
                 return
         finally:
             executor.shutdown(wait=False)
+            self._active_pipeline = None
 
         total_cost = pipeline_result.total_cost_usd
         total_duration = pipeline_result.total_duration_seconds

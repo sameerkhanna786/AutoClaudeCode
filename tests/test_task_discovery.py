@@ -8,7 +8,7 @@ import pytest
 
 from config_schema import Config
 from process_utils import RunResult
-from task_discovery import Task, TaskDiscovery, MAX_TASK_DESCRIPTION_LENGTH
+from task_discovery import Task, TaskDiscovery, MAX_TASK_DESCRIPTION_LENGTH, MAX_TASK_CONTEXT_LENGTH
 
 
 @pytest.fixture
@@ -509,3 +509,109 @@ class TestTaskKey:
     def test_fallback_task_key(self):
         task = Task(description="Some generic task", priority=5, source="unknown_source")
         assert task.task_key == "unknown_source:Some generic task"
+
+
+class TestTaskContext:
+    def test_context_preserved(self):
+        """Task context should be stored without sanitization."""
+        context = "line 1\nline 2\nline 3"
+        task = Task(description="Fix bug", priority=1, source="test", context=context)
+        assert task.context == context
+
+    def test_context_truncated_when_too_long(self):
+        """Context exceeding MAX_TASK_CONTEXT_LENGTH is truncated."""
+        long_ctx = "x" * (MAX_TASK_CONTEXT_LENGTH + 500)
+        task = Task(description="Fix bug", priority=1, source="test", context=long_ctx)
+        assert len(task.context) <= MAX_TASK_CONTEXT_LENGTH + 20  # +truncation suffix
+        assert task.context.endswith("... (truncated)")
+
+    def test_context_does_not_affect_task_key(self):
+        """Two tasks with same description but different context should have the same key."""
+        t1 = Task(description="Fix bug", priority=1, source="feedback",
+                  source_file="fix.md", context="context A")
+        t2 = Task(description="Fix bug", priority=1, source="feedback",
+                  source_file="fix.md", context="context B")
+        assert t1.task_key == t2.task_key
+
+    def test_empty_context_is_default(self):
+        task = Task(description="Fix bug", priority=1, source="test")
+        assert task.context == ""
+
+
+class TestExtractTestTraceback:
+    def test_extracts_traceback_for_test(self, discovery):
+        output = (
+            "_____ test_foo _____\n"
+            "def test_foo():\n"
+            ">       assert 1 == 2\n"
+            "E       AssertionError\n"
+            "===== 1 failed ====="
+        )
+        result = discovery._extract_test_traceback(output, "test_foo")
+        assert "assert 1 == 2" in result
+        assert "AssertionError" in result
+
+    def test_returns_empty_for_no_match(self, discovery):
+        output = "some output without the test id"
+        result = discovery._extract_test_traceback(output, "test_bar")
+        assert result == ""
+
+    def test_returns_empty_for_empty_test_id(self, discovery):
+        output = "some output"
+        result = discovery._extract_test_traceback(output, "")
+        assert result == ""
+
+
+class TestReadFileSnippet:
+    def test_reads_snippet_around_line(self, discovery, tmp_path):
+        content = "\n".join(f"line {i}" for i in range(1, 21))
+        (tmp_path / "code.py").write_text(content)
+        snippet = discovery._read_file_snippet("code.py", 10, context_lines=2)
+        assert " >> " in snippet  # The target line has a marker
+        assert "line 10" in snippet
+        assert "line 8" in snippet
+        assert "line 12" in snippet
+
+    def test_returns_empty_for_missing_file(self, discovery):
+        snippet = discovery._read_file_snippet("nonexistent.py", 5)
+        assert snippet == ""
+
+    def test_handles_absolute_path(self, discovery, tmp_path):
+        (tmp_path / "abs.py").write_text("hello\nworld\n")
+        snippet = discovery._read_file_snippet(str(tmp_path / "abs.py"), 1)
+        assert "hello" in snippet
+
+    def test_clamps_to_file_boundaries(self, discovery, tmp_path):
+        (tmp_path / "short.py").write_text("only\ntwo\n")
+        snippet = discovery._read_file_snippet("short.py", 1, context_lines=10)
+        assert "only" in snippet
+        assert "two" in snippet
+
+
+class TestDiscoveryAttachesContext:
+    @patch("task_discovery.run_with_group_kill")
+    def test_test_failures_include_context(self, mock_run, discovery):
+        mock_run.return_value = _run_result(
+            returncode=1,
+            stdout="FAILED tests/test_foo.py::test_bar - AssertionError\n",
+        )
+        tasks = discovery._discover_test_failures()
+        assert len(tasks) == 1
+        assert tasks[0].context != ""
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_generic_test_failure_includes_full_output(self, mock_run, discovery):
+        mock_run.return_value = _run_result(
+            returncode=1,
+            stdout="some error output\n",
+        )
+        tasks = discovery._discover_test_failures()
+        assert len(tasks) == 1
+        assert "some error output" in tasks[0].context
+
+    def test_todo_includes_file_snippet(self, discovery, tmp_path):
+        (tmp_path / "code.py").write_text("x = 1\n# TODO: fix this\ny = 2\n")
+        tasks = discovery._discover_todos()
+        assert len(tasks) == 1
+        assert tasks[0].context != ""
+        assert "TODO" in tasks[0].context

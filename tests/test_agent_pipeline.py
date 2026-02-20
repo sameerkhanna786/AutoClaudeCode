@@ -392,3 +392,69 @@ class TestAgentPipelineFlow:
         cmd = runner._build_command("test prompt")
         assert "haiku" in cmd
         assert "claude-opus-4-6" not in cmd
+
+
+class TestPipelineCostGuard:
+    """Test that the pipeline aborts when accumulated cost exceeds the limit."""
+
+    @patch("agent_pipeline.ClaudeRunner")
+    def test_cost_guard_aborts_revisions(self, MockRunner, tmp_path):
+        config = Config()
+        config.target_dir = str(tmp_path)
+        config.agent_pipeline.enabled = True
+        config.agent_pipeline.max_revisions = 5
+        config.agent_pipeline.max_pipeline_cost_usd = 0.50
+        pipeline = AgentPipeline(config)
+        rollback_fn = MagicMock()
+        ws_dir = Path(str(tmp_path)) / config.paths.agent_workspace_dir
+
+        call_idx = {"n": 0}
+        runner_instance = MockRunner.return_value
+
+        def side_effect_fn(prompt, working_dir):
+            call_idx["n"] += 1
+            if "REVIEWER" in prompt:
+                ws_dir.mkdir(parents=True, exist_ok=True)
+                (ws_dir / "review.md").write_text("VERDICT: REVISE\nNeeds work.")
+                return ClaudeResult(success=True, result_text="review",
+                                    cost_usd=0.15, duration_seconds=2.0)
+            return ClaudeResult(success=True, result_text="output",
+                                cost_usd=0.15, duration_seconds=2.0)
+
+        runner_instance.run.side_effect = side_effect_fn
+
+        result = pipeline.run([MockTask()], rollback_fn, "snap")
+
+        assert result.success is False
+        assert "cost limit" in result.error.lower()
+
+    @patch("agent_pipeline.ClaudeRunner")
+    def test_cost_guard_uses_safety_default(self, MockRunner, tmp_path):
+        """When max_pipeline_cost_usd is 0, uses safety.max_cost_usd_per_hour * 0.5."""
+        config = Config()
+        config.target_dir = str(tmp_path)
+        config.agent_pipeline.enabled = True
+        config.agent_pipeline.max_pipeline_cost_usd = 0.0  # use default
+        config.safety.max_cost_usd_per_hour = 2.0  # effective limit = 1.0
+        config.agent_pipeline.max_revisions = 10
+        pipeline = AgentPipeline(config)
+        rollback_fn = MagicMock()
+        ws_dir = Path(str(tmp_path)) / config.paths.agent_workspace_dir
+
+        runner_instance = MockRunner.return_value
+
+        def side_effect_fn(prompt, working_dir):
+            if "REVIEWER" in prompt:
+                ws_dir.mkdir(parents=True, exist_ok=True)
+                (ws_dir / "review.md").write_text("VERDICT: REVISE\nKeep going.")
+                return ClaudeResult(success=True, result_text="review",
+                                    cost_usd=0.30, duration_seconds=2.0)
+            return ClaudeResult(success=True, result_text="output",
+                                cost_usd=0.30, duration_seconds=2.0)
+
+        runner_instance.run.side_effect = side_effect_fn
+
+        result = pipeline.run([MockTask()], rollback_fn, "snap")
+
+        assert result.success is False
+        assert "cost limit" in result.error.lower()

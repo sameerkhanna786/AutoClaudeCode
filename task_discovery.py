@@ -29,6 +29,7 @@ _COMMENT_PREFIXES = {
 _STRING_LITERAL_RE = re.compile(r'''"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*' '''.strip())
 
 MAX_TASK_DESCRIPTION_LENGTH = 2000
+MAX_TASK_CONTEXT_LENGTH = 12000
 
 _FILE_REF_RE = re.compile(
     r'`([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json|md|txt))'
@@ -83,9 +84,12 @@ class Task:
     source: str  # "test_failure", "lint", "todo", "coverage", "quality", "feedback"
     source_file: Optional[str] = None  # file path for feedback tasks
     line_number: Optional[int] = None
+    context: str = ""  # rich context: tracebacks, file snippets, error details
 
     def __post_init__(self):
         self.description = _sanitize_description(self.description)
+        if len(self.context) > MAX_TASK_CONTEXT_LENGTH:
+            self.context = self.context[:MAX_TASK_CONTEXT_LENGTH] + "\n... (truncated)"
 
     @property
     def task_key(self) -> str:
@@ -155,6 +159,46 @@ class TaskDiscovery:
         tasks.sort(key=lambda t: t.priority)
         return tasks
 
+    def _extract_test_traceback(self, full_output: str, test_id: str) -> str:
+        """Extract the traceback section for a specific test from pytest output."""
+        if not test_id:
+            return ""
+        lines = full_output.split("\n")
+        collecting = False
+        result_lines: List[str] = []
+        for line in lines:
+            if test_id in line and ("FAILED" in line or "ERROR" in line or "___" in line):
+                collecting = True
+                result_lines = [line]
+                continue
+            if collecting:
+                if (line.startswith("___") and test_id not in line) or \
+                   line.startswith("=") or \
+                   (line.startswith("FAILED ") and test_id not in line):
+                    break
+                result_lines.append(line)
+        return "\n".join(result_lines)
+
+    def _read_file_snippet(self, filepath: str, line_num: int, context_lines: int = 5) -> str:
+        """Read a snippet of a file around the given line number."""
+        try:
+            fpath = Path(filepath)
+            if not fpath.is_absolute():
+                fpath = Path(self.target_dir) / filepath
+            if not fpath.exists():
+                return ""
+            content = fpath.read_text(errors="ignore")
+            lines = content.split("\n")
+            start = max(0, line_num - context_lines - 1)
+            end = min(len(lines), line_num + context_lines)
+            numbered = []
+            for i, line in enumerate(lines[start:end], start + 1):
+                marker = " >> " if i == line_num else "    "
+                numbered.append(f"{marker}{i:4d} | {line}")
+            return "\n".join(numbered)
+        except OSError:
+            return ""
+
     def _discover_test_failures(self) -> List[Task]:
         """Run pytest and parse failures."""
         test_cmd = self.config.validation.test_command
@@ -179,6 +223,11 @@ class TaskDiscovery:
         if result.returncode == 0:
             return []
 
+        # Capture full output for context
+        full_output = result.stdout
+        if result.stderr.strip():
+            full_output += "\n" + result.stderr
+
         # Parse pytest output for FAILED lines
         tasks = []
         for line in result.stdout.split("\n"):
@@ -186,10 +235,15 @@ class TaskDiscovery:
             if line.startswith("FAILED"):
                 # e.g. "FAILED tests/test_foo.py::test_bar - AssertionError: ..."
                 desc = f"Fix test failure: {line}"
+                # Extract test identifier for per-test traceback
+                parts = line.split()
+                test_id = parts[1] if len(parts) > 1 else ""
+                per_test_ctx = self._extract_test_traceback(full_output, test_id)
                 tasks.append(Task(
                     description=desc,
                     priority=2,
                     source="test_failure",
+                    context=per_test_ctx if per_test_ctx else full_output,
                 ))
 
         # If we got failures but couldn't parse individual ones, create a generic task
@@ -198,6 +252,7 @@ class TaskDiscovery:
                 description=f"Fix test failures (exit code {result.returncode})",
                 priority=2,
                 source="test_failure",
+                context=full_output,
             ))
 
         return tasks
@@ -236,12 +291,19 @@ class TaskDiscovery:
                     filename = err.get("filename", "unknown")
                     message = err.get("message", "lint error")
                     code = err.get("code", "")
+                    line_num = err.get("location", {}).get("row", 0)
                     desc = f"Fix lint error in {filename}: [{code}] {message}"
+                    # Build context: snippet around the error line
+                    context = ""
+                    if line_num > 0:
+                        context = self._read_file_snippet(filename, line_num, context_lines=5)
                     tasks.append(Task(
                         description=desc,
                         priority=2,
                         source="lint",
                         source_file=filename,
+                        line_number=line_num if line_num > 0 else None,
+                        context=context,
                     ))
                 return tasks
         except (json.JSONDecodeError, TypeError):
@@ -294,12 +356,14 @@ class TaskDiscovery:
                         if len(comment) > 120:
                             comment = comment[:120] + "..."
                         desc = f"Address {match.group(1)} in {rel_path}:{i}: {comment}"
+                        context = self._read_file_snippet(str(fpath), i, context_lines=5)
                         tasks.append(Task(
                             description=desc,
                             priority=3,
                             source="todo",
                             source_file=rel_path,
                             line_number=i,
+                            context=context,
                         ))
 
         return tasks[:self.config.discovery.max_todo_tasks]

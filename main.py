@@ -147,8 +147,8 @@ def main() -> None:
             orchestrator.run(once=args.once)
             return
 
-        except ImportError as e:
-            print(f"[watchdog] Import error (attempt {attempt + 1}): {e}", file=sys.stderr)
+        except (ImportError, SyntaxError) as e:
+            print(f"[watchdog] Import/syntax error (attempt {attempt + 1}): {e}", file=sys.stderr)
             if attempt == 0:
                 restore_and_retry(own_dir)
                 # Clear cached modules so re-import works
@@ -159,6 +159,7 @@ def main() -> None:
                         "git_manager", "validator", "state", "safety",
                         "task_discovery", "feedback",
                         "model_resolver", "process_utils", "agent_pipeline",
+                        "cycle_state",
                     )
                 ]
                 for m in mods_to_remove:

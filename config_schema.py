@@ -101,6 +101,7 @@ class AgentPipelineConfig:
     """Multi-agent pipeline settings."""
     enabled: bool = False
     max_revisions: int = 2
+    max_pipeline_cost_usd: float = 0.0  # 0 = use safety.max_cost_usd_per_hour * 0.5
     planner: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
         model="opus", max_turns=10, timeout_seconds=7200))
     coder: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
