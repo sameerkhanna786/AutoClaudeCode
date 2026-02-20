@@ -18,6 +18,136 @@ from process_utils import kill_process_group
 
 logger = logging.getLogger(__name__)
 
+# Circuit breaker defaults
+CB_FAILURE_THRESHOLD = 5  # consecutive failures before opening
+CB_RECOVERY_TIMEOUT = 300  # seconds to wait before half-open
+CB_HALF_OPEN_MAX_CALLS = 1  # max calls allowed in half-open state
+
+# Stderr patterns that count toward circuit breaker (rate limits, server errors)
+_CB_ERROR_PATTERNS = (
+    "rate limit",
+    "429",
+    "too many requests",
+    "500",
+    "502",
+    "503",
+    "504",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "overloaded",
+    "server error",
+)
+
+
+class CircuitBreaker:
+    """Circuit breaker to temporarily disable API calls after repeated failures.
+
+    States:
+      - CLOSED: normal operation, calls are allowed
+      - OPEN: calls are blocked, returns failure immediately
+      - HALF_OPEN: allows a limited number of probe calls to test recovery
+
+    Thread-safe via a threading.Lock.
+    """
+
+    STATE_CLOSED = "closed"
+    STATE_OPEN = "open"
+    STATE_HALF_OPEN = "half_open"
+
+    def __init__(
+        self,
+        failure_threshold: int = CB_FAILURE_THRESHOLD,
+        recovery_timeout: float = CB_RECOVERY_TIMEOUT,
+        half_open_max_calls: int = CB_HALF_OPEN_MAX_CALLS,
+    ):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.half_open_max_calls = half_open_max_calls
+        self._state = self.STATE_CLOSED
+        self._consecutive_failures = 0
+        self._opened_at: float = 0.0
+        self._half_open_calls = 0
+        self._lock = threading.Lock()
+
+    @property
+    def state(self) -> str:
+        with self._lock:
+            return self._get_state()
+
+    def _get_state(self) -> str:
+        """Return current state, transitioning OPEN -> HALF_OPEN if recovery timeout elapsed."""
+        if self._state == self.STATE_OPEN:
+            if time.monotonic() - self._opened_at >= self.recovery_timeout:
+                self._state = self.STATE_HALF_OPEN
+                self._half_open_calls = 0
+                logger.info(
+                    "Circuit breaker transitioning from OPEN to HALF_OPEN "
+                    "after %.0fs recovery timeout",
+                    self.recovery_timeout,
+                )
+        return self._state
+
+    def allow_request(self) -> bool:
+        """Check if a request is allowed through the circuit breaker."""
+        with self._lock:
+            state = self._get_state()
+            if state == self.STATE_CLOSED:
+                return True
+            if state == self.STATE_HALF_OPEN:
+                if self._half_open_calls < self.half_open_max_calls:
+                    self._half_open_calls += 1
+                    return True
+                return False
+            # STATE_OPEN
+            return False
+
+    def record_success(self) -> None:
+        """Record a successful call — resets the circuit breaker to CLOSED."""
+        with self._lock:
+            if self._state != self.STATE_CLOSED:
+                logger.info(
+                    "Circuit breaker resetting to CLOSED after successful call "
+                    "(was %s, had %d consecutive failures)",
+                    self._state, self._consecutive_failures,
+                )
+            self._consecutive_failures = 0
+            self._state = self.STATE_CLOSED
+            self._half_open_calls = 0
+
+    def record_failure(self) -> None:
+        """Record a failed call — may trip the circuit breaker to OPEN."""
+        with self._lock:
+            self._consecutive_failures += 1
+            if self._state == self.STATE_HALF_OPEN:
+                # Failed during probe — re-open
+                self._state = self.STATE_OPEN
+                self._opened_at = time.monotonic()
+                logger.warning(
+                    "Circuit breaker re-opening after failed probe call "
+                    "(%d consecutive failures)",
+                    self._consecutive_failures,
+                )
+            elif (
+                self._state == self.STATE_CLOSED
+                and self._consecutive_failures >= self.failure_threshold
+            ):
+                self._state = self.STATE_OPEN
+                self._opened_at = time.monotonic()
+                logger.warning(
+                    "Circuit breaker OPEN after %d consecutive failures. "
+                    "API calls blocked for %.0fs.",
+                    self._consecutive_failures, self.recovery_timeout,
+                )
+
+    def reset(self) -> None:
+        """Manually reset the circuit breaker to CLOSED state."""
+        with self._lock:
+            self._state = self.STATE_CLOSED
+            self._consecutive_failures = 0
+            self._half_open_calls = 0
+
 
 @dataclass
 class ClaudeResult:
@@ -39,6 +169,7 @@ class ClaudeRunner:
         self.rate_limit_multiplier = config.claude.rate_limit_multiplier
         self._current_process: subprocess.Popen | None = None
         self._process_lock = threading.Lock()
+        self.circuit_breaker = CircuitBreaker()
 
     def _build_command(self, prompt: str) -> List[str]:
         """Build the CLI command list."""
@@ -57,6 +188,12 @@ class ClaudeRunner:
     def _kill_process(proc: subprocess.Popen) -> None:
         """Kill a subprocess and its entire process group."""
         kill_process_group(proc)
+
+    @staticmethod
+    def _is_circuit_breaker_error(stderr: str) -> bool:
+        """Check if stderr indicates a rate limit or server error."""
+        stderr_lower = stderr.lower()
+        return any(pat in stderr_lower for pat in _CB_ERROR_PATTERNS)
 
     def terminate(self) -> None:
         """Terminate any currently running Claude subprocess.
@@ -138,6 +275,18 @@ class ClaudeRunner:
 
         logger.info("Running Claude CLI in %s", cwd)
         logger.debug("Command: %s", " ".join(cmd))
+
+        # Check circuit breaker before attempting the call
+        if not self.circuit_breaker.allow_request():
+            logger.warning(
+                "Circuit breaker is OPEN — blocking Claude API call to prevent "
+                "further cost accumulation"
+            )
+            return ClaudeResult(
+                success=False,
+                error="Circuit breaker is open: too many consecutive API failures. "
+                      "Will automatically retry after recovery timeout.",
+            )
 
         for attempt in range(self.max_retries + 1):
             try:

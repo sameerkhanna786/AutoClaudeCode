@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -30,6 +31,9 @@ _STRING_LITERAL_RE = re.compile(r'''"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*' '''.stri
 
 MAX_TASK_DESCRIPTION_LENGTH = 2000
 MAX_TASK_CONTEXT_LENGTH = 12000
+
+# Default timeout for _discover_todos file walk (seconds)
+TODO_SCAN_TIMEOUT = 60
 
 _FILE_REF_RE = re.compile(
     r'`([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json|md|txt))'
@@ -316,8 +320,13 @@ class TaskDiscovery:
             source="lint",
         )]
 
-    def _discover_todos(self) -> List[Task]:
-        """Scan source files for TODO/FIXME/HACK comments."""
+    def _discover_todos(self, timeout: int = TODO_SCAN_TIMEOUT) -> List[Task]:
+        """Scan source files for TODO/FIXME/HACK comments.
+
+        Args:
+            timeout: Maximum time in seconds for the file walk operation.
+                     If exceeded, returns whatever tasks were found so far.
+        """
         tasks = []
         patterns = self.config.discovery.todo_patterns
         exclude_dirs = set(self.config.discovery.exclude_dirs)
@@ -329,11 +338,24 @@ class TaskDiscovery:
         keyword_re = re.compile(keyword_pat, re.IGNORECASE)
 
         target = Path(self.target_dir)
+        deadline = time.monotonic() + timeout
+        timed_out = False
+        files_scanned = 0
         for root, dirs, files in os.walk(target):
+            # Check deadline at the start of each directory
+            if time.monotonic() > deadline:
+                timed_out = True
+                break
+
             # Filter out excluded directories
             dirs[:] = [d for d in dirs if d not in exclude_dirs]
 
             for fname in files:
+                # Check deadline periodically (every file)
+                if time.monotonic() > deadline:
+                    timed_out = True
+                    break
+
                 ext = Path(fname).suffix
                 if ext not in _COMMENT_PREFIXES:
                     continue
@@ -345,6 +367,8 @@ class TaskDiscovery:
                     content = fpath.read_text(errors="ignore")
                 except OSError:
                     continue
+
+                files_scanned += 1
 
                 for i, line in enumerate(content.split("\n"), 1):
                     comment_text = _extract_comment_text(line, ext)
@@ -365,6 +389,15 @@ class TaskDiscovery:
                             line_number=i,
                             context=context,
                         ))
+
+            if timed_out:
+                break
+
+        if timed_out:
+            logger.warning(
+                "TODO scan timed out after %ds (scanned %d files, found %d tasks)",
+                timeout, files_scanned, len(tasks),
+            )
 
         return tasks[:self.config.discovery.max_todo_tasks]
 

@@ -23,6 +23,31 @@ GIT_COMMIT_TIMEOUT = 300
 # Overall timeout for rollback operations (many per-file operations)
 GIT_ROLLBACK_TIMEOUT = 300
 
+# Retry settings for network-sensitive git operations (push, merge, rebase)
+GIT_RETRY_MAX_ATTEMPTS = 3
+GIT_RETRY_BASE_DELAY = 2  # seconds
+GIT_RETRY_BACKOFF_FACTOR = 2  # exponential multiplier
+
+# Stderr patterns that indicate a transient/network error worth retrying
+_TRANSIENT_ERROR_PATTERNS = (
+    "could not read from remote",
+    "connection reset",
+    "connection refused",
+    "connection timed out",
+    "timed out",
+    "network is unreachable",
+    "temporary failure",
+    "name or service not known",
+    "ssl",
+    "unable to access",
+    "the remote end hung up",
+    "early eof",
+    "unexpected disconnect",
+    "fatal: unable to connect",
+    "gnutls",
+    "couldn't resolve host",
+)
+
 
 @dataclass
 class Snapshot:
@@ -74,6 +99,51 @@ class GitManager:
                 output=completed.stdout, stderr=completed.stderr,
             )
         return completed
+
+    @staticmethod
+    def _is_transient_error(result: subprocess.CompletedProcess) -> bool:
+        """Check if a git command failure looks like a transient network error."""
+        stderr_lower = (result.stderr or "").lower()
+        return any(pat in stderr_lower for pat in _TRANSIENT_ERROR_PATTERNS)
+
+    def _run_with_retry(
+        self,
+        *args: str,
+        check: bool = False,
+        timeout: int = GIT_DEFAULT_TIMEOUT,
+        max_attempts: int = GIT_RETRY_MAX_ATTEMPTS,
+        base_delay: float = GIT_RETRY_BASE_DELAY,
+        backoff_factor: float = GIT_RETRY_BACKOFF_FACTOR,
+    ) -> subprocess.CompletedProcess:
+        """Run a git command with retry and exponential backoff on transient failures.
+
+        Only retries when the error appears to be a transient network issue.
+        Non-transient failures (e.g. merge conflicts) are returned immediately.
+        """
+        last_result = None
+        for attempt in range(max_attempts):
+            result = self._run(*args, check=False, timeout=timeout)
+            if result.returncode == 0:
+                return result
+            last_result = result
+            if attempt < max_attempts - 1 and self._is_transient_error(result):
+                delay = base_delay * (backoff_factor ** attempt)
+                logger.warning(
+                    "git %s failed with transient error (attempt %d/%d), "
+                    "retrying in %.1fs: %s",
+                    args[0] if args else "?",
+                    attempt + 1, max_attempts, delay,
+                    result.stderr.strip()[:200],
+                )
+                time.sleep(delay)
+            else:
+                break
+        if check and last_result is not None and last_result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                last_result.returncode, ["git"] + list(args),
+                output=last_result.stdout, stderr=last_result.stderr,
+            )
+        return last_result
 
     def capture_worktree_state(self) -> set:
         """Return the set of currently modified/untracked files (before Claude runs)."""
@@ -212,8 +282,11 @@ class GitManager:
         return commit_hash
 
     def push(self) -> bool:
-        """Push current branch to origin. Returns True on success."""
-        result = self._run("push", check=False, timeout=GIT_PUSH_TIMEOUT)
+        """Push current branch to origin. Returns True on success.
+
+        Retries with exponential backoff on transient network errors.
+        """
+        result = self._run_with_retry("push", timeout=GIT_PUSH_TIMEOUT)
         if result.returncode == 0:
             logger.info("Pushed to remote")
             return True
@@ -285,13 +358,19 @@ class GitManager:
         self._run("branch", flag, branch, check=False)
 
     def merge_branch(self, branch: str) -> bool:
-        """Merge a branch into the current branch. Returns True on success."""
-        result = self._run("merge", branch, "--no-edit", check=False)
+        """Merge a branch into the current branch. Returns True on success.
+
+        Retries with exponential backoff on transient network errors.
+        """
+        result = self._run_with_retry("merge", branch, "--no-edit")
         return result.returncode == 0
 
     def merge_ff_only(self, branch: str) -> bool:
-        """Try a fast-forward-only merge. Returns True on success."""
-        result = self._run("merge", "--ff-only", branch, check=False)
+        """Try a fast-forward-only merge. Returns True on success.
+
+        Retries with exponential backoff on transient network errors.
+        """
+        result = self._run_with_retry("merge", "--ff-only", branch)
         return result.returncode == 0
 
     def abort_merge(self) -> None:
@@ -299,8 +378,11 @@ class GitManager:
         self._run("merge", "--abort", check=False)
 
     def rebase_onto(self, target: str, branch: str) -> bool:
-        """Rebase branch onto target. Returns True on success."""
-        result = self._run("rebase", target, branch, check=False)
+        """Rebase branch onto target. Returns True on success.
+
+        Retries with exponential backoff on transient network errors.
+        """
+        result = self._run_with_retry("rebase", target, branch)
         if result.returncode != 0:
             self._run("rebase", "--abort", check=False)
             return False
