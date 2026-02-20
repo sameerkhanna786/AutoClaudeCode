@@ -267,6 +267,58 @@ class TestTaskDiscovery:
         assert tasks == []
 
     @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_error_max_turns(self, mock_run, discovery, caplog):
+        """error_max_turns response should log a specific warning about max turns."""
+        import logging
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"type":"result","subtype":"error_max_turns","is_error":false,"num_turns":6}',
+        )
+        with caplog.at_level(logging.WARNING):
+            tasks = discovery._discover_claude_ideas()
+        assert tasks == []
+        assert any("hit max turns" in r.message for r in caplog.records)
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_error_max_turns_with_partial_result(self, mock_run, discovery):
+        """error_max_turns with a result_text field should extract partial ideas."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"type":"result","subtype":"error_max_turns","result":"IDEA: Add input validation to parser"}',
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 1
+        assert "input validation" in tasks[0].description
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_result_text_field(self, mock_run, discovery):
+        """Response using 'result_text' instead of 'result' should be extracted."""
+        discovery.config.discovery.enable_claude_ideas = True
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"type":"result","result_text":"IDEA: Improve error messages in CLI"}',
+        )
+        tasks = discovery._discover_claude_ideas()
+        assert len(tasks) == 1
+        assert "error messages" in tasks[0].description
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_discover_claude_ideas_uses_config_max_turns(self, mock_run, discovery):
+        """discovery_max_turns config should be used in the CLI command."""
+        discovery.config.discovery.enable_claude_ideas = True
+        discovery.config.discovery.discovery_max_turns = 20
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "IDEA: Some improvement to make"}',
+        )
+        discovery._discover_claude_ideas()
+        cmd = mock_run.call_args[0][0]
+        turns_idx = cmd.index("--max-turns")
+        assert cmd[turns_idx + 1] == "20"
+
+    @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_warns_on_unexpected_json_structure(self, mock_run, discovery, caplog):
         """When JSON parses but lacks the expected structure, a warning is logged."""
         import logging
@@ -278,7 +330,7 @@ class TestTaskDiscovery:
         with caplog.at_level(logging.WARNING):
             tasks = discovery._discover_claude_ideas()
         assert tasks == []
-        assert any("unexpected" in r.message.lower() or "not the expected" in r.message.lower()
+        assert any("no text content" in r.message.lower() or "falling back" in r.message.lower()
                     for r in caplog.records)
 
 

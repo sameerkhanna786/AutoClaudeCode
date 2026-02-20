@@ -446,7 +446,7 @@ class TaskDiscovery:
         cmd = [
             cc.command, "-p", prompt,
             "--model", self.config.discovery.discovery_model or self.config.claude.resolved_model,
-            "--max-turns", "5",
+            "--max-turns", str(self.config.discovery.discovery_max_turns),
             "--output-format", "json",
         ]
 
@@ -476,6 +476,16 @@ class TaskDiscovery:
         # Parse JSON response to get result text
         result_text = result.stdout
         try:
+            # Helper: extract text content from a parsed JSON dict.
+            # The Claude CLI uses "result" for successful runs and may use
+            # "result_text" in some versions.
+            def _extract_text(d: dict) -> str:
+                for key in ("result", "result_text"):
+                    val = d.get(key)
+                    if isinstance(val, str) and val.strip():
+                        return val
+                return ""
+
             # Strategy 1: Try each line individually as a complete JSON object
             for line in result_text.strip().split("\n"):
                 line = line.strip()
@@ -483,11 +493,22 @@ class TaskDiscovery:
                     continue
                 try:
                     data = json.loads(line)
-                    if (isinstance(data, dict)
-                            and "result" in data
-                            and isinstance(data.get("result"), str)):
-                        result_text = data["result"]
-                        break
+                    if isinstance(data, dict):
+                        # Check for error_max_turns — Claude ran out of turns
+                        if data.get("subtype") == "error_max_turns":
+                            logger.warning(
+                                "Claude idea discovery hit max turns (%d); "
+                                "increase discovery.discovery_max_turns",
+                                self.config.discovery.discovery_max_turns,
+                            )
+                            text = _extract_text(data)
+                            if text:
+                                result_text = text
+                            break
+                        text = _extract_text(data)
+                        if text:
+                            result_text = text
+                            break
                 except (json.JSONDecodeError, TypeError):
                     continue
             else:
@@ -498,11 +519,21 @@ class TaskDiscovery:
                         continue
                     try:
                         data = json.loads("\n".join(lines[i:]))
-                        if (isinstance(data, dict)
-                                and "result" in data
-                                and isinstance(data.get("result"), str)):
-                            result_text = data["result"]
-                            break
+                        if isinstance(data, dict):
+                            if data.get("subtype") == "error_max_turns":
+                                logger.warning(
+                                    "Claude idea discovery hit max turns (%d); "
+                                    "increase discovery.discovery_max_turns",
+                                    self.config.discovery.discovery_max_turns,
+                                )
+                                text = _extract_text(data)
+                                if text:
+                                    result_text = text
+                                break
+                            text = _extract_text(data)
+                            if text:
+                                result_text = text
+                                break
                     except (json.JSONDecodeError, TypeError):
                         continue
                 else:
@@ -513,24 +544,21 @@ class TaskDiscovery:
                             continue
                         try:
                             obj, end = decoder.raw_decode(result_text, i)
-                            if (isinstance(obj, dict)
-                                    and "result" in obj
-                                    and isinstance(obj.get("result"), str)):
-                                result_text = obj["result"]
-                                break
+                            if isinstance(obj, dict):
+                                text = _extract_text(obj)
+                                if text:
+                                    result_text = text
+                                    break
                         except (json.JSONDecodeError, TypeError):
                             continue
         except Exception:
             pass
 
-        # Warn if JSON was parsed but had an unexpected structure (no "result" key
-        # with a string value).  The code degrades gracefully — it falls through to
-        # IDEA-line extraction on the raw text — but log a warning so operators
-        # can investigate.
+        # Warn if we couldn't extract text from a JSON response
         if result_text is result.stdout and result.stdout.strip()[:1] in ("{", "["):
             logger.warning(
-                "Claude idea response contained JSON but not the expected "
-                "{\"result\": \"...\"} structure — falling back to raw text extraction"
+                "Claude idea response contained JSON but no text content "
+                "could be extracted — falling back to raw text extraction"
             )
 
         # Extract IDEA lines
