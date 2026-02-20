@@ -458,3 +458,38 @@ class TestPipelineCostGuard:
 
         assert result.success is False
         assert "cost limit" in result.error.lower()
+
+
+class TestBuildRunnerValidation:
+    """Test that _build_runner_for_agent validates role config attributes."""
+
+    def test_build_runner_missing_model_raises(self, tmp_path):
+        config = Config()
+        config.target_dir = str(tmp_path)
+        # Replace planner config with an object missing 'model'
+        config.agent_pipeline.planner = type("BadCfg", (), {
+            "max_turns": 10, "timeout_seconds": 300, "enabled": True,
+        })()
+        pipeline = AgentPipeline(config)
+        with pytest.raises(ValueError, match="model"):
+            pipeline._build_runner_for_agent(AgentRole.PLANNER)
+
+    def test_build_runner_missing_timeout_raises(self, tmp_path):
+        config = Config()
+        config.target_dir = str(tmp_path)
+        # Replace coder config with an object missing 'timeout_seconds'
+        config.agent_pipeline.coder = type("BadCfg", (), {
+            "model": "opus", "max_turns": 25, "enabled": True,
+        })()
+        pipeline = AgentPipeline(config)
+        with pytest.raises(ValueError, match="timeout_seconds"):
+            pipeline._build_runner_for_agent(AgentRole.CODER)
+
+    def test_build_runner_missing_multiple_attrs_raises(self, tmp_path):
+        config = Config()
+        config.target_dir = str(tmp_path)
+        # Replace reviewer config with a bare object missing all required attrs
+        config.agent_pipeline.reviewer = type("BadCfg", (), {"enabled": True})()
+        pipeline = AgentPipeline(config)
+        with pytest.raises(ValueError, match="model.*max_turns.*timeout_seconds"):
+            pipeline._build_runner_for_agent(AgentRole.REVIEWER)

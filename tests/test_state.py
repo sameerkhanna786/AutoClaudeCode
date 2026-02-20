@@ -264,7 +264,7 @@ class TestBatchCycleRecord:
         assert state_mgr.get_task_failure_count("Address TODO in bar.py", "lint") == 0
 
     def test_save_history_retries_on_replace_failure(self, state_mgr):
-        """_save_history should retry os.replace with increasing delays."""
+        """_save_history should retry os.replace with exponential backoff."""
         call_count = 0
         original_replace = os.replace
 
@@ -277,25 +277,29 @@ class TestBatchCycleRecord:
 
         with patch("state.os.replace", side_effect=failing_replace):
             with patch("state.time.sleep") as mock_sleep:
-                state_mgr.record_cycle(CycleRecord(
-                    timestamp=time.time(),
-                    task_description="Retry test",
-                    success=True,
-                ))
+                with patch("state.random.random", return_value=0.5):
+                    state_mgr.record_cycle(CycleRecord(
+                        timestamp=time.time(),
+                        task_description="Retry test",
+                        success=True,
+                    ))
 
         # Should have retried and eventually succeeded
         assert call_count == 3
-        # Should have slept between retries with exponential backoff
+        # Should have slept between retries with exponential backoff + jitter
         assert mock_sleep.call_count == 2
-        assert mock_sleep.call_args_list[0][0][0] == 0.1
-        assert mock_sleep.call_args_list[1][0][0] == 0.3
+        # With random()=0.5, jitter factor is 0.5 + 0.5*0.5 = 0.75
+        # delay0 = 0.1 * 3^0 * 0.75 = 0.075
+        # delay1 = 0.1 * 3^1 * 0.75 = 0.225
+        assert abs(mock_sleep.call_args_list[0][0][0] - 0.075) < 0.01
+        assert abs(mock_sleep.call_args_list[1][0][0] - 0.225) < 0.01
         # Data should be persisted correctly
         data = json.loads(Path(state_mgr.history_file).read_text())
         assert len(data) == 1
         assert data[0]["task_description"] == "Retry test"
 
     def test_save_history_all_retries_fail(self, state_mgr):
-        """_save_history should raise OSError when all 5 retries fail."""
+        """_save_history should raise OSError when all retries fail."""
         call_count = 0
 
         def always_fail(src, dst):
@@ -311,8 +315,8 @@ class TestBatchCycleRecord:
                         task_description="Doomed task",
                         success=True,
                     ))
-        # Should have attempted all 5 retries
-        assert call_count == 5
+        # Should have attempted all 7 retries (exponential backoff)
+        assert call_count == 7
 
 
 class TestAdaptiveBatchSize:

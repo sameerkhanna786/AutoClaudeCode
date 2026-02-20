@@ -245,6 +245,12 @@ class ClaudeRunner:
 
             break  # successful parse — exit retry loop
 
+        if "result" not in data:
+            logger.warning(
+                "Claude CLI JSON response missing 'result' field; "
+                "keys present: %s", sorted(data.keys()),
+            )
+
         result_text = data.get("result", "")
         cost_usd = data.get("total_cost_usd", data.get("cost_usd", 0.0))
         duration_ms = data.get("duration_ms", 0)

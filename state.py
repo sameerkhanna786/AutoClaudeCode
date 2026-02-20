@@ -6,6 +6,7 @@ import errno
 import json
 import logging
 import os
+import random
 import shutil
 import tempfile
 import time
@@ -198,21 +199,30 @@ class StateManager:
                 raise
             with f:
                 json.dump(records, f, indent=2)
-            # os.replace can fail on Windows if target is open; retry with backoff
-            retry_delays = [0.1, 0.3, 0.9, 2.7, 8.1]
+            # os.replace can fail on Windows if target is open; retry with
+            # exponential backoff and jitter for persistent filesystem contention
+            _REPLACE_BASE_DELAY = 0.1
+            _REPLACE_MULTIPLIER = 3
+            _REPLACE_MAX_RETRIES = 7
+            _REPLACE_MAX_DELAY = 30.0
             replaced = False
             last_err: Optional[OSError] = None
-            for attempt, delay in enumerate(retry_delays):
+            for attempt in range(_REPLACE_MAX_RETRIES):
                 try:
                     os.replace(tmp_path, str(self.history_file))
                     replaced = True
                     break
                 except OSError as e:
                     last_err = e
-                    if attempt < len(retry_delays) - 1:
+                    if attempt < _REPLACE_MAX_RETRIES - 1:
+                        delay = min(
+                            _REPLACE_BASE_DELAY * (_REPLACE_MULTIPLIER ** attempt),
+                            _REPLACE_MAX_DELAY,
+                        )
+                        delay *= 0.5 + random.random() * 0.5  # jitter
                         logger.debug(
-                            "os.replace failed (attempt %d/%d): %s — retrying in %.1fs",
-                            attempt + 1, len(retry_delays), e, delay,
+                            "os.replace failed (attempt %d/%d): %s — retrying in %.2fs",
+                            attempt + 1, _REPLACE_MAX_RETRIES, e, delay,
                         )
                         time.sleep(delay)
             if not replaced:

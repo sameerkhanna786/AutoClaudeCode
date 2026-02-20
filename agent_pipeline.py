@@ -114,6 +114,13 @@ class AgentPipeline:
         """Build a ClaudeRunner with per-agent model/timeout overrides."""
         agent_config = copy.deepcopy(self.config)
         role_cfg = getattr(self.config.agent_pipeline, role.value)
+        required_attrs = ("model", "max_turns", "timeout_seconds")
+        missing = [a for a in required_attrs if not hasattr(role_cfg, a)]
+        if missing:
+            raise ValueError(
+                f"Agent role '{role.value}' config is missing required attributes: "
+                f"{', '.join(missing)}. Check agent_pipeline.{role.value} in config."
+            )
         agent_config.claude.model = role_cfg.model
         agent_config.claude.resolved_model = ""
         agent_config.claude.max_turns = role_cfg.max_turns

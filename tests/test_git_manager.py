@@ -389,3 +389,45 @@ class TestWorktreeManagement:
         """Deleting a nonexistent branch doesn't raise (check=False)."""
         gm = GitManager(tmp_git_repo)
         gm.delete_branch("nonexistent-branch")  # Should not raise
+
+
+class TestRollbackTimeout:
+    def test_rollback_raises_timeout_when_deadline_exceeded(self, tmp_git_repo):
+        """Rollback with many files should raise TimeoutError when deadline is exceeded."""
+        import time as time_mod
+        gm = GitManager(tmp_git_repo)
+        snap = gm.create_snapshot()
+
+        # Create several files to revert
+        for i in range(5):
+            Path(tmp_git_repo, f"file_{i}.txt").write_text(f"content {i}")
+
+        allowed = {f"file_{i}.txt" for i in range(5)}
+
+        # Mock time.monotonic to simulate deadline expiration after first file
+        call_count = {"n": 0}
+        original_monotonic = time_mod.monotonic
+
+        def advancing_monotonic():
+            nonlocal call_count
+            call_count["n"] += 1
+            # First call (deadline calculation) returns 0
+            # Second call (first check in loop) returns well past deadline
+            if call_count["n"] <= 1:
+                return 0.0
+            return 1000.0  # Way past any deadline
+
+        with patch("git_manager.time.monotonic", side_effect=advancing_monotonic):
+            with pytest.raises(TimeoutError, match="exceeded.*deadline"):
+                gm.rollback(snap, allowed_dirty=allowed, timeout=10)
+
+    def test_rollback_completes_within_timeout(self, tmp_git_repo):
+        """Normal rollback with default timeout succeeds without error."""
+        gm = GitManager(tmp_git_repo)
+        snap = gm.create_snapshot()
+        Path(tmp_git_repo, "file_a.txt").write_text("a")
+        Path(tmp_git_repo, "file_b.txt").write_text("b")
+        allowed = {"file_a.txt", "file_b.txt"}
+
+        gm.rollback(snap, allowed_dirty=allowed)
+        assert gm.is_clean() is True

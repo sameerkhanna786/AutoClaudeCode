@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Set
@@ -19,6 +20,8 @@ GIT_DEFAULT_TIMEOUT = 120
 GIT_PUSH_TIMEOUT = 300
 # Longer timeout for commit operations (pre-commit hooks may be slow)
 GIT_COMMIT_TIMEOUT = 300
+# Overall timeout for rollback operations (many per-file operations)
+GIT_ROLLBACK_TIMEOUT = 300
 
 
 @dataclass
@@ -83,7 +86,7 @@ class GitManager:
         logger.info("Snapshot created: %s", commit_hash[:8])
         return Snapshot(commit_hash=commit_hash)
 
-    def rollback(self, snapshot: Optional[Snapshot] = None, allowed_dirty: Optional[Set[str]] = None) -> None:
+    def rollback(self, snapshot: Optional[Snapshot] = None, allowed_dirty: Optional[Set[str]] = None, timeout: int = GIT_ROLLBACK_TIMEOUT) -> None:
         """Discard working tree changes, optionally targeting only specific files.
 
         If a snapshot is provided and HEAD has moved, reset to that commit.
@@ -93,7 +96,13 @@ class GitManager:
           - If unexpected dirty files exist beyond what Claude changed,
             log a warning and refuse to clean them, preventing data loss.
         If allowed_dirty is None: blanket clean (legacy behavior).
+
+        Args:
+            timeout: Overall deadline (seconds) for the rollback operation.
+                     Raises TimeoutError if exceeded during per-file operations.
         """
+        deadline = time.monotonic() + timeout
+
         if allowed_dirty is not None:
             current_dirty = set(self.get_changed_files())
             unexpected = current_dirty - allowed_dirty
@@ -119,7 +128,19 @@ class GitManager:
                 # Checkout tracked files
                 self._run("checkout", "--", *sorted(files_to_revert), check=False)
                 # Clean untracked files in the allowed set
+                reverted_count = 0
+                total_count = len(files_to_revert)
                 for f in sorted(files_to_revert):
+                    if time.monotonic() > deadline:
+                        logger.warning(
+                            "Rollback timeout: reverted %d/%d files before "
+                            "exceeding %ds deadline",
+                            reverted_count, total_count, timeout,
+                        )
+                        raise TimeoutError(
+                            f"Rollback exceeded {timeout}s deadline: "
+                            f"reverted {reverted_count}/{total_count} files"
+                        )
                     fpath = Path(self.repo_dir) / f
                     if fpath.exists():
                         # Check if it's untracked
@@ -133,6 +154,7 @@ class GitManager:
                                     fpath.unlink()
                             except OSError:
                                 pass
+                    reverted_count += 1
             logger.info("Targeted rollback: reverted %d files", len(files_to_revert))
             return
 

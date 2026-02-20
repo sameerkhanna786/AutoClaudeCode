@@ -486,3 +486,34 @@ class TestCostParsing:
         result = runner.run("Fix")
         assert result.success is True
         assert result.duration_seconds == 3.5
+
+
+class TestMissingResultField:
+    """Test handling of JSON responses missing the 'result' field."""
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_missing_result_field_logs_warning(self, mock_popen, runner, caplog):
+        """JSON without 'result' key should log a warning."""
+        import logging
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"cost_usd": 0.05}',
+        )
+        with caplog.at_level(logging.WARNING):
+            result = runner.run("Fix")
+        assert result.success is True
+        assert result.result_text == ""
+        assert any("missing 'result' field" in r.message for r in caplog.records)
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_missing_result_field_returns_success(self, mock_popen, runner):
+        """Result should still be success=True with empty result_text when 'result' is missing."""
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"total_cost_usd": 0.03, "duration_ms": 1000}',
+        )
+        result = runner.run("Fix")
+        assert result.success is True
+        assert result.result_text == ""
+        assert result.cost_usd == 0.03
+        assert result.duration_seconds == 1.0
