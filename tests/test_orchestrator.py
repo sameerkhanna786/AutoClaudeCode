@@ -828,6 +828,31 @@ class TestValidationRetry:
         assert abs(record.duration_seconds - 23.0) < 0.1
         assert record.validation_retry_count == 2
 
+    def test_retry_updates_cycle_state_cost(self, retry_orch):
+        """cycle_state.update should be called with retry_count and accumulated_cost during retries."""
+        fail_result = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(
+                name="tests", command="pytest", passed=False,
+                output="FAILED", return_code=1,
+            )],
+        )
+        pass_result = ValidationResult(passed=True, steps=[])
+        retry_orch.validator.validate.side_effect = [fail_result, pass_result]
+
+        retry_orch.cycle_state.update = MagicMock()
+        retry_orch.state.record_cycle = MagicMock()
+        retry_orch._cycle()
+
+        # cycle_state.update should have been called with retry cost info
+        update_calls = retry_orch.cycle_state.update.call_args_list
+        retrying_calls = [c for c in update_calls if c[1].get("phase") == "retrying"]
+        assert len(retrying_calls) >= 1
+        retrying_call = retrying_calls[0]
+        assert "accumulated_cost" in retrying_call[1]
+        assert "retry_count" in retrying_call[1]
+        assert retrying_call[1]["retry_count"] == 1
+
 
 class TestCommitMessageStyling:
     """Tests for natural commit message generation."""

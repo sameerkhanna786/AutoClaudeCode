@@ -367,3 +367,17 @@ class StateManager:
         last_timestamp = records[-1].get("timestamp", 0)
         idle_seconds = time.time() - last_timestamp
         return idle_seconds >= min_idle_seconds
+
+    def get_recent_task_summaries(self, lookback_seconds: int = 86400, max_items: int = 20) -> List[str]:
+        """Return human-readable summaries of recent tasks for prompt injection."""
+        cutoff = time.time() - lookback_seconds
+        records = self._load_history()
+        summaries = []
+        for r in records:
+            if r.get("timestamp", 0) >= cutoff:
+                desc = r.get("task_description", "")
+                if len(desc) > 100:
+                    desc = desc[:97] + "..."
+                status = "succeeded" if r.get("success") else "failed"
+                summaries.append(f"- {desc} ({status})")
+        return summaries[-max_items:]

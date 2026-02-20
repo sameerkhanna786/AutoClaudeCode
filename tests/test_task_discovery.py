@@ -615,3 +615,99 @@ class TestDiscoveryAttachesContext:
         assert len(tasks) == 1
         assert tasks[0].context != ""
         assert "TODO" in tasks[0].context
+
+
+class TestTodoFalsePositiveFiltering:
+    def test_todo_mid_sentence_not_matched(self, discovery, tmp_path):
+        """A 'todo' keyword mid-sentence in a comment should not be matched."""
+        (tmp_path / "report.py").write_text("# lint: found 3 issues, todo: 2 tasks remaining\n")
+        tasks = discovery._discover_todos()
+        assert tasks == []
+
+    def test_todo_in_prose_not_matched(self, discovery, tmp_path):
+        """'todo' used as an ordinary word in prose should not be matched."""
+        (tmp_path / "notes.py").write_text("# There is a lot of work todo\n")
+        tasks = discovery._discover_todos()
+        assert tasks == []
+
+    def test_todo_at_start_matched(self, discovery, tmp_path):
+        """A TODO at the start of the comment text should be matched."""
+        (tmp_path / "code.py").write_text("# TODO: fix this\n")
+        tasks = discovery._discover_todos()
+        assert len(tasks) == 1
+        assert "TODO" in tasks[0].description
+
+    def test_fixme_at_start_matched(self, discovery, tmp_path):
+        """FIXME at the start of comment text should be matched."""
+        (tmp_path / "code.py").write_text("# FIXME broken\n")
+        tasks = discovery._discover_todos()
+        assert len(tasks) == 1
+        assert "FIXME" in tasks[0].description
+
+    def test_inline_todo_matched(self, discovery, tmp_path):
+        """An inline comment TODO after code should still be matched."""
+        (tmp_path / "code.py").write_text("x = 1  # TODO: refactor\n")
+        tasks = discovery._discover_todos()
+        assert len(tasks) == 1
+        assert "TODO" in tasks[0].description
+
+
+class TestDiscoverClaudeIdeasHistory:
+    @patch("task_discovery.run_with_group_kill")
+    def test_history_injected_into_prompt(self, mock_run, tmp_path, default_config):
+        """When state_manager has recent tasks, prompt should include history."""
+        default_config.target_dir = str(tmp_path)
+        mock_state = MagicMock()
+        mock_state.get_recent_task_summaries.return_value = [
+            "- Add retry logic (succeeded)",
+            "- Fix timeout handling (failed)",
+        ]
+        disc = TaskDiscovery(default_config, state_manager=mock_state)
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "IDEA: Add input validation to loader"}',
+        )
+        disc._discover_claude_ideas()
+        call_args = mock_run.call_args
+        cmd = call_args[0][0]
+        prompt_idx = cmd.index("-p")
+        prompt = cmd[prompt_idx + 1]
+        assert "RECENTLY COMPLETED TASKS" in prompt
+        assert "Add retry logic" in prompt
+        assert "Fix timeout handling" in prompt
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_no_history_when_state_manager_none(self, mock_run, tmp_path, default_config):
+        """Without state_manager, prompt should not include history section."""
+        default_config.target_dir = str(tmp_path)
+        disc = TaskDiscovery(default_config, state_manager=None)
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "IDEA: Add input validation to loader"}',
+        )
+        disc._discover_claude_ideas()
+        call_args = mock_run.call_args
+        cmd = call_args[0][0]
+        prompt_idx = cmd.index("-p")
+        prompt = cmd[prompt_idx + 1]
+        assert "RECENTLY COMPLETED" not in prompt
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_custom_discovery_prompt(self, mock_run, tmp_path, default_config):
+        """Custom discovery_prompt replaces default focus areas."""
+        default_config.target_dir = str(tmp_path)
+        default_config.discovery.discovery_prompt = "- Security vulnerabilities\n- API design\n"
+        disc = TaskDiscovery(default_config)
+        mock_run.return_value = _run_result(
+            returncode=0,
+            stdout='{"result": "IDEA: Fix SQL injection vulnerability"}',
+        )
+        disc._discover_claude_ideas()
+        call_args = mock_run.call_args
+        cmd = call_args[0][0]
+        prompt_idx = cmd.index("-p")
+        prompt = cmd[prompt_idx + 1]
+        assert "Security vulnerabilities" in prompt
+        assert "API design" in prompt
+        # Default focus areas should not be present
+        assert "New features or functionality" not in prompt

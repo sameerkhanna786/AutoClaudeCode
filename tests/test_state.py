@@ -721,3 +721,58 @@ class TestSaveHistoryRaceDetection:
         assert not any(
             "modified externally" in r.message for r in caplog.records
         )
+
+
+class TestRecentTaskSummaries:
+    def test_empty_history(self, state_mgr):
+        assert state_mgr.get_recent_task_summaries() == []
+
+    def test_returns_recent_tasks(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug A", success=True,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug B", success=False,
+        ))
+        summaries = state_mgr.get_recent_task_summaries()
+        assert len(summaries) == 2
+        assert "- Fix bug A (succeeded)" in summaries[0]
+        assert "- Fix bug B (failed)" in summaries[1]
+
+    def test_respects_lookback(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 200000, task_description="Old task", success=True,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Recent task", success=True,
+        ))
+        summaries = state_mgr.get_recent_task_summaries(lookback_seconds=3600)
+        assert len(summaries) == 1
+        assert "Recent task" in summaries[0]
+
+    def test_respects_max_items(self, state_mgr):
+        now = time.time()
+        for i in range(10):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + i, task_description=f"Task {i}", success=True,
+            ))
+        summaries = state_mgr.get_recent_task_summaries(max_items=3)
+        assert len(summaries) == 3
+        # Should be the most recent 3
+        assert "Task 7" in summaries[0]
+        assert "Task 8" in summaries[1]
+        assert "Task 9" in summaries[2]
+
+    def test_truncates_long_descriptions(self, state_mgr):
+        now = time.time()
+        long_desc = "A" * 150
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description=long_desc, success=True,
+        ))
+        summaries = state_mgr.get_recent_task_summaries()
+        assert len(summaries) == 1
+        assert summaries[0].endswith("... (succeeded)")
+        # 97 chars of description + "..."
+        assert "A" * 97 + "..." in summaries[0]

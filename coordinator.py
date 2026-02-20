@@ -38,7 +38,7 @@ class ParallelCoordinator:
         self.git = GitManager(config.target_dir)
         self.state = LockedStateManager(config)
         self.safety = SafetyGuard(config, self.state)
-        self.discovery = TaskDiscovery(config)
+        self.discovery = TaskDiscovery(config, state_manager=self.state)
         self.feedback = FeedbackManager(config)
         self.max_workers = config.parallel.max_workers
         self._running = True

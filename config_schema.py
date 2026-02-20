@@ -76,6 +76,7 @@ class DiscoveryConfig:
     max_todo_tasks: int = 20
     discovery_model: str = "opus"
     discovery_timeout: int = 7200
+    discovery_prompt: str = ""  # Custom prompt for claude_ideas; empty = use default
 
 
 @dataclass

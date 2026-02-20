@@ -7,7 +7,8 @@ An autonomous development system that runs Claude Code in a continuous loop to d
 - **Autonomous task discovery** — finds test failures, lint errors, TODOs, and generates Claude-powered improvement ideas
 - **Plan-then-execute mode** — Claude plans changes before implementing for higher quality results
 - **Multi-agent pipeline** — specialized Planner, Coder, Tester, and Reviewer agents collaborate with revision loops for higher quality
-- **Automatic validation** — runs tests/lint/build after every change, rolls back on failure
+- **Parallel mode** — multiple workers run in separate git worktrees for concurrent task execution
+- **Automatic validation** — runs tests/lint/build after every change, with retry loops on failure
 - **Developer feedback system** — drop task files in `feedback/` to steer priorities
 - **Self-improvement mode** — can modify its own source code with syntax checking and backups
 - **Safety guards** — rate limits, cost limits, disk checks, protected files, lock file
@@ -45,20 +46,21 @@ python3 main.py --once --target-dir /path/to/project
 
 ## How It Works
 
-Each cycle follows a 12-step loop:
+Each cycle follows a 13-step loop:
 
 1. **Safety checks** — verify lock file, disk space, rate limits, failure count
 2. **Check feedback/** — look for developer-submitted priority tasks
 3. **Auto-discover tasks** — scan for test failures, lint errors, TODOs, coverage gaps, quality issues
 4. **Deduplicate** — skip tasks already addressed in recent history
-5. **Pick task** — select the highest-priority task
+5. **Pick task** — select the highest-priority task (or adaptive batch of tasks)
 6. **Git snapshot** — record current HEAD for potential rollback
 7. **Invoke Claude** — send the task prompt to the Claude CLI
 8. **Check changed files** — enforce file count limit and protected file rules
 9. **Validate** — run test, lint, and build commands (short-circuit on first failure)
-10. **Commit or rollback** — commit valid changes; rollback invalid ones
-11. **Record history** — append cycle result to `state/history.json`
-12. **Sleep & repeat**
+10. **Retry on failure** — re-invoke Claude with failure output (up to `max_validation_retries` times)
+11. **Commit or rollback** — commit valid changes; rollback if all retries exhausted
+12. **Record history** — append cycle result to `state/history.json`
+13. **Sleep & repeat**
 
 ## Configuration
 
@@ -67,13 +69,14 @@ All settings live in `config.yaml`. Key sections:
 | Section | What it controls |
 |---|---|
 | `claude` | Model (`opus`), max turns, timeout, CLI command |
-| `orchestrator` | Loop interval, self-improve toggle, plan-before-execute, push-after-commit, cycle timeout |
+| `orchestrator` | Loop interval, self-improve toggle, plan-before-execute, push-after-commit, cycle timeout, adaptive batch sizing, validation retry count |
 | `validation` | Test/lint/build commands and their timeouts |
-| `discovery` | Toggle each discovery strategy, TODO patterns, excluded directories |
+| `discovery` | Toggle each discovery strategy, TODO patterns, excluded directories, `discovery_prompt` for custom focus areas |
 | `safety` | Max consecutive failures, cycles/hour, cost/hour, min disk space, protected files |
 | `paths` | Feedback, state, history, lock file, and backup directories |
 | `logging` | Log level, file path, rotation size and backup count |
 | `agent_pipeline` | Multi-agent mode: enable/disable, per-agent model and timeout, max revision loops |
+| `parallel` | Parallel mode: enable/disable, max workers, worktree directory, merge strategy |
 
 See [`config.yaml`](config.yaml) for the full annotated configuration.
 
@@ -84,7 +87,7 @@ Submit priority tasks by dropping files into the `feedback/` directory:
 1. Create a `.md` or `.txt` file in `feedback/`
 2. Prefix with numbers for priority ordering (e.g., `01-fix-bug.md`, `02-add-feature.txt`)
 3. Write the task description as the file content — this is sent directly to Claude
-4. After processing, completed tasks are moved to `feedback/done/`
+4. After processing, completed tasks are moved to `feedback/done/`; tasks that exceed the retry limit are moved to `feedback/failed/`
 
 ## Architecture
 
@@ -94,6 +97,8 @@ auto_claude_code/
 ├── config.yaml          # Configuration (PROTECTED)
 ├── config_schema.py     # Load/validate config, apply defaults
 ├── orchestrator.py      # Main loop tying everything together
+├── coordinator.py       # Parallel coordinator: distributes tasks to workers, merges results
+├── worker.py            # Parallel worker: runs Claude in a git worktree
 ├── agent_pipeline.py    # Multi-agent pipeline: planner, coder, tester, reviewer
 ├── task_discovery.py    # Auto-discover tasks (tests, lint, TODOs, coverage, quality)
 ├── claude_runner.py     # Invoke claude CLI, parse JSON response
@@ -102,13 +107,17 @@ auto_claude_code/
 ├── git_manager.py       # Snapshot, rollback, commit
 ├── feedback.py          # Watch feedback/ dir for developer task files
 ├── state.py             # Persist history to state/history.json
+├── cycle_state.py       # Live cycle state for dashboard visibility
+├── state_lock.py        # Thread-safe StateManager wrapper for parallel mode
 ├── safety.py            # Lock file, failure counters, disk/rate/cost checks
 ├── requirements.txt     # Dependencies (pyyaml)
 ├── CLAUDE.md            # Claude Code project instructions
 ├── feedback/            # Drop task files here
-│   └── done/            # Completed tasks moved here
+│   ├── done/            # Completed tasks moved here
+│   └── failed/          # Tasks that exceeded retry limit
 ├── state/
 │   ├── history.json     # Cycle history
+│   ├── current_cycle.json # Live cycle state for dashboard visibility
 │   ├── auto_claude.log  # Log file
 │   ├── lock.pid         # Lock file for single-instance enforcement
 │   ├── agent_workspace/ # Inter-agent communication files (multi-agent mode)
@@ -133,6 +142,8 @@ auto_claude_code/
 |---|---|
 | `main.py` | Entry point with argument parsing and a two-layer watchdog that recovers from import failures |
 | `orchestrator.py` | Runs the core loop, coordinates all other modules |
+| `coordinator.py` | Distributes tasks to parallel workers running in git worktrees, merges validated results back to main |
+| `worker.py` | Executes a task group in an isolated git worktree with its own Claude invocation and validation |
 | `agent_pipeline.py` | Orchestrates the multi-agent pipeline: Planner → Coder → Tester → Reviewer with revision loops |
 | `task_discovery.py` | Discovers work: test failures, lint errors, TODOs, coverage gaps, quality issues, Claude ideas |
 | `claude_runner.py` | Invokes the `claude` CLI and parses the JSON response |
@@ -141,6 +152,8 @@ auto_claude_code/
 | `git_manager.py` | Manages git snapshots, rollbacks, and commits |
 | `feedback.py` | Reads developer task files from `feedback/` and moves completed ones to `feedback/done/` |
 | `state.py` | Persists cycle history to `state/history.json` |
+| `cycle_state.py` | Writes live cycle state to `state/current_cycle.json` for dashboard visibility |
+| `state_lock.py` | Thread-safe wrapper around `StateManager` for use in parallel mode |
 | `safety.py` | Enforces lock file, rate limits, cost limits, disk space checks, and protected file rules |
 | `config_schema.py` | Loads and validates `config.yaml`, applies defaults |
 
@@ -197,6 +210,28 @@ agent_pipeline:
 ```
 
 Agents communicate via files in `state/agent_workspace/`. The pipeline integrates with the existing validation and git management — changes are only committed if tests/lint/build pass.
+
+## Parallel Mode
+
+When `parallel.enabled: true` in `config.yaml`, the system uses a `ParallelCoordinator` that runs multiple Claude workers concurrently:
+
+- Each worker operates in its own git worktree, isolated from the main repository
+- Feedback tasks get dedicated workers; auto-discovered tasks are grouped by source type
+- After a worker completes, its branch is merged back to main (via fast-forward, auto-merge, or rebase)
+- Post-merge validation ensures tests still pass after integration
+- Worker worktrees and branches are cleaned up automatically
+
+Example configuration:
+
+```yaml
+parallel:
+  enabled: true
+  max_workers: 3
+  worktree_base_dir: .worktrees
+  merge_strategy: rebase  # "rebase" or "merge"
+  max_merge_retries: 2
+  cleanup_on_exit: true
+```
 
 ## Testing
 

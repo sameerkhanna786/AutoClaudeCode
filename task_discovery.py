@@ -132,9 +132,10 @@ class Task:
 
 
 class TaskDiscovery:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, state_manager=None):
         self.config = config
         self.target_dir = config.target_dir
+        self.state_manager = state_manager
 
     def discover_all(self) -> List[Task]:
         """Run all enabled discovery strategies and return sorted tasks."""
@@ -334,7 +335,8 @@ class TaskDiscovery:
         if not patterns:
             return []
 
-        keyword_pat = r"\b(" + "|".join(re.escape(p) for p in patterns) + r")\b"
+        escaped = "|".join(re.escape(p) for p in patterns)
+        keyword_pat = r"^\s*(" + escaped + r")\b"
         keyword_re = re.compile(keyword_pat, re.IGNORECASE)
 
         target = Path(self.target_dir)
@@ -408,16 +410,35 @@ class TaskDiscovery:
         to keep cost down. Parses the response for actionable improvement tasks.
         """
         cc = self.config.claude
+        if self.config.discovery.discovery_prompt:
+            focus_section = self.config.discovery.discovery_prompt
+        else:
+            focus_section = (
+                "- New features or functionality that would add value\n"
+                "- Missing tests for important functionality\n"
+                "- Bug risks or edge cases that could cause failures\n"
+                "- Performance improvements\n"
+                "- Code clarity or maintainability improvements\n"
+            )
+
+        history_section = ""
+        if self.state_manager:
+            recent = self.state_manager.get_recent_task_summaries(
+                lookback_seconds=86400, max_items=15,
+            )
+            if recent:
+                history_section = (
+                    "\nRECENTLY COMPLETED TASKS (do NOT suggest similar improvements):\n"
+                    + "\n".join(recent)
+                    + "\n\nFocus on NEW areas that haven't been addressed recently.\n"
+                )
+
         prompt = (
             "Analyze the codebase in the current directory. Identify up to 5 concrete, "
             "actionable improvements. Focus on:\n"
-            "- Bug risks or edge cases that could cause failures\n"
-            "- Missing error handling\n"
-            "- Performance improvements\n"
-            "- Code clarity or maintainability improvements\n"
-            "- Missing tests for important functionality\n"
-            "- Design improvements\n\n"
-            "For each improvement, output EXACTLY one line in this format:\n"
+            + focus_section
+            + history_section
+            + "\nFor each improvement, output EXACTLY one line in this format:\n"
             "IDEA: <one-sentence description of the improvement>\n\n"
             "Do NOT make any changes. Do NOT run git commands. Only analyze and output IDEA lines."
         )

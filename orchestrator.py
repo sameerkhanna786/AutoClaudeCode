@@ -236,7 +236,7 @@ class Orchestrator:
         self.claude = ClaudeRunner(config)
         self.git = GitManager(config.target_dir)
         self.validator = Validator(config)
-        self.discovery = TaskDiscovery(config)
+        self.discovery = TaskDiscovery(config, state_manager=self.state)
         self.feedback = FeedbackManager(config)
         self.cycle_state = CycleStateWriter(str(Path(config.paths.history_file).parent))
         self._running = True
@@ -810,6 +810,11 @@ class Orchestrator:
                 retry_result = self._run_claude_with_timeout(retry_prompt)
                 total_cost += retry_result.cost_usd
                 total_duration += retry_result.duration_seconds
+                self.cycle_state.update(
+                    accumulated_cost=total_cost,
+                    retry_count=retry_count,
+                    phase="retrying",
+                )
 
                 if not retry_result.success:
                     logger.warning("Retry Claude invocation failed: %s", retry_result.error)
