@@ -16,6 +16,7 @@ from typing import List, Optional
 
 from claude_runner import ClaudeRunner, ClaudeResult
 from config_schema import Config
+from cycle_state import CycleState, CycleStateWriter
 from feedback import FeedbackManager
 from git_manager import GitManager
 from model_resolver import resolve_model_id
@@ -202,6 +203,7 @@ class Orchestrator:
         self.validator = Validator(config)
         self.discovery = TaskDiscovery(config)
         self.feedback = FeedbackManager(config)
+        self.cycle_state = CycleStateWriter(str(Path(config.paths.history_file).parent))
         self._running = True
         self._consecutive_exceptions = 0
         self._backoff_seconds = 0
@@ -794,6 +796,8 @@ class Orchestrator:
             pipeline_review_approved=kwargs.get("pipeline_review_approved", True),
             validation_retry_count=kwargs.get("validation_retry_count", 0),
             push_succeeded=kwargs.get("push_succeeded", None),
+            task_source_files=[t.source_file or "" for t in tasks],
+            task_line_numbers=[t.line_number for t in tasks],
         )
         return record
 
@@ -922,85 +926,105 @@ class Orchestrator:
             task = tasks[0]
             logger.info("Selected task [priority=%d]: %s", task.priority, task.description)
 
-        # Backup orchestrator files if self-improving
-        self._backup_orchestrator_files()
+        # Write cycle state: task selected
+        self.cycle_state.write(CycleState(
+            phase="task_selected",
+            task_description=tasks[0].description,
+            task_type=tasks[0].source,
+            task_descriptions=[t.description for t in tasks],
+            started_at=time.time(),
+            batch_size=len(tasks),
+        ))
 
-        # 6. Record git snapshot
-        snapshot = self.git.create_snapshot()
-        pre_existing_files = self.git.capture_worktree_state()
+        try:
+            # Backup orchestrator files if self-improving
+            self._backup_orchestrator_files()
 
-        # Multi-agent pipeline dispatch
-        if self.config.agent_pipeline.enabled:
-            self._cycle_multi_agent(tasks, snapshot, pre_existing_files, is_batch)
-            return
+            # 6. Record git snapshot
+            snapshot = self.git.create_snapshot()
+            pre_existing_files = self.git.capture_worktree_state()
 
-        # 7. Invoke Claude (with optional plan-then-execute)
-        total_cost = 0.0
-        total_duration = 0.0
+            # Multi-agent pipeline dispatch
+            if self.config.agent_pipeline.enabled:
+                self._cycle_multi_agent(tasks, snapshot, pre_existing_files, is_batch)
+                return
 
-        if self.config.orchestrator.plan_changes:
-            # Phase 1: Plan
-            if is_batch:
-                plan_prompt = self._build_batch_plan_prompt(tasks)
+            # 7. Invoke Claude (with optional plan-then-execute)
+            total_cost = 0.0
+            total_duration = 0.0
+
+            if self.config.orchestrator.plan_changes:
+                # Phase 1: Plan
+                self.cycle_state.update(phase="planning")
+                if is_batch:
+                    plan_prompt = self._build_batch_plan_prompt(tasks)
+                else:
+                    plan_prompt = self._build_plan_prompt(tasks[0])
+                plan_result = self._run_claude_with_timeout(plan_prompt)
+                total_cost += plan_result.cost_usd
+                total_duration += plan_result.duration_seconds
+                self.cycle_state.update(accumulated_cost=total_cost)
+
+                if not plan_result.success:
+                    logger.warning("Claude planning failed: %s", plan_result.error)
+                    self.git.rollback(snapshot)
+                    self.state.record_cycle(self._make_cycle_record(
+                        tasks,
+                        success=False,
+                        cost_usd=total_cost,
+                        duration_seconds=total_duration,
+                        error=f"Planning failed: {plan_result.error}",
+                    ))
+                    return
+
+                # Clean any accidental changes from planning phase
+                self.git.rollback(snapshot)
+
+                logger.info("Plan created, auto-accepting and executing...")
+
+                # Phase 2: Execute the plan
+                self.cycle_state.update(phase="executing")
+                if is_batch:
+                    exec_prompt = self._build_batch_execute_prompt(tasks, plan_result.result_text)
+                else:
+                    exec_prompt = self._build_execute_prompt(tasks[0], plan_result.result_text)
+                claude_result = self._run_claude_with_timeout(exec_prompt)
+                total_cost += claude_result.cost_usd
+                total_duration += claude_result.duration_seconds
+                self.cycle_state.update(accumulated_cost=total_cost)
             else:
-                plan_prompt = self._build_plan_prompt(tasks[0])
-            plan_result = self._run_claude_with_timeout(plan_prompt)
-            total_cost += plan_result.cost_usd
-            total_duration += plan_result.duration_seconds
+                self.cycle_state.update(phase="executing")
+                if is_batch:
+                    prompt = self._build_batch_prompt(tasks)
+                else:
+                    prompt = self._build_prompt(tasks[0])
+                claude_result = self._run_claude_with_timeout(prompt)
+                total_cost = claude_result.cost_usd
+                total_duration = claude_result.duration_seconds
+                self.cycle_state.update(accumulated_cost=total_cost)
 
-            if not plan_result.success:
-                logger.warning("Claude planning failed: %s", plan_result.error)
+            if not claude_result.success:
+                logger.warning("Claude failed: %s", claude_result.error)
                 self.git.rollback(snapshot)
                 self.state.record_cycle(self._make_cycle_record(
                     tasks,
                     success=False,
                     cost_usd=total_cost,
                     duration_seconds=total_duration,
-                    error=f"Planning failed: {plan_result.error}",
+                    error=claude_result.error,
                 ))
                 return
 
-            # Clean any accidental changes from planning phase
-            self.git.rollback(snapshot)
-
-            logger.info("Plan created, auto-accepting and executing...")
-
-            # Phase 2: Execute the plan
-            if is_batch:
-                exec_prompt = self._build_batch_execute_prompt(tasks, plan_result.result_text)
-            else:
-                exec_prompt = self._build_execute_prompt(tasks[0], plan_result.result_text)
-            claude_result = self._run_claude_with_timeout(exec_prompt)
-            total_cost += claude_result.cost_usd
-            total_duration += claude_result.duration_seconds
-        else:
-            if is_batch:
-                prompt = self._build_batch_prompt(tasks)
-            else:
-                prompt = self._build_prompt(tasks[0])
-            claude_result = self._run_claude_with_timeout(prompt)
-            total_cost = claude_result.cost_usd
-            total_duration = claude_result.duration_seconds
-
-        if not claude_result.success:
-            logger.warning("Claude failed: %s", claude_result.error)
-            self.git.rollback(snapshot)
-            self.state.record_cycle(self._make_cycle_record(
-                tasks,
-                success=False,
-                cost_usd=total_cost,
-                duration_seconds=total_duration,
-                error=claude_result.error,
-            ))
-            return
-
-        # 8-11. Validate with retries, commit or rollback
-        self._validate_with_retries(
-            tasks=tasks, snapshot=snapshot,
-            pre_existing_files=pre_existing_files,
-            total_cost=total_cost, total_duration=total_duration,
-            is_batch=is_batch,
-        )
+            # 8-11. Validate with retries, commit or rollback
+            self.cycle_state.update(phase="validating")
+            self._validate_with_retries(
+                tasks=tasks, snapshot=snapshot,
+                pre_existing_files=pre_existing_files,
+                total_cost=total_cost, total_duration=total_duration,
+                is_batch=is_batch,
+            )
+        finally:
+            self.cycle_state.clear()
 
     def _cycle_multi_agent(
         self, tasks: List[Task], snapshot: str,
@@ -1008,7 +1032,8 @@ class Orchestrator:
     ) -> None:
         """Run a cycle using the multi-agent pipeline."""
         logger.info("Running multi-agent pipeline")
-        pipeline = AgentPipeline(self.config)
+        self.cycle_state.update(phase="pipeline")
+        pipeline = AgentPipeline(self.config, cycle_state=self.cycle_state)
 
         # Wrap pipeline.run() in a thread pool with cycle-level timeout
         timeout = self.config.orchestrator.cycle_timeout_seconds

@@ -36,6 +36,8 @@ class CycleRecord:
     pipeline_review_approved: bool = True
     validation_retry_count: int = 0
     push_succeeded: Optional[bool] = None
+    task_source_files: List[str] = field(default_factory=list)
+    task_line_numbers: List[Optional[int]] = field(default_factory=list)
 
 
 class StateManager:
@@ -139,6 +141,16 @@ class StateManager:
             )
             return
         self._ensure_dir()
+        # Pre-check: verify records are JSON-serializable before writing.
+        # This catches circular references, non-serializable types (e.g.,
+        # unconverted dataclass instances with self-references), etc.
+        try:
+            json.dumps(records)
+        except (TypeError, ValueError) as e:
+            logger.error(
+                "Refusing to save history: records are not JSON-serializable: %s", e,
+            )
+            return
         tmp_fd, tmp_path = tempfile.mkstemp(
             dir=str(self.history_file.parent), suffix=".tmp"
         )

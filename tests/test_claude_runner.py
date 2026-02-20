@@ -385,3 +385,66 @@ class TestRateLimitBackoff:
         result = runner.run("Fix the bug")
         assert result.success is True
         mock_sleep.assert_called_once_with(5)  # 5 * 3^0 = 5
+
+
+class TestCostParsing:
+    """Test that cost_usd and duration_seconds are parsed correctly from CLI output."""
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_new_field_names(self, mock_popen, runner):
+        """total_cost_usd and duration_ms are the actual CLI field names."""
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"result": "Done", "total_cost_usd": 0.037, "duration_ms": 2467}',
+        )
+        result = runner.run("Fix")
+        assert result.success is True
+        assert result.cost_usd == 0.037
+        assert abs(result.duration_seconds - 2.467) < 0.001
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_old_field_names_fallback(self, mock_popen, runner):
+        """Falls back to cost_usd and duration_seconds for backward compat."""
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"result": "Done", "cost_usd": 0.05, "duration_seconds": 12.5}',
+        )
+        result = runner.run("Fix")
+        assert result.success is True
+        assert result.cost_usd == 0.05
+        assert result.duration_seconds == 12.5
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_new_fields_take_precedence(self, mock_popen, runner):
+        """When both old and new fields are present, new ones win."""
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"result": "Done", "total_cost_usd": 0.1, "cost_usd": 0.05, "duration_ms": 5000, "duration_seconds": 2.0}',
+        )
+        result = runner.run("Fix")
+        assert result.success is True
+        assert result.cost_usd == 0.1
+        assert result.duration_seconds == 5.0
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_missing_cost_fields_default_to_zero(self, mock_popen, runner):
+        """When no cost/duration fields, defaults to 0."""
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"result": "Done"}',
+        )
+        result = runner.run("Fix")
+        assert result.success is True
+        assert result.cost_usd == 0.0
+        assert result.duration_seconds == 0.0
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_duration_ms_zero_falls_back_to_seconds(self, mock_popen, runner):
+        """duration_ms=0 should fall back to duration_seconds."""
+        mock_popen.return_value = _make_popen_mock(
+            returncode=0,
+            stdout='{"result": "Done", "duration_ms": 0, "duration_seconds": 3.5}',
+        )
+        result = runner.run("Fix")
+        assert result.success is True
+        assert result.duration_seconds == 3.5

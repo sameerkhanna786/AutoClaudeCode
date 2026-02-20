@@ -16,6 +16,12 @@ from config_schema import Config
 
 logger = logging.getLogger(__name__)
 
+# Import CycleStateWriter optionally to avoid circular deps
+try:
+    from cycle_state import CycleStateWriter
+except ImportError:
+    CycleStateWriter = None  # type: ignore[assignment,misc]
+
 
 class AgentRole(Enum):
     PLANNER = "planner"
@@ -82,7 +88,7 @@ class AgentWorkspace:
 class AgentPipeline:
     """Orchestrates a Planner -> Coder -> Tester -> Reviewer pipeline."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, cycle_state: Optional["CycleStateWriter"] = None):
         self.config = config
         self._ws_dir = str(
             Path(config.target_dir) / config.paths.agent_workspace_dir
@@ -90,6 +96,7 @@ class AgentPipeline:
         self._active_runner: Optional[ClaudeRunner] = None
         self._runner_lock = threading.Lock()
         self._terminated = False
+        self._cycle_state = cycle_state
 
     def terminate(self) -> None:
         """Terminate the currently running agent subprocess.
@@ -150,6 +157,12 @@ class AgentPipeline:
             if not role_cfg.enabled:
                 return AgentResult(
                     role=role, success=True, output_text="(skipped)",
+                )
+            # Update live cycle state
+            if self._cycle_state is not None:
+                self._cycle_state.update(
+                    pipeline_agent=role.value,
+                    accumulated_cost=result.total_cost_usd,
                 )
             agent_runner = self._build_runner_for_agent(role)
             with self._runner_lock:
@@ -290,6 +303,8 @@ class AgentPipeline:
             if revision < max_revisions:
                 revision += 1
                 result.revision_count = revision
+                if self._cycle_state is not None:
+                    self._cycle_state.update(pipeline_revision=revision)
                 rollback_fn(snapshot)
                 # Restore review feedback so the next iteration can read it
                 # (rollback's git clean -fd deletes untracked workspace files)

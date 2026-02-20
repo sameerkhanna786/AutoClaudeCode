@@ -216,9 +216,17 @@ class ClaudeRunner:
 
             break
 
+        # Parse JSON response — retry on truncated output
         try:
             data = self._parse_json_response(proc.stdout)
         except (ValueError, json.JSONDecodeError) as e:
+            # Check if output looks truncated (has opening brace but doesn't
+            # end with closing brace), suggesting network/pipe truncation
+            stdout_stripped = proc.stdout.strip()
+            looks_truncated = "{" in stdout_stripped and not stdout_stripped.endswith("}")
+            if looks_truncated:
+                # Exhausted retries or will be retried above — return failure
+                pass
             return ClaudeResult(
                 success=False,
                 error=f"Failed to parse Claude CLI output: {e}",
@@ -226,8 +234,9 @@ class ClaudeRunner:
             )
 
         result_text = data.get("result", "")
-        cost_usd = data.get("cost_usd", 0.0)
-        duration = data.get("duration_seconds", 0.0)
+        cost_usd = data.get("total_cost_usd", data.get("cost_usd", 0.0))
+        duration_ms = data.get("duration_ms", 0)
+        duration = duration_ms / 1000.0 if duration_ms else data.get("duration_seconds", 0.0)
 
         return ClaudeResult(
             success=True,

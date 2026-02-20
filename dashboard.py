@@ -286,12 +286,33 @@ function renderStatus(){
      bar: {pct: s.disk_used_pct||0, color: (s.disk_used_pct||0) > 90 ? 'red' : 'green'}},
   ];
   const el = document.getElementById('status-cards');
-  el.innerHTML = cards.map(c => `
+  let html = cards.map(c => `
     <div class="card">
       <div class="card-label">${c.label}</div>
       <div class="card-value ${c.cls}">${c.value}</div>
       ${c.bar ? `<div class="bar-track"><div class="bar-fill ${c.bar.color}" style="width:${c.bar.pct}%"></div></div>` : ''}
     </div>`).join('');
+
+  // Current Activity card (spans full width if active)
+  const cs = s.cycle_state;
+  if(cs){
+    const elapsed = cs.started_at ? formatDuration((Date.now()/1000) - cs.started_at) : '-';
+    const phase = cs.stale ? 'Crashed during: ' + escHtml(cs.phase) : escHtml(cs.phase);
+    const phaseCls = cs.stale ? 'fail' : 'info';
+    const desc = escHtml((cs.task_description||'').substring(0, 100));
+    const agent = cs.pipeline_agent ? ' (' + escHtml(cs.pipeline_agent) + ')' : '';
+    const cost = cs.accumulated_cost ? ' &middot; $' + cs.accumulated_cost.toFixed(4) : '';
+    const retry = cs.retry_count ? ' &middot; retry ' + cs.retry_count : '';
+    const batchInfo = (cs.batch_size||1) > 1 ? ' &middot; batch of ' + cs.batch_size : '';
+    html += `<div class="card" style="grid-column:1/-1">
+      <div class="card-label">Current Activity</div>
+      <div class="card-value" style="font-size:16px;color:var(--${phaseCls})">${phase}${agent}</div>
+      <div style="margin-top:6px;color:var(--muted);font-size:13px">${desc}</div>
+      <div style="margin-top:4px;color:var(--muted);font-size:12px">Elapsed: ${elapsed}${cost}${retry}${batchInfo}</div>
+    </div>`;
+  }
+
+  el.innerHTML = html;
 }
 
 // History
@@ -393,6 +414,7 @@ function renderHistory(){
     const icon = r.success ? '<span class="status-icon" style="color:var(--success)">&#10003;</span>' : '<span class="status-icon" style="color:var(--fail)">&#10007;</span>';
     const ts = new Date(r.timestamp * 1000).toLocaleString();
     const desc = escHtml((r.task_description||'').substring(0, 80));
+    const batchExtra = (r.batch_size||1) > 1 ? ` <span style="color:var(--muted);font-size:11px">(+ ${r.batch_size - 1} more)</span>` : '';
     const typeBadge = r.task_type ? `<span class="badge badge-${r.task_type}">${r.task_type}</span>` : '';
     const dur = r.duration_seconds ? formatDuration(r.duration_seconds) : '-';
     const cost = r.cost_usd ? '$' + r.cost_usd.toFixed(4) : '-';
@@ -401,7 +423,7 @@ function renderHistory(){
     const loc = r.commit_hash && locCache[r.commit_hash] ? formatLoc(locCache[r.commit_hash]) : '-';
 
     html += `<tr class="${cls} expandable" onclick="toggleRow(${idx})">
-      <td>${icon}</td><td>${ts}</td><td>${desc}</td><td>${typeBadge}</td>
+      <td>${icon}</td><td>${ts}</td><td>${desc}${batchExtra}</td><td>${typeBadge}</td>
       <td>${r.batch_size||1}</td><td>${dur}</td><td>${cost}</td><td><code>${commit}</code></td>
       <td>${validation}</td><td class="loc-cell" data-hash="${r.commit_hash||''}">${loc}</td>
     </tr>`;
@@ -423,8 +445,34 @@ function renderHistory(){
 }
 
 function renderDetailRow(r){
-  const allDescs = (r.task_descriptions && r.task_descriptions.length) ? r.task_descriptions.map(d => '- ' + escHtml(d)).join('\n') : escHtml(r.task_description||'');
-  let details = `<strong>Full description:</strong>\n${allDescs}`;
+  let details = '';
+
+  // Batch task list with type badges and source files
+  if(r.task_descriptions && r.task_descriptions.length > 1){
+    details += '<strong>Tasks:</strong>';
+    r.task_descriptions.forEach((d, i) => {
+      const ttype = (r.task_types && r.task_types[i]) || '';
+      const badge = ttype ? ` <span class="badge badge-${ttype}">${ttype}</span>` : '';
+      const srcFile = (r.task_source_files && r.task_source_files[i]) ? r.task_source_files[i] : '';
+      const srcLine = (r.task_line_numbers && r.task_line_numbers[i] != null) ? ':' + r.task_line_numbers[i] : '';
+      const srcRef = srcFile ? ` <span style="color:var(--muted);font-size:11px">(${escHtml(srcFile + srcLine)})</span>` : '';
+      details += `\n  ${i+1}. ${escHtml(d)}${badge}${srcRef}`;
+    });
+  } else {
+    details += `<strong>Task:</strong>\n${escHtml(r.task_description||'')}`;
+    if(r.task_source_files && r.task_source_files[0]){
+      const srcLine = (r.task_line_numbers && r.task_line_numbers[0] != null) ? ':' + r.task_line_numbers[0] : '';
+      details += `\n<strong>Source:</strong> ${escHtml(r.task_source_files[0] + srcLine)}`;
+    }
+  }
+
+  // Cost and duration
+  if(r.cost_usd || r.duration_seconds){
+    details += '\n';
+    if(r.cost_usd) details += `\n<strong>Cost:</strong> $${r.cost_usd.toFixed(4)}`;
+    if(r.duration_seconds) details += `  <strong>Duration:</strong> ${formatDuration(r.duration_seconds)}`;
+  }
+
   if(r.error) details += `\n\n<strong>Error:</strong>\n${escHtml(r.error)}`;
   if(r.pipeline_mode) details += `\n\n<strong>Pipeline:</strong> mode=${escHtml(r.pipeline_mode)}, revisions=${r.pipeline_revision_count||0}, approved=${r.pipeline_review_approved}`;
   if(r.validation_summary) details += `\n\n<strong>Validation:</strong> ${escHtml(r.validation_summary)}`;
@@ -608,6 +656,7 @@ def _load_config(config_path: str) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "target_dir": ".",
         "history_file": "state/history.json",
+        "state_dir": "state",
         "lock_file": "state/lock.pid",
         "log_file": "state/auto_claude.log",
         "feedback_dir": "feedback",
@@ -631,6 +680,8 @@ def _load_config(config_path: str) -> Dict[str, Any]:
             result["feedback_dir"] = paths.get("feedback_dir", result["feedback_dir"])
             result["feedback_done_dir"] = paths.get("feedback_done_dir", result["feedback_done_dir"])
             result["feedback_failed_dir"] = paths.get("feedback_failed_dir", result["feedback_failed_dir"])
+            # Derive state_dir from history_file parent
+            result["state_dir"] = str(Path(result["history_file"]).parent)
         logging_cfg = raw.get("logging", {})
         if isinstance(logging_cfg, dict):
             result["log_file"] = logging_cfg.get("file", result["log_file"])
@@ -662,6 +713,20 @@ def load_history(history_path: str) -> List[Dict[str, Any]]:
         return []
 
 
+def _read_cycle_state(state_dir: str) -> Optional[Dict[str, Any]]:
+    """Read current_cycle.json from state_dir. Returns None if no active cycle."""
+    p = Path(state_dir) / "current_cycle.json"
+    if not p.exists():
+        return None
+    try:
+        text = p.read_text().strip()
+        if not text:
+            return None
+        return json.loads(text)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def is_orchestrator_running(lock_path: str) -> Tuple[bool, Optional[int]]:
     """Check if orchestrator PID in lock file is alive. Read-only — no flock."""
     p = Path(lock_path)
@@ -676,6 +741,17 @@ def is_orchestrator_running(lock_path: str) -> Tuple[bool, Optional[int]]:
         return True, pid
     except (ValueError, ProcessLookupError, OSError):
         return False, None
+
+
+def _get_cycle_state_for_api(cfg: Dict[str, Any], running: bool) -> Optional[Dict[str, Any]]:
+    """Get cycle state for the API, handling stale state from crashed orchestrator."""
+    state = _read_cycle_state(cfg["state_dir"])
+    if state is None:
+        return None
+    # If orchestrator is not running but state file exists, it crashed mid-cycle
+    if not running:
+        state["stale"] = True
+    return state
 
 
 def compute_status(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -727,6 +803,7 @@ def compute_status(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "disk_free_mb": round(disk_free_mb, 0),
         "disk_used_pct": round(disk_used_pct, 1),
         "min_disk_mb": cfg["min_disk_space_mb"],
+        "cycle_state": _get_cycle_state_for_api(cfg, running),
     }
 
 

@@ -256,4 +256,42 @@ def load_config(path: Optional[str] = None) -> Config:
             if agent_name in ap_raw and isinstance(ap_raw[agent_name], dict):
                 _merge_dataclass(getattr(config.agent_pipeline, agent_name), ap_raw[agent_name])
 
+    validate_config(config)
     return config
+
+
+def validate_config(config: Config) -> None:
+    """Validate cross-field configuration constraints.
+
+    Raises ValueError if configuration is invalid.
+    """
+    # Validate timeout values are positive integers
+    if config.claude.timeout_seconds <= 0:
+        raise ValueError(
+            f"claude.timeout_seconds must be a positive integer, got {config.claude.timeout_seconds}"
+        )
+    if config.validation.test_timeout <= 0:
+        raise ValueError(
+            f"validation.test_timeout must be a positive integer, got {config.validation.test_timeout}"
+        )
+    if config.validation.lint_timeout <= 0:
+        raise ValueError(
+            f"validation.lint_timeout must be a positive integer, got {config.validation.lint_timeout}"
+        )
+    if config.validation.build_timeout <= 0:
+        raise ValueError(
+            f"validation.build_timeout must be a positive integer, got {config.validation.build_timeout}"
+        )
+    if config.orchestrator.cycle_timeout_seconds <= 0:
+        raise ValueError(
+            f"orchestrator.cycle_timeout_seconds must be a positive integer, "
+            f"got {config.orchestrator.cycle_timeout_seconds}"
+        )
+
+    # Cross-field: Claude timeout must exceed test timeout
+    if config.claude.timeout_seconds <= config.validation.test_timeout:
+        raise ValueError(
+            f"claude.timeout_seconds ({config.claude.timeout_seconds}) must be greater than "
+            f"validation.test_timeout ({config.validation.test_timeout}) to ensure tests "
+            f"can complete before Claude times out"
+        )
