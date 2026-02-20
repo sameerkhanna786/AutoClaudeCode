@@ -27,6 +27,7 @@ from validator import ValidationResult, Validator
 from agent_pipeline import AgentPipeline
 from structured_logging import apply_json_logging
 from cost_predictor import check_cost_budget
+from notifications import NotificationManager
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,7 @@ class Orchestrator:
         self.discovery = TaskDiscovery(config, state_manager=self.state)
         self.feedback = FeedbackManager(config)
         self.cycle_state = CycleStateWriter(str(Path(config.paths.history_file).parent))
+        self.notifier = NotificationManager(config.notifications)
         self._running = True
         self._consecutive_exceptions = 0
         self._backoff_seconds = 0
@@ -783,9 +785,12 @@ class Orchestrator:
                     push_succeeded=push_ok,
                     **extra,
                 ))
+                self.notifier.notify("cycle_success", {
+                    "tasks": [t.description for t in tasks],
+                    "commit": commit_hash,
+                    "cost_usd": total_cost,
+                })
                 return
-
-            # Validation failed — retry if attempts remain
             if attempt < max_retries:
                 # Cost guard: check accumulated cost against hourly budget
                 hourly_cost = self.state.get_total_cost(lookback_seconds=3600)
@@ -846,6 +851,11 @@ class Orchestrator:
                     error="Validation failed",
                     validation_retry_count=retry_count, **extra,
                 ))
+                self.notifier.notify("cycle_failure", {
+                    "tasks": [t.description for t in tasks],
+                    "error": validation.summary,
+                    "retry_count": retry_count,
+                })
                 return
 
     def _make_cycle_record(self, tasks: List[Task], **kwargs) -> CycleRecord:
@@ -957,6 +967,7 @@ class Orchestrator:
             self.safety.pre_flight_checks()
         except SafetyError as e:
             logger.warning("Pre-flight check failed: %s", e)
+            self.notifier.notify("safety_error", {"error": str(e)})
             return
 
         # 2-5. Gather tasks
@@ -1028,6 +1039,10 @@ class Orchestrator:
                     "budget $%.4f",
                     est_cost, remaining,
                 )
+                self.notifier.notify("cost_limit_exceeded", {
+                    "estimated_cost": est_cost,
+                    "remaining_budget": remaining,
+                })
                 return
 
             # Multi-agent pipeline dispatch

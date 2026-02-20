@@ -39,7 +39,7 @@ def kill_process_group(proc: subprocess.Popen) -> None:
         pass
     try:
         proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, OSError):
         pass
 
 

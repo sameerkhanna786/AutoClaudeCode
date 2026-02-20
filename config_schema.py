@@ -151,6 +151,32 @@ class LoggingConfig:
 
 
 @dataclass
+class WebhookConfig:
+    """Configuration for a single webhook endpoint."""
+    url: str = ""
+    type: str = "generic"  # "slack", "discord", "generic"
+    name: str = ""
+
+
+@dataclass
+class NotificationEventsConfig:
+    """Which events trigger notifications."""
+    on_cycle_success: bool = True
+    on_cycle_failure: bool = True
+    on_consecutive_failure_threshold: bool = True
+    on_cost_limit_exceeded: bool = True
+    on_safety_error: bool = True
+
+
+@dataclass
+class NotificationsConfig:
+    """Top-level notification configuration."""
+    enabled: bool = False
+    webhooks: List[WebhookConfig] = field(default_factory=list)
+    events: NotificationEventsConfig = field(default_factory=NotificationEventsConfig)
+
+
+@dataclass
 class Config:
     target_dir: str = "."
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
@@ -162,6 +188,7 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     agent_pipeline: AgentPipelineConfig = field(default_factory=AgentPipelineConfig)
     parallel: ParallelConfig = field(default_factory=ParallelConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
 
 def _get_expected_type(dc_class, field_name: str):
@@ -277,6 +304,21 @@ def load_config(path: Optional[str] = None) -> Config:
         for agent_name in ("planner", "coder", "tester", "reviewer"):
             if agent_name in ap_raw and isinstance(ap_raw[agent_name], dict):
                 _merge_dataclass(getattr(config.agent_pipeline, agent_name), ap_raw[agent_name])
+
+    # Nested notifications config
+    if "notifications" in raw and isinstance(raw["notifications"], dict):
+        notif_raw = raw["notifications"]
+        _merge_dataclass(config.notifications, {
+            k: v for k, v in notif_raw.items()
+            if k not in ("webhooks", "events")
+        })
+        if "events" in notif_raw and isinstance(notif_raw["events"], dict):
+            _merge_dataclass(config.notifications.events, notif_raw["events"])
+        if "webhooks" in notif_raw and isinstance(notif_raw["webhooks"], list):
+            config.notifications.webhooks = [
+                WebhookConfig(**wh) for wh in notif_raw["webhooks"]
+                if isinstance(wh, dict) and wh.get("url")
+            ]
 
     validate_config(config)
     return config
@@ -456,3 +498,16 @@ def validate_config(config: Config) -> None:
             f"orchestrator.initial_batch_size ({orch.initial_batch_size}) must be <= "
             f"orchestrator.max_batch_size ({orch.max_batch_size})"
         )
+
+    # Validate notifications config
+    _KNOWN_WEBHOOK_TYPES = {"slack", "discord", "generic"}
+    if config.notifications.enabled:
+        for i, wh in enumerate(config.notifications.webhooks):
+            if not wh.url:
+                logger.warning("notifications.webhooks[%d] has empty URL — will be skipped", i)
+            if wh.type not in _KNOWN_WEBHOOK_TYPES:
+                logger.warning(
+                    "notifications.webhooks[%d].type '%s' is not recognized. "
+                    "Known types: %s",
+                    i, wh.type, ", ".join(sorted(_KNOWN_WEBHOOK_TYPES)),
+                )

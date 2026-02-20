@@ -278,7 +278,7 @@ class TestTaskDiscovery:
         with caplog.at_level(logging.WARNING):
             tasks = discovery._discover_claude_ideas()
         assert tasks == []
-        assert any("hit max turns" in r.message for r in caplog.records)
+        assert any("hit max turns" in r.getMessage() for r in caplog.records)
 
     @patch("task_discovery.run_with_group_kill")
     def test_discover_claude_ideas_error_max_turns_with_partial_result(self, mock_run, discovery):
@@ -330,7 +330,7 @@ class TestTaskDiscovery:
         with caplog.at_level(logging.WARNING):
             tasks = discovery._discover_claude_ideas()
         assert tasks == []
-        assert any("no text content" in r.message.lower() or "falling back" in r.message.lower()
+        assert any("no text content" in r.getMessage().lower() or "falling back" in r.getMessage().lower()
                     for r in caplog.records)
 
 

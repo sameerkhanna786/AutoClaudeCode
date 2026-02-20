@@ -12,6 +12,7 @@ An autonomous development system that runs Claude Code in a continuous loop to d
 - **Developer feedback system** — drop task files in `feedback/` to steer priorities
 - **Self-improvement mode** — can modify its own source code with syntax checking and backups
 - **Safety guards** — rate limits, cost limits, disk checks, protected files, lock file
+- **Webhook notifications** — configurable Slack, Discord, and generic webhook alerts for critical events
 - **File-based state** — JSON history, YAML config, text feedback; no database required
 
 ## Quick Start
@@ -77,6 +78,7 @@ All settings live in `config.yaml`. Key sections:
 | `logging` | Log level, file path, rotation size and backup count |
 | `agent_pipeline` | Multi-agent mode: enable/disable, per-agent model and timeout, max revision loops |
 | `parallel` | Parallel mode: enable/disable, max workers, worktree directory, merge strategy |
+| `notifications` | Webhook notifications: enable/disable, webhook URLs and types, event filters |
 
 See [`config.yaml`](config.yaml) for the full annotated configuration.
 
@@ -110,6 +112,11 @@ auto_claude_code/
 ├── cycle_state.py       # Live cycle state for dashboard visibility
 ├── state_lock.py        # Thread-safe StateManager wrapper for parallel mode
 ├── safety.py            # Lock file, failure counters, disk/rate/cost checks
+├── cost_predictor.py    # Estimate token cost before execution
+├── process_utils.py     # Process-group-aware subprocess management
+├── structured_logging.py # JSON log formatter for structured logging
+├── notifications.py     # Webhook notifications (Slack, Discord, generic)
+├── dashboard.py         # Web dashboard for monitoring and feedback
 ├── requirements.txt     # Dependencies (pyyaml)
 ├── CLAUDE.md            # Claude Code project instructions
 ├── feedback/            # Drop task files here
