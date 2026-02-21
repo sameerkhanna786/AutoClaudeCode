@@ -554,7 +554,7 @@ class TestCircuitBreaker:
         assert cb.allow_request() is False
 
     def test_transitions_to_half_open_after_recovery_timeout(self):
-        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=1)
+        cb = CircuitBreaker(failure_threshold=2, recovery_timeout=1, jitter_factor=0)
         cb.record_failure()
         cb.record_failure()
         assert cb.state == CircuitBreaker.STATE_OPEN

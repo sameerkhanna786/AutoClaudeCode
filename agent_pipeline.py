@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from claude_runner import ClaudeResult, ClaudeRunner
 from config_schema import Config
@@ -41,6 +41,15 @@ class AgentResult:
 
 
 @dataclass
+class AgentCostSummary:
+    """Aggregated cost/duration for a single agent role across all invocations."""
+    role: str
+    total_cost_usd: float = 0.0
+    total_duration_seconds: float = 0.0
+    invocation_count: int = 0
+
+
+@dataclass
 class PipelineResult:
     success: bool
     agent_results: List[AgentResult] = field(default_factory=list)
@@ -49,6 +58,24 @@ class PipelineResult:
     revision_count: int = 0
     final_review_approved: bool = False
     error: str = ""
+    agent_cost_summary: Dict[str, AgentCostSummary] = field(default_factory=dict)
+
+    def format_cost_report(self) -> str:
+        """Format a human-readable cost breakdown by agent role."""
+        if not self.agent_cost_summary:
+            return "No agent cost data available."
+        lines = ["Agent Cost Breakdown:"]
+        for role_name in ("planner", "coder", "tester", "reviewer"):
+            if role_name in self.agent_cost_summary:
+                s = self.agent_cost_summary[role_name]
+                pct = (s.total_cost_usd / self.total_cost_usd * 100) if self.total_cost_usd > 0 else 0
+                lines.append(
+                    f"  {role_name}: ${s.total_cost_usd:.4f} "
+                    f"({pct:.1f}%) | {s.total_duration_seconds:.1f}s "
+                    f"| {s.invocation_count} invocation(s)"
+                )
+        lines.append(f"  TOTAL: ${self.total_cost_usd:.4f} | {self.total_duration_seconds:.1f}s")
+        return "\n".join(lines)
 
 
 class AgentWorkspace:
@@ -147,6 +174,19 @@ class AgentPipeline:
             lines.append(f"{i}. {t.description}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _update_cost_summary(
+        result: PipelineResult, agent_result: AgentResult
+    ) -> None:
+        """Update the per-agent cost summary with a new agent result."""
+        role_name = agent_result.role.value
+        if role_name not in result.agent_cost_summary:
+            result.agent_cost_summary[role_name] = AgentCostSummary(role=role_name)
+        summary = result.agent_cost_summary[role_name]
+        summary.total_cost_usd += agent_result.cost_usd
+        summary.total_duration_seconds += agent_result.duration_seconds
+        summary.invocation_count += 1
+
     def run(
         self,
         tasks: list,
@@ -207,9 +247,11 @@ class AgentPipeline:
         result.agent_results.append(planner_result)
         result.total_cost_usd += planner_result.cost_usd
         result.total_duration_seconds += planner_result.duration_seconds
+        self._update_cost_summary(result, planner_result)
 
         if not planner_result.success:
             result.error = f"Planner failed: {planner_result.error}"
+            logger.info(result.format_cost_report())
             return result
 
         # Rollback any file changes from planner
@@ -231,6 +273,7 @@ class AgentPipeline:
                     f"Pipeline cost limit exceeded "
                     f"(${result.total_cost_usd:.2f} >= ${pipeline_cost_limit:.2f})"
                 )
+                logger.info(result.format_cost_report())
                 return result
 
             if self._terminated:
@@ -261,9 +304,11 @@ class AgentPipeline:
             result.agent_results.append(coder_result)
             result.total_cost_usd += coder_result.cost_usd
             result.total_duration_seconds += coder_result.duration_seconds
+            self._update_cost_summary(result, coder_result)
 
             if not coder_result.success:
                 result.error = f"Coder failed: {coder_result.error}"
+                logger.info(result.format_cost_report())
                 return result
 
             # --- Tester ---
@@ -276,6 +321,7 @@ class AgentPipeline:
             result.agent_results.append(tester_result)
             result.total_cost_usd += tester_result.cost_usd
             result.total_duration_seconds += tester_result.duration_seconds
+            self._update_cost_summary(result, tester_result)
 
             # Fix 7: Check tester result — if the tester CLI crashed, treat
             # it as a revision-needed signal rather than silently continuing.
@@ -293,6 +339,7 @@ class AgentPipeline:
                 else:
                     result.error = f"Tester failed after exhausting revisions: {tester_result.error}"
                     result.revision_count = revision
+                    logger.info(result.format_cost_report())
                     return result
 
             # --- Reviewer ---
@@ -310,12 +357,14 @@ class AgentPipeline:
             result.agent_results.append(reviewer_result)
             result.total_cost_usd += reviewer_result.cost_usd
             result.total_duration_seconds += reviewer_result.duration_seconds
+            self._update_cost_summary(result, reviewer_result)
 
             # Determine verdict
             if not getattr(ap.reviewer, "enabled", True):
                 # Reviewer disabled -> auto-approve
                 result.success = True
                 result.final_review_approved = True
+                logger.info(result.format_cost_report())
                 return result
 
             review_content = workspace.read("review.md") or reviewer_result.output_text
@@ -324,6 +373,7 @@ class AgentPipeline:
             if approved:
                 result.success = True
                 result.final_review_approved = True
+                logger.info(result.format_cost_report())
                 return result
 
             # Reviewer rejected — try revision if budget allows
@@ -343,4 +393,5 @@ class AgentPipeline:
                 result.error = "Reviewer rejected after exhausting all revisions"
                 result.final_review_approved = False
                 result.revision_count = revision
+                logger.info(result.format_cost_report())
                 return result

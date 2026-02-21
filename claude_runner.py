@@ -62,9 +62,15 @@ class CircuitBreaker:
         recovery_timeout: float = CB_RECOVERY_TIMEOUT,
         half_open_max_calls: int = CB_HALF_OPEN_MAX_CALLS,
         on_open: Optional[Callable[[int, float], None]] = None,
+        max_recovery_timeout: float = 0,
+        jitter_factor: float = 0.25,
     ):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
+        self._base_recovery_timeout = recovery_timeout
+        self._max_recovery_timeout = max_recovery_timeout if max_recovery_timeout > 0 else recovery_timeout * 4
+        self._jitter_factor = jitter_factor
+        self._open_count = 0
         self.half_open_max_calls = half_open_max_calls
         self._on_open = on_open
         self._state = self.STATE_CLOSED
@@ -90,6 +96,26 @@ class CircuitBreaker:
                     self.recovery_timeout,
                 )
         return self._state
+
+    def _compute_recovery_timeout(self) -> float:
+        """Compute recovery timeout with exponential backoff and jitter.
+
+        Each time the circuit breaker opens, the recovery timeout increases
+        exponentially (base * 2^open_count) up to a maximum. Random jitter
+        is added to prevent thundering herd when multiple workers recover
+        simultaneously.
+        """
+        import random
+        # Exponential backoff: base * 2^(open_count - 1), capped at max
+        # First open uses base timeout (2^0=1x), subsequent re-opens escalate
+        exponent = max(0, self._open_count - 1)
+        backoff = min(
+            self._base_recovery_timeout * (2 ** exponent),
+            self._max_recovery_timeout,
+        )
+        # Add jitter: +/- jitter_factor of the backoff value
+        jitter = backoff * self._jitter_factor * (2 * random.random() - 1)
+        return max(self._base_recovery_timeout, backoff + jitter)
 
     def allow_request(self) -> bool:
         """Check if a request is allowed through the circuit breaker."""
@@ -117,6 +143,8 @@ class CircuitBreaker:
             self._consecutive_failures = 0
             self._state = self.STATE_CLOSED
             self._half_open_calls = 0
+            self._open_count = 0
+            self.recovery_timeout = self._base_recovery_timeout
 
     def record_failure(self) -> None:
         """Record a failed call — may trip the circuit breaker to OPEN."""
@@ -125,25 +153,30 @@ class CircuitBreaker:
             self._consecutive_failures += 1
             if self._state == self.STATE_HALF_OPEN:
                 # Failed during probe — re-open
+                self._open_count += 1
+                self.recovery_timeout = self._compute_recovery_timeout()
                 self._state = self.STATE_OPEN
                 self._opened_at = time.monotonic()
                 notify = True
                 logger.warning(
                     "Circuit breaker re-opening after failed probe call "
-                    "(%d consecutive failures)",
-                    self._consecutive_failures,
+                    "(%d consecutive failures, recovery_timeout=%.0fs)",
+                    self._consecutive_failures, self.recovery_timeout,
                 )
             elif (
                 self._state == self.STATE_CLOSED
                 and self._consecutive_failures >= self.failure_threshold
             ):
+                self._open_count += 1
+                self.recovery_timeout = self._compute_recovery_timeout()
                 self._state = self.STATE_OPEN
                 self._opened_at = time.monotonic()
                 notify = True
                 logger.warning(
                     "Circuit breaker OPEN after %d consecutive failures. "
-                    "API calls blocked for %.0fs.",
+                    "API calls blocked for %.0fs (backoff level %d).",
                     self._consecutive_failures, self.recovery_timeout,
+                    self._open_count,
                 )
         # Fire notification callback outside the lock to avoid deadlocks
         if notify and self._on_open is not None:
@@ -158,6 +191,8 @@ class CircuitBreaker:
             self._state = self.STATE_CLOSED
             self._consecutive_failures = 0
             self._half_open_calls = 0
+            self._open_count = 0
+            self.recovery_timeout = self._base_recovery_timeout
 
 
 @dataclass
