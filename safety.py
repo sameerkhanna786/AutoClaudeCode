@@ -7,6 +7,7 @@ import fcntl
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -34,6 +35,96 @@ atexit.register(_atexit_release_locks)
 class SafetyError(Exception):
     """Raised when a safety check fails."""
     pass
+
+
+class GracefulDegradation:
+    """Manages graceful degradation when approaching rate or cost limits.
+
+    Instead of hard-stopping, this reduces batch size and increases sleep
+    intervals to allow the system to continue operating at reduced capacity.
+    """
+
+    def __init__(self, config: Config):
+        self.config = config
+        self._degraded = False
+        self._degradation_level = 0  # 0=normal, 1=mild, 2=moderate, 3=severe
+
+    @property
+    def is_degraded(self) -> bool:
+        return self._degraded
+
+    @property
+    def degradation_level(self) -> int:
+        return self._degradation_level
+
+    def check_and_adjust(
+        self,
+        cycles_per_hour: int,
+        cost_per_hour: float,
+    ) -> dict:
+        """Check proximity to limits and compute adjustments.
+
+        Returns a dict with:
+            - degraded: whether we're in degraded mode
+            - level: 0-3 severity level
+            - batch_size_factor: multiplier for batch size (0.25-1.0)
+            - sleep_multiplier: multiplier for sleep interval (1.0-4.0)
+            - reason: human-readable reason for degradation
+        """
+        rate_limit = self.config.safety.max_cycles_per_hour
+        cost_limit = self.config.safety.max_cost_usd_per_hour
+
+        rate_pct = (cycles_per_hour / rate_limit * 100) if rate_limit > 0 else 0
+        cost_pct = (cost_per_hour / cost_limit * 100) if cost_limit > 0 else 0
+
+        max_pct = max(rate_pct, cost_pct)
+
+        reasons = []
+        if rate_pct >= 70:
+            reasons.append(f"rate at {rate_pct:.0f}% of limit ({cycles_per_hour}/{rate_limit})")
+        if cost_pct >= 70:
+            reasons.append(f"cost at {cost_pct:.0f}% of limit (${cost_per_hour:.2f}/${cost_limit:.2f})")
+
+        if max_pct >= 95:
+            self._degradation_level = 3
+            self._degraded = True
+            return {
+                "degraded": True,
+                "level": 3,
+                "batch_size_factor": 0.25,
+                "sleep_multiplier": 4.0,
+                "reason": "Severe: " + "; ".join(reasons),
+            }
+        elif max_pct >= 85:
+            self._degradation_level = 2
+            self._degraded = True
+            return {
+                "degraded": True,
+                "level": 2,
+                "batch_size_factor": 0.5,
+                "sleep_multiplier": 3.0,
+                "reason": "Moderate: " + "; ".join(reasons),
+            }
+        elif max_pct >= 70:
+            self._degradation_level = 1
+            self._degraded = True
+            return {
+                "degraded": True,
+                "level": 1,
+                "batch_size_factor": 0.75,
+                "sleep_multiplier": 2.0,
+                "reason": "Mild: " + "; ".join(reasons),
+            }
+        else:
+            self._degradation_level = 0
+            self._degraded = False
+            return {
+                "degraded": False,
+                "level": 0,
+                "batch_size_factor": 1.0,
+                "sleep_multiplier": 1.0,
+                "reason": "",
+            }
 
 
 class SafetyGuard:
@@ -287,6 +378,83 @@ class SafetyGuard:
         if warning_threshold > 0 and count > warning_threshold:
             logger.warning("Changed file count (%d) approaching limit (%d)", count, limit)
 
+    def check_backup_dir_size(self) -> None:
+        """Monitor backup directory size and clean up old files when threshold is exceeded.
+
+        Removes oldest backup files first until directory size is below threshold.
+        This prevents unbounded growth from syntax-check backups and corruption backups.
+        """
+        backup_dir = Path(self.config.paths.backup_dir)
+        if not backup_dir.exists():
+            return
+
+        max_mb = self.config.safety.max_backup_dir_mb
+        if max_mb <= 0:
+            return
+
+        max_bytes = max_mb * 1024 * 1024
+
+        # Calculate total size and collect files with their sizes and mtimes
+        files_info = []
+        total_size = 0
+        try:
+            for entry in backup_dir.iterdir():
+                if entry.is_file():
+                    try:
+                        stat = entry.stat()
+                        files_info.append((entry, stat.st_size, stat.st_mtime))
+                        total_size += stat.st_size
+                    except OSError:
+                        continue
+        except OSError as e:
+            logger.debug("Could not scan backup directory %s: %s", backup_dir, e)
+            return
+
+        if total_size <= max_bytes:
+            return
+
+        logger.warning(
+            "Backup directory %s size %.1f MB exceeds threshold %d MB, cleaning up",
+            backup_dir, total_size / (1024 * 1024), max_mb,
+        )
+
+        # Sort by mtime ascending (oldest first)
+        files_info.sort(key=lambda x: x[2])
+
+        cleaned_count = 0
+        cleaned_bytes = 0
+        for fpath, fsize, _ in files_info:
+            if total_size <= max_bytes:
+                break
+            try:
+                fpath.unlink()
+                total_size -= fsize
+                cleaned_count += 1
+                cleaned_bytes += fsize
+            except OSError:
+                continue
+
+        if cleaned_count > 0:
+            logger.info(
+                "Cleaned %d backup files (%.1f MB freed), "
+                "directory now %.1f MB",
+                cleaned_count, cleaned_bytes / (1024 * 1024),
+                total_size / (1024 * 1024),
+            )
+
+        # Also clean up old .corrupt files in state directory
+        state_dir = Path(self.config.paths.state_dir)
+        if state_dir.exists():
+            cutoff = time.time() - (7 * 86400)  # 7 days
+            for entry in state_dir.iterdir():
+                if entry.is_file() and ".corrupt" in entry.name:
+                    try:
+                        if entry.stat().st_mtime < cutoff:
+                            entry.unlink()
+                            logger.debug("Removed old corrupt backup: %s", entry.name)
+                    except OSError:
+                        continue
+
     def pre_flight_checks(self) -> None:
         """Run all pre-cycle safety checks."""
         self.check_disk_space()
@@ -294,6 +462,7 @@ class SafetyGuard:
         self.check_rate_limit()
         self.check_cost_limit()
         self.check_consecutive_failures()
+        self.check_backup_dir_size()
 
     def post_claude_checks(self, changed_files: List[str]) -> None:
         """Run safety checks after Claude has made changes."""

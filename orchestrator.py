@@ -20,7 +20,7 @@ from cycle_state import CycleState, CycleStateWriter
 from feedback import FeedbackManager
 from git_manager import GitManager, Snapshot
 from model_resolver import resolve_model_id
-from safety import SafetyError, SafetyGuard
+from safety import SafetyError, SafetyGuard, GracefulDegradation
 from state import CycleRecord, StateManager
 from task_discovery import Task, TaskDiscovery
 from validator import ValidationResult, Validator
@@ -1100,14 +1100,32 @@ class Orchestrator:
                 # Clean any accidental changes from planning phase
                 self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
 
-                logger.info("Plan created, auto-accepting and executing...")
-
-                # Phase 2: Execute the plan
-                self.cycle_state.update(phase="executing")
-                if is_batch:
-                    exec_prompt = self._build_batch_execute_prompt(tasks, plan_result.result_text)
+                # Check if planning produced a usable plan text.  When the
+                # Claude response has subtype=error_max_turns or is missing
+                # the "result" field, result_text is empty.  Fall back to
+                # direct execution without a plan to avoid wasting an API
+                # call on an empty PLAN TO EXECUTE section.
+                if not plan_result.result_text.strip():
+                    logger.warning(
+                        "Planning phase returned empty result_text "
+                        "(error=%s) — falling back to direct execution",
+                        plan_result.error or "none",
+                    )
+                    self.cycle_state.update(phase="executing")
+                    if is_batch:
+                        exec_prompt = self._build_batch_prompt(tasks)
+                    else:
+                        exec_prompt = self._build_prompt(tasks[0])
                 else:
-                    exec_prompt = self._build_execute_prompt(tasks[0], plan_result.result_text)
+                    logger.info("Plan created, auto-accepting and executing...")
+
+                    # Phase 2: Execute the plan
+                    self.cycle_state.update(phase="executing")
+                    if is_batch:
+                        exec_prompt = self._build_batch_execute_prompt(tasks, plan_result.result_text)
+                    else:
+                        exec_prompt = self._build_execute_prompt(tasks[0], plan_result.result_text)
+
                 claude_result = self._run_claude_with_timeout(exec_prompt)
                 total_cost += claude_result.cost_usd
                 total_duration += claude_result.duration_seconds

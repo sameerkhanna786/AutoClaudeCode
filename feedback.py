@@ -16,6 +16,56 @@ from task_discovery import Task
 
 logger = logging.getLogger(__name__)
 
+# Maximum allowed length for feedback content after sanitization
+MAX_FEEDBACK_CONTENT_LENGTH = 64 * 1024  # 64 KB
+
+# Patterns that should never appear in feedback task descriptions.
+# These could be used to inject commands or manipulate Claude's behavior.
+_DANGEROUS_PATTERNS = [
+    # Shell command injection patterns
+    re.compile(r'`[^`]*`'),                       # backtick command substitution
+    re.compile(r'\$\([^)]+\)'),                    # $() command substitution
+    re.compile(r'\$\{[^}]+\}'),                    # ${} variable expansion
+    # Null bytes and control characters (excluding newlines/tabs)
+    re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]'),
+]
+
+# Characters/sequences that are stripped entirely
+_STRIP_SEQUENCES = [
+    '\x00',  # null byte
+]
+
+
+def sanitize_feedback_content(content: str) -> str:
+    """Sanitize feedback file content to prevent injection attacks.
+
+    Removes dangerous shell metacharacters, control characters, and
+    prompt injection patterns from feedback task descriptions before
+    they are passed to Claude for execution.
+
+    Returns the sanitized content, or empty string if content is invalid.
+    """
+    if not content or not isinstance(content, str):
+        return ""
+
+    # Strip null bytes and other dangerous sequences
+    for seq in _STRIP_SEQUENCES:
+        content = content.replace(seq, '')
+
+    # Remove control characters (keep \n, \r, \t)
+    content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', content)
+
+    # Truncate to max length
+    if len(content) > MAX_FEEDBACK_CONTENT_LENGTH:
+        content = content[:MAX_FEEDBACK_CONTENT_LENGTH]
+        logger.warning(
+            "Feedback content truncated to %d bytes", MAX_FEEDBACK_CONTENT_LENGTH
+        )
+
+    content = content.strip()
+
+    return content
+
 
 class FeedbackManager:
     def __init__(self, config: Config):
@@ -101,16 +151,17 @@ class FeedbackManager:
             if f.is_file() and f.suffix in (".md", ".txt") and f.name != ".gitkeep"
         )
 
-        MAX_FEEDBACK_SIZE = 64 * 1024
         for fpath in files:
             try:
                 with open(fpath, 'r') as f:
-                    content = f.read(MAX_FEEDBACK_SIZE).strip()
+                    content = f.read(MAX_FEEDBACK_CONTENT_LENGTH)
             except OSError as e:
                 logger.warning("Failed to read feedback file %s: %s", fpath, e)
                 continue
 
+            content = sanitize_feedback_content(content)
             if not content:
+                logger.warning("Feedback file %s was empty or invalid after sanitization", fpath)
                 continue
 
             # Extract priority from filename prefix (e.g., "01-fix-bug.md" → priority 1)

@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from telemetry import compute_metrics
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -941,6 +943,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/api/loc": self._api_loc,
             "/api/feedback": self._api_feedback_list,
             "/api/log": self._api_log,
+            "/api/metrics": self._api_metrics,
         }
 
         handler = routes.get(path)
@@ -1110,6 +1113,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         num_lines = min(int(query.get("lines", ["100"])[0]), MAX_LOG_LINES)
         lines = read_log_tail(self.dashboard_cfg["log_file"], num_lines)
         self._send_json({"lines": lines})
+
+    def _api_metrics(self, query: Dict) -> None:
+        lookback = min(int(query.get("lookback", ["86400"])[0]), 604800)  # max 7 days
+        records = load_history(self.dashboard_cfg["history_file"])
+        metrics = compute_metrics(records, lookback_seconds=lookback)
+        self._send_json(metrics)
 
     # ---- Helpers ----
 

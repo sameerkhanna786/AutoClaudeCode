@@ -94,6 +94,7 @@ class SafetyConfig:
     min_memory_mb: int = 256
     max_history_records: int = 1000
     protected_files: List[str] = field(default_factory=lambda: ["main.py", "config.yaml"])
+    max_backup_dir_mb: int = 200  # Max size of state/backups directory before cleanup
 
 
 @dataclass

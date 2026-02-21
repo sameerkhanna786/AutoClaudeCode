@@ -365,6 +365,7 @@ class ClaudeRunner:
                     )
                     time.sleep(delay)
                     continue
+                self.circuit_breaker.record_failure()
                 return ClaudeResult(
                     success=False,
                     error=f"Claude CLI timed out after {self.config.claude.timeout_seconds}s",
@@ -405,6 +406,10 @@ class ClaudeRunner:
                         )
                     time.sleep(delay)
                     continue
+                # All retries exhausted — update circuit breaker if the error
+                # matches rate-limit or server-error patterns.
+                if self._is_circuit_breaker_error(proc.stderr):
+                    self.circuit_breaker.record_failure()
                 return ClaudeResult(
                     success=False,
                     error=f"Claude CLI exited with code {proc.returncode}: {proc.stderr.strip()}",
@@ -432,6 +437,9 @@ class ClaudeRunner:
 
             break  # successful parse — exit retry loop
 
+        # Successful API call — reset circuit breaker
+        self.circuit_breaker.record_success()
+
         if "result" not in data:
             logger.warning(
                 "Claude CLI JSON response missing 'result' field; "
@@ -443,10 +451,25 @@ class ClaudeRunner:
         duration_ms = data.get("duration_ms", 0)
         duration = duration_ms / 1000.0 if duration_ms else data.get("duration_seconds", 0.0)
 
+        # Detect error_max_turns: Claude ran out of turns before producing
+        # a final result.  Still return success=True because the subprocess
+        # completed normally and may have made useful file changes, but
+        # include a warning in the error field so callers can decide whether
+        # to trust result_text (which may be empty).
+        error_msg = ""
+        subtype = data.get("subtype", "")
+        if subtype == "error_max_turns":
+            error_msg = "Claude hit max_turns without producing a final result"
+            logger.warning(
+                "Claude hit max_turns (%s); result_text may be empty or incomplete",
+                self.config.claude.max_turns,
+            )
+
         return ClaudeResult(
             success=True,
             result_text=result_text,
             cost_usd=cost_usd,
             duration_seconds=duration,
             raw_json=data,
+            error=error_msg,
         )
