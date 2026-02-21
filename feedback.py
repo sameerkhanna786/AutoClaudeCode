@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import re
 import shutil
 import tempfile
@@ -83,13 +84,17 @@ class FeedbackManager:
     def _atomic_move(self, src: Path, dst: Path) -> None:
         """Move src to dst atomically using write-then-rename to prevent corruption.
 
-        Retries up to 3 times with increasing delays to handle race conditions
-        when multiple processes attempt file operations simultaneously.
+        Uses progressive exponential backoff with jitter to reduce contention
+        when parallel workers compete for the same feedback files.
+        Retries up to 5 times with delays: ~0.05s, ~0.15s, ~0.45s, ~1.35s, ~4.05s.
         """
-        retry_delays = [0.05, 0.2, 0.5]
+        max_retries = 5
+        base_delay = 0.05
+        backoff_multiplier = 3.0
+        jitter_factor = 0.25  # ±25% randomized jitter
         last_exc: Optional[Exception] = None
 
-        for attempt, delay in enumerate(retry_delays):
+        for attempt in range(max_retries):
             # If the source file no longer exists on a retry, another process
             # already moved it — treat as success.
             if attempt > 0 and not src.exists():
@@ -98,6 +103,17 @@ class FeedbackManager:
                     src, attempt,
                 )
                 return
+
+            # Calculate delay with exponential backoff + jitter
+            if attempt > 0:
+                delay = base_delay * (backoff_multiplier ** (attempt - 1))
+                jitter = delay * jitter_factor * (2 * random.random() - 1)
+                actual_delay = max(0, delay + jitter)
+                logger.debug(
+                    "Atomic move %s -> %s failed (attempt %d/%d): %s — retrying in %.3fs",
+                    src, dst, attempt, max_retries, last_exc, actual_delay,
+                )
+                time.sleep(actual_delay)
 
             tmp_fd, tmp_path = tempfile.mkstemp(
                 dir=str(dst.parent), suffix=".tmp"
@@ -120,12 +136,7 @@ class FeedbackManager:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
-                if attempt < len(retry_delays) - 1:
-                    logger.debug(
-                        "Atomic move %s -> %s failed (attempt %d/%d): %s — retrying in %.2fs",
-                        src, dst, attempt + 1, len(retry_delays), e, delay,
-                    )
-                    time.sleep(delay)
+                if attempt < max_retries - 1:
                     continue
                 raise
             except Exception:

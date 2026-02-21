@@ -202,6 +202,36 @@ class TestAtomicMoveRetry:
                 with pytest.raises(OSError, match="persistent failure"):
                     fb_mgr._atomic_move(src, dst)
 
+    def test_atomic_move_progressive_backoff_uses_sleep(self, fb_mgr, tmp_path):
+        """Verify progressive backoff calls sleep with increasing delays."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        done_dir = Path(fb_mgr.done_dir)
+        src = fb_dir / "task.md"
+        src.write_text("task content")
+        dst = done_dir / "task.md"
+
+        call_count = 0
+        original_read_text = Path.read_text
+
+        def fail_three_times(self_path, *args, **kwargs):
+            nonlocal call_count
+            if self_path == src:
+                call_count += 1
+                if call_count <= 3:
+                    raise OSError("transient failure")
+            return original_read_text(self_path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", fail_three_times):
+            with patch("feedback.time.sleep") as mock_sleep:
+                with patch("feedback.random.random", return_value=0.5):
+                    fb_mgr._atomic_move(src, dst)
+
+        # Should have slept 3 times (before attempts 2, 3, 4)
+        assert mock_sleep.call_count == 3
+        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        # Delays should be increasing (exponential backoff)
+        assert delays[0] < delays[1] < delays[2]
+
 
 class TestFeedbackCleanup:
     def test_old_done_files_cleaned(self, fb_mgr):

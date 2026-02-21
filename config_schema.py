@@ -96,6 +96,7 @@ class SafetyConfig:
     max_history_records: int = 1000
     protected_files: List[str] = field(default_factory=lambda: ["main.py", "config.yaml"])
     max_backup_dir_mb: int = 200  # Max size of state/backups directory before cleanup
+    max_git_objects_mb: int = 500  # Max size of .git/objects before warning/gc trigger
 
 
 @dataclass
@@ -466,14 +467,31 @@ def validate_config(config: Config) -> None:
             f"got {config.parallel.max_workers}"
         )
 
-    # Validate agent pipeline timeouts when enabled
+    # Validate agent pipeline role configs when enabled
     if config.agent_pipeline.enabled:
+        _REQUIRED_ROLE_ATTRS = ("model", "max_turns", "timeout_seconds")
         for agent_name in ("planner", "coder", "tester", "reviewer"):
             agent_cfg = getattr(config.agent_pipeline, agent_name)
+            missing = [a for a in _REQUIRED_ROLE_ATTRS if not hasattr(agent_cfg, a)]
+            if missing:
+                raise ValueError(
+                    f"agent_pipeline.{agent_name} is missing required attributes: "
+                    f"{', '.join(missing)}. Each role needs: {', '.join(_REQUIRED_ROLE_ATTRS)}"
+                )
             if agent_cfg.timeout_seconds <= 0:
                 raise ValueError(
                     f"agent_pipeline.{agent_name}.timeout_seconds must be positive "
                     f"when agent_pipeline is enabled, got {agent_cfg.timeout_seconds}"
+                )
+            if agent_cfg.max_turns <= 0:
+                raise ValueError(
+                    f"agent_pipeline.{agent_name}.max_turns must be positive "
+                    f"when agent_pipeline is enabled, got {agent_cfg.max_turns}"
+                )
+            if not agent_cfg.model or not agent_cfg.model.strip():
+                raise ValueError(
+                    f"agent_pipeline.{agent_name}.model must be a non-empty string "
+                    f"when agent_pipeline is enabled"
                 )
 
     # Validate target_dir exists and is a git repository

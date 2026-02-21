@@ -103,3 +103,80 @@ class TestResolveModelId:
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "/usr/local/bin/claude"
         assert mock_run.call_args[1]["timeout"] == 60
+
+    @patch("model_resolver.subprocess.run")
+    def test_model_usage_not_dict_returns_none(self, mock_run):
+        """modelUsage present but not a dict should return None."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"result": "", "modelUsage": "not-a-dict"}',
+            stderr="",
+        )
+        result = resolve_model_id("opus")
+        assert result is None
+
+    @patch("model_resolver.subprocess.run")
+    def test_multiple_json_lines_picks_first_with_model_usage(self, mock_run):
+        """When stdout has multiple JSON lines, the first with modelUsage wins."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                '{"status": "starting"}\n'
+                '{"result": "", "modelUsage": {"claude-haiku-3-5-20241022": {"inputTokens": 1}}}\n'
+                '{"result": "", "modelUsage": {"claude-opus-4-6": {"inputTokens": 1}}}\n'
+            ),
+            stderr="",
+        )
+        result = resolve_model_id("haiku")
+        assert result == "claude-haiku-3-5-20241022"
+
+    @patch("model_resolver.subprocess.run")
+    def test_cli_args_constructed_correctly(self, mock_run):
+        """Verify the exact CLI arguments used for model resolution."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='{"modelUsage": {"claude-opus-4-6": {}}}',
+            stderr="",
+        )
+        resolve_model_id("opus", claude_command="claude", timeout=30)
+        cmd = mock_run.call_args[0][0]
+        assert cmd == [
+            "claude", "-p", "x",
+            "--model", "opus",
+            "--output-format", "json",
+            "--max-turns", "1",
+            "--tools", "",
+        ]
+        assert mock_run.call_args[1]["capture_output"] is True
+        assert mock_run.call_args[1]["text"] is True
+        assert mock_run.call_args[1]["timeout"] == 30
+
+    @patch("model_resolver.subprocess.run")
+    def test_json_line_not_starting_with_brace_skipped(self, mock_run):
+        """Lines that don't start with '{' after stripping should be skipped."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                '  \n'                              # blank after strip
+                'Loading claude...\n'                # not JSON
+                '[{"array": true}]\n'                # starts with [
+                '{"modelUsage": {"claude-opus-4-6": {"inputTokens": 1}}}\n'
+            ),
+            stderr="",
+        )
+        result = resolve_model_id("opus")
+        assert result == "claude-opus-4-6"
+
+    @patch("model_resolver.subprocess.run")
+    def test_data_not_dict_skipped(self, mock_run):
+        """JSON line that parses to a non-dict (e.g., string) should be skipped."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                '"just a string"\n'
+                '{"modelUsage": {"claude-opus-4-6": {"inputTokens": 1}}}\n'
+            ),
+            stderr="",
+        )
+        result = resolve_model_id("opus")
+        assert result == "claude-opus-4-6"

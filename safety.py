@@ -455,6 +455,79 @@ class SafetyGuard:
                     except OSError:
                         continue
 
+    def check_git_object_growth(self) -> None:
+        """Monitor .git/objects directory size to detect repository bloat.
+
+        Repeated commits and rollbacks can cause unbounded growth in the git
+        object store. This check warns when the objects directory exceeds
+        the configured threshold and attempts a 'git gc' to reclaim space.
+        Raises SafetyError if objects exceed 2x the threshold after gc.
+        """
+        target = self.config.target_dir
+        max_mb = self.config.safety.max_git_objects_mb
+        if max_mb <= 0:
+            return
+
+        git_objects_dir = Path(target) / ".git" / "objects"
+        if not git_objects_dir.exists():
+            return
+
+        total_size = 0
+        try:
+            for dirpath, _dirnames, filenames in os.walk(str(git_objects_dir)):
+                for fname in filenames:
+                    try:
+                        total_size += os.path.getsize(os.path.join(dirpath, fname))
+                    except OSError:
+                        continue
+        except OSError as e:
+            logger.debug("Could not scan .git/objects: %s", e)
+            return
+
+        size_mb = total_size / (1024 * 1024)
+
+        if size_mb >= max_mb:
+            logger.warning(
+                "Git objects directory %.1f MB exceeds threshold %d MB, running git gc",
+                size_mb, max_mb,
+            )
+            import subprocess
+            try:
+                subprocess.run(
+                    ["git", "gc", "--auto"],
+                    cwd=target,
+                    capture_output=True,
+                    timeout=120,
+                )
+            except (subprocess.TimeoutExpired, OSError) as e:
+                logger.warning("git gc failed: %s", e)
+
+            # Re-measure after gc
+            post_gc_size = 0
+            try:
+                for dirpath, _dirnames, filenames in os.walk(str(git_objects_dir)):
+                    for fname in filenames:
+                        try:
+                            post_gc_size += os.path.getsize(
+                                os.path.join(dirpath, fname)
+                            )
+                        except OSError:
+                            continue
+            except OSError:
+                return
+
+            post_gc_mb = post_gc_size / (1024 * 1024)
+            if post_gc_mb >= max_mb * 2:
+                raise SafetyError(
+                    f"Git objects directory still {post_gc_mb:.0f} MB after gc "
+                    f"(limit: {max_mb} MB). Repository may need manual cleanup."
+                )
+            elif post_gc_mb >= max_mb:
+                logger.warning(
+                    "Git objects still %.1f MB after gc (threshold: %d MB)",
+                    post_gc_mb, max_mb,
+                )
+
     def pre_flight_checks(self) -> None:
         """Run all pre-cycle safety checks."""
         self.check_disk_space()
@@ -463,6 +536,7 @@ class SafetyGuard:
         self.check_cost_limit()
         self.check_consecutive_failures()
         self.check_backup_dir_size()
+        self.check_git_object_growth()
 
     def post_claude_checks(self, changed_files: List[str]) -> None:
         """Run safety checks after Claude has made changes."""

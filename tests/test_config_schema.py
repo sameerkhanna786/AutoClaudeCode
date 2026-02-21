@@ -440,6 +440,31 @@ class TestValidateConfig:
         with pytest.raises(ValueError, match="agent_pipeline.planner.timeout_seconds"):
             validate_config(config)
 
+    def test_pipeline_zero_max_turns_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.agent_pipeline.enabled = True
+        config.agent_pipeline.coder.max_turns = 0
+        with pytest.raises(ValueError, match="agent_pipeline.coder.max_turns"):
+            validate_config(config)
+
+    def test_pipeline_empty_model_raises(self):
+        from config_schema import validate_config
+        config = Config()
+        config.agent_pipeline.enabled = True
+        config.agent_pipeline.tester.model = ""
+        with pytest.raises(ValueError, match="agent_pipeline.tester.model"):
+            validate_config(config)
+
+    def test_pipeline_disabled_skips_role_validation(self):
+        from config_schema import validate_config
+        config = Config()
+        config.agent_pipeline.enabled = False
+        config.agent_pipeline.planner.timeout_seconds = 0
+        config.agent_pipeline.coder.max_turns = 0
+        # Should not raise — pipeline is disabled
+        validate_config(config)
+
 
 class TestValidateTargetDir:
     """Tests for target_dir validation in validate_config()."""
