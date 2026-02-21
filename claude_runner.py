@@ -180,6 +180,7 @@ class ClaudeRunner:
         self.rate_limit_multiplier = config.claude.rate_limit_multiplier
         self._current_process: subprocess.Popen | None = None
         self._process_lock = threading.Lock()
+        self._terminated = False  # Set by terminate() to stop retry loop
         self.circuit_breaker = CircuitBreaker(
             on_open=self._on_circuit_breaker_open,
         )
@@ -237,8 +238,10 @@ class ClaudeRunner:
         """Terminate any currently running Claude subprocess.
 
         Thread-safe: can be called from a different thread than the one
-        executing run().
+        executing run().  Also sets _terminated to prevent the retry loop
+        from spawning new processes after the kill.
         """
+        self._terminated = True
         with self._process_lock:
             proc = self._current_process
         if proc is not None:
@@ -303,6 +306,7 @@ class ClaudeRunner:
     def run(self, prompt: str,
             add_dirs: Optional[List[str]] = None) -> ClaudeResult:
         """Run Claude CLI with the given prompt and return parsed result."""
+        self._terminated = False  # Reset on each new run
         cmd = self._build_command(prompt)
         # Always use the main project dir as cwd (macOS sandbox restriction:
         # sandbox_apply fails with exit 71 when cwd is outside the project).
@@ -327,6 +331,12 @@ class ClaudeRunner:
             )
 
         for attempt in range(self.max_retries + 1):
+            # If terminate() was called (e.g. signal handler), stop retrying
+            if self._terminated:
+                return ClaudeResult(
+                    success=False,
+                    error="Terminated by signal — aborting retries",
+                )
             try:
                 popen_proc = subprocess.Popen(
                     cmd,
