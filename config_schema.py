@@ -83,6 +83,7 @@ class DiscoveryConfig:
     discovery_timeout: int = 7200
     discovery_max_turns: int = 15
     discovery_prompt: str = ""  # Custom prompt for claude_ideas; empty = use default
+    idea_cooldown_seconds: int = 0  # Minimum seconds between claude_ideas runs; 0 = no limit
 
 
 @dataclass

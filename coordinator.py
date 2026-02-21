@@ -85,6 +85,7 @@ class ParallelCoordinator:
     def _run_cycle(self) -> None:
         """Run a single parallel cycle."""
         self.safety.pre_flight_checks()
+        self._check_worktree_disk_space()
 
         tasks = self._gather_tasks()
         if not tasks:
@@ -303,6 +304,74 @@ class ParallelCoordinator:
         except Exception:
             pass
         return False
+
+    def _check_worktree_disk_space(self) -> None:
+        """Check disk usage of worktree directories and warn/clean up if excessive.
+
+        Prevents parallel workers from exhausting disk when multiple worktrees
+        accumulate. Logs warnings at 80% of min_disk_space_mb and removes
+        stale worktree directories if disk space falls below the safety threshold.
+        """
+        worktree_base = Path(self.config.target_dir) / self.config.parallel.worktree_base_dir
+        if not worktree_base.exists():
+            return
+
+        # Calculate total worktree disk usage
+        total_bytes = 0
+        worktree_dirs = []
+        try:
+            for child in worktree_base.iterdir():
+                if child.is_dir() and child.name.startswith("worker-"):
+                    try:
+                        dir_size = sum(
+                            f.stat().st_size
+                            for f in child.rglob("*")
+                            if f.is_file()
+                        )
+                        total_bytes += dir_size
+                        worktree_dirs.append((child, dir_size))
+                    except OSError:
+                        continue
+        except OSError:
+            return
+
+        total_mb = total_bytes / (1024 * 1024)
+        min_disk_mb = self.config.safety.min_disk_space_mb
+
+        if total_mb > 0:
+            logger.debug(
+                "Worktree disk usage: %.1f MB across %d directories",
+                total_mb, len(worktree_dirs),
+            )
+
+        # Check if overall disk space is getting low
+        try:
+            usage = shutil.disk_usage(self.config.target_dir)
+            free_mb = usage.free / (1024 * 1024)
+        except OSError:
+            return
+
+        warning_threshold = min_disk_mb * 1.5
+        if free_mb < warning_threshold:
+            logger.warning(
+                "Disk space low (%.0f MB free) with %.1f MB in worktrees. "
+                "Cleaning up stale worktree directories.",
+                free_mb, total_mb,
+            )
+            # Remove worktree dirs that don't correspond to active workers
+            active_ids = {w.worker_id for w in self._workers}
+            for wt_dir, _ in worktree_dirs:
+                # Parse worker id from directory name (e.g., "worker-0")
+                try:
+                    wt_id = int(wt_dir.name.split("-", 1)[1])
+                except (ValueError, IndexError):
+                    wt_id = -1
+                if wt_id not in active_ids:
+                    logger.info("Removing stale worktree: %s", wt_dir)
+                    try:
+                        self.git.remove_worktree(str(wt_dir), force=True)
+                    except Exception:
+                        shutil.rmtree(str(wt_dir), ignore_errors=True)
 
     def _gather_tasks(self) -> List[Task]:
         """Gather all eligible tasks (same logic as Orchestrator._gather_tasks)."""

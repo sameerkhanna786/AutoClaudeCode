@@ -136,6 +136,7 @@ class TaskDiscovery:
         self.config = config
         self.target_dir = config.target_dir
         self.state_manager = state_manager
+        self._last_idea_discovery_time: float = 0.0
 
     def discover_all(self) -> List[Task]:
         """Run all enabled discovery strategies and return sorted tasks."""
@@ -409,6 +410,18 @@ class TaskDiscovery:
         Invokes Claude CLI in read-only analysis mode with a low max-turns
         to keep cost down. Parses the response for actionable improvement tasks.
         """
+        # Enforce idea generation cooldown to prevent excessive API costs
+        cooldown = self.config.discovery.idea_cooldown_seconds
+        if cooldown > 0:
+            elapsed = time.time() - self._last_idea_discovery_time
+            if self._last_idea_discovery_time > 0 and elapsed < cooldown:
+                logger.debug(
+                    "Skipping claude_ideas discovery: %.0fs since last run, "
+                    "cooldown is %ds",
+                    elapsed, cooldown,
+                )
+                return []
+
         cc = self.config.claude
         if self.config.discovery.discovery_prompt:
             focus_section = self.config.discovery.discovery_prompt
@@ -607,6 +620,7 @@ class TaskDiscovery:
                     "analysis-format items (%d non-empty lines)",
                     len(lines),
                 )
+        self._last_idea_discovery_time = time.time()
         return tasks[:5]
 
     def _discover_coverage_gaps(self) -> List[Task]:

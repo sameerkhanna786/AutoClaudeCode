@@ -103,7 +103,7 @@ class FeedbackManager:
                 dir=str(dst.parent), suffix=".tmp"
             )
             try:
-                content = src.read_text()
+                content = src.read_text(encoding='utf-8', errors='replace')
                 try:
                     f = os.fdopen(tmp_fd, "w")
                 except Exception:
@@ -153,8 +153,19 @@ class FeedbackManager:
 
         for fpath in files:
             try:
-                with open(fpath, 'r') as f:
+                with open(fpath, 'r', encoding='utf-8') as f:
                     content = f.read(MAX_FEEDBACK_CONTENT_LENGTH)
+            except UnicodeDecodeError:
+                logger.warning(
+                    "Feedback file %s is not valid UTF-8, attempting lossy decode",
+                    fpath,
+                )
+                try:
+                    raw = fpath.read_bytes()[:MAX_FEEDBACK_CONTENT_LENGTH]
+                    content = raw.decode('utf-8', errors='replace')
+                except OSError as e:
+                    logger.warning("Failed to read feedback file %s: %s", fpath, e)
+                    continue
             except OSError as e:
                 logger.warning("Failed to read feedback file %s: %s", fpath, e)
                 continue
