@@ -162,9 +162,8 @@ class GitManager:
         If a snapshot is provided and HEAD has moved, reset to that commit.
 
         If allowed_dirty is provided:
-          - Only revert files that are in the allowed set (Claude's changes).
-          - If unexpected dirty files exist beyond what Claude changed,
-            log a warning and refuse to clean them, preventing data loss.
+          - Revert files NOT in the allowed set (Claude's changes).
+          - Preserve files IN the allowed set (pre-existing uncommitted changes).
         If allowed_dirty is None: blanket clean (legacy behavior).
 
         Args:
@@ -175,19 +174,15 @@ class GitManager:
 
         if allowed_dirty is not None:
             current_dirty = set(self.get_changed_files())
-            unexpected = current_dirty - allowed_dirty
-            if unexpected:
-                logger.warning(
-                    "Rollback: leaving %d unexpected uncommitted files untouched: %s",
-                    len(unexpected), sorted(unexpected),
+            # Files to revert: dirty files NOT in the allowed set (Claude's changes)
+            files_to_revert = current_dirty - allowed_dirty
+            # Files to preserve: dirty files IN the allowed set (pre-existing changes)
+            preserved = current_dirty & allowed_dirty
+            if preserved:
+                logger.info(
+                    "Targeted rollback: preserving %d pre-existing dirty files",
+                    len(preserved),
                 )
-                raise RuntimeError(
-                    f"Rollback aborted: {len(unexpected)} unexpected uncommitted files: "
-                    f"{sorted(unexpected)}"
-                )
-
-            # Only revert files that are both dirty and in the allowed set
-            files_to_revert = current_dirty & allowed_dirty
             if snapshot:
                 current = self._run("rev-parse", "HEAD").stdout.strip()
                 if current != snapshot.commit_hash:
@@ -400,3 +395,10 @@ class GitManager:
     def prune_worktrees(self) -> None:
         """Clean up stale worktree references."""
         self._run("worktree", "prune", check=False, timeout=30)
+
+    def gc_auto(self) -> None:
+        """Run git gc --auto to clean up loose objects."""
+        try:
+            self._run("gc", "--auto", timeout=120, check=False)
+        except Exception as e:
+            logger.debug("git gc --auto failed: %s", e)

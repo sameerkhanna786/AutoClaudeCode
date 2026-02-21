@@ -9,7 +9,7 @@ An autonomous development system that runs Claude Code in a continuous loop to d
 - **Multi-agent pipeline** — specialized Planner, Coder, Tester, and Reviewer agents collaborate with revision loops for higher quality
 - **Parallel mode** — multiple workers run in separate git worktrees for concurrent task execution
 - **Automatic validation** — runs tests/lint/build after every change, with retry loops on failure
-- **Developer feedback system** — drop task files in `feedback/` to steer priorities
+- **Developer task system** — drop task files in `feedback/` to steer priorities
 - **Self-improvement mode** — can modify its own source code with syntax checking and backups
 - **Safety guards** — rate limits, cost limits, disk checks, protected files, lock file
 - **Webhook notifications** — configurable Slack, Discord, and generic webhook alerts for critical events
@@ -82,7 +82,7 @@ All settings live in `config.yaml`. Key sections:
 
 See [`config.yaml`](config.yaml) for the full annotated configuration.
 
-## Developer Feedback
+## Developer Tasks
 
 Submit priority tasks by dropping files into the `feedback/` directory:
 

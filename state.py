@@ -312,7 +312,11 @@ class StateManager:
         return count
 
     def compute_adaptive_batch_size(self) -> int:
-        """Replay recent history to compute adaptive batch size."""
+        """Replay recent history to compute adaptive batch size.
+
+        Cost-aware: successful cycles that exceed batch_cost_ceiling
+        do not grow the batch size, preventing runaway cost growth.
+        """
         orch = self.config.orchestrator
         size = orch.initial_batch_size
         records = self._load_history()
@@ -320,7 +324,11 @@ class StateManager:
 
         for r in recent:
             if r.get("success", False):
-                size += orch.batch_grow_step
+                # Cost-aware: don't grow if this cycle was expensive
+                cost = r.get("cost_usd", 0.0)
+                if cost < orch.batch_cost_ceiling:
+                    size += orch.batch_grow_step
+                # else: success but expensive — hold steady
             else:
                 size -= orch.batch_shrink_step
             size = max(orch.min_batch_size, min(orch.max_batch_size, size))

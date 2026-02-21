@@ -251,6 +251,17 @@ class Orchestrator:
         self._consecutive_exceptions = 0
         self._backoff_seconds = 0
         self._active_pipeline: Optional[AgentPipeline] = None
+        self._successful_commits = 0
+
+        # Clean stale agent workspace from previous runs
+        workspace_dir = Path(self.config.paths.agent_workspace_dir)
+        if workspace_dir.exists():
+            for child in workspace_dir.iterdir():
+                if child.is_file():
+                    try:
+                        child.unlink()
+                    except OSError:
+                        pass
 
     def _setup_signals(self) -> None:
         """Register signal handlers for graceful shutdown."""
@@ -727,7 +738,7 @@ class Orchestrator:
                 self.safety.post_claude_checks(changed_files)
             except SafetyError as e:
                 logger.warning("Post-Claude safety check failed: %s", e)
-                self.git.rollback(snapshot)
+                self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
                 self.state.record_cycle(self._make_cycle_record(
                     tasks, success=False,
                     cost_usd=total_cost, duration_seconds=total_duration,
@@ -740,7 +751,7 @@ class Orchestrator:
             syntax_err = self._syntax_check_files(changed_files)
             if syntax_err:
                 logger.warning("Syntax check failed: %s", syntax_err)
-                self.git.rollback(snapshot)
+                self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
                 self.state.record_cycle(self._make_cycle_record(
                     tasks, success=False,
                     cost_usd=total_cost, duration_seconds=total_duration,
@@ -761,6 +772,11 @@ class Orchestrator:
 
                 commit_hash = self.git.commit(commit_msg, files=changed_files)
                 logger.info("Cycle succeeded: %s", commit_msg.split("\n")[0])
+
+                # Periodic git gc to clean up loose objects
+                self._successful_commits += 1
+                if self._successful_commits % self.config.orchestrator.gc_interval == 0:
+                    self.git.gc_auto()
 
                 if self.config.orchestrator.push_after_commit:
                     push_ok = self.git.push()
@@ -800,7 +816,7 @@ class Orchestrator:
                         "Cost guard: $%.2f accumulated (limit $%.2f), aborting retries",
                         hourly_cost + total_cost, cost_limit,
                     )
-                    self.git.rollback(snapshot)
+                    self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
                     self.state.record_cycle(self._make_cycle_record(
                         tasks, success=False,
                         cost_usd=total_cost, duration_seconds=total_duration,
@@ -829,7 +845,7 @@ class Orchestrator:
 
                 if not retry_result.success:
                     logger.warning("Retry Claude invocation failed: %s", retry_result.error)
-                    self.git.rollback(snapshot)
+                    self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
                     self.state.record_cycle(self._make_cycle_record(
                         tasks, success=False,
                         cost_usd=total_cost, duration_seconds=total_duration,
@@ -843,7 +859,7 @@ class Orchestrator:
                 # All attempts exhausted
                 logger.warning("Validation failed after %d attempts: %s",
                                max_retries + 1, validation.summary)
-                self.git.rollback(snapshot)
+                self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
                 self.state.record_cycle(self._make_cycle_record(
                     tasks, success=False,
                     cost_usd=total_cost, duration_seconds=total_duration,
@@ -1055,20 +1071,23 @@ class Orchestrator:
             total_duration = 0.0
 
             if self.config.orchestrator.plan_changes:
-                # Phase 1: Plan
+                # Phase 1: Plan (use lower max_turns for planning)
                 self.cycle_state.update(phase="planning")
+                original_max_turns = self.config.claude.max_turns
+                self.config.claude.max_turns = self.config.orchestrator.planning_max_turns
                 if is_batch:
                     plan_prompt = self._build_batch_plan_prompt(tasks)
                 else:
                     plan_prompt = self._build_plan_prompt(tasks[0])
                 plan_result = self._run_claude_with_timeout(plan_prompt)
+                self.config.claude.max_turns = original_max_turns
                 total_cost += plan_result.cost_usd
                 total_duration += plan_result.duration_seconds
                 self.cycle_state.update(accumulated_cost=total_cost)
 
                 if not plan_result.success:
                     logger.warning("Claude planning failed: %s", plan_result.error)
-                    self.git.rollback(snapshot)
+                    self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
                     self.state.record_cycle(self._make_cycle_record(
                         tasks,
                         success=False,
@@ -1079,7 +1098,7 @@ class Orchestrator:
                     return
 
                 # Clean any accidental changes from planning phase
-                self.git.rollback(snapshot)
+                self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
 
                 logger.info("Plan created, auto-accepting and executing...")
 
@@ -1106,7 +1125,7 @@ class Orchestrator:
 
             if not claude_result.success:
                 logger.warning("Claude failed: %s", claude_result.error)
-                self.git.rollback(snapshot)
+                self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
                 self.state.record_cycle(self._make_cycle_record(
                     tasks,
                     success=False,

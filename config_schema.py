@@ -35,6 +35,7 @@ class OrchestratorConfig:
     self_improve: bool = False
     push_after_commit: bool = False
     plan_changes: bool = False
+    planning_max_turns: int = 10
     max_feedback_retries: int = 3
     max_tasks_per_cycle: int = 10
     batch_mode: bool = True
@@ -46,11 +47,13 @@ class OrchestratorConfig:
     batch_grow_step: int = 1
     batch_shrink_step: int = 2
     adaptive_batch_window: int = 10
+    batch_cost_ceiling: float = 8.0
     # Task priority decay: hours before a skipped task is promoted by 1 level
     priority_decay_hours: float = 24.0
     # Validation retry — re-invoke Claude with failure output to fix in-place
     max_validation_retries: int = 5
     retry_include_full_output: bool = True
+    gc_interval: int = 10
 
 
 @dataclass

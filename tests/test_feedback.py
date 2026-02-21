@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -200,3 +201,52 @@ class TestAtomicMoveRetry:
             with patch("feedback.time.sleep"):
                 with pytest.raises(OSError, match="persistent failure"):
                     fb_mgr._atomic_move(src, dst)
+
+
+class TestFeedbackCleanup:
+    def test_old_done_files_cleaned(self, fb_mgr):
+        """Files older than 7 days in done/ should be removed."""
+        done_dir = Path(fb_mgr.done_dir)
+        old_file = done_dir / "old-task.md"
+        old_file.write_text("old completed task")
+        # Set mtime to 10 days ago
+        old_mtime = time.time() - (10 * 86400)
+        os.utime(old_file, (old_mtime, old_mtime))
+
+        fb_mgr.get_pending_feedback()
+
+        assert not old_file.exists()
+
+    def test_recent_done_files_preserved(self, fb_mgr):
+        """Files newer than 7 days in done/ should be preserved."""
+        done_dir = Path(fb_mgr.done_dir)
+        recent_file = done_dir / "recent-task.md"
+        recent_file.write_text("recent completed task")
+
+        fb_mgr.get_pending_feedback()
+
+        assert recent_file.exists()
+
+    def test_old_failed_files_cleaned(self, fb_mgr):
+        """Files older than 7 days in failed/ should be removed."""
+        failed_dir = Path(fb_mgr.failed_dir)
+        old_file = failed_dir / "old-failed.md"
+        old_file.write_text("old failed task")
+        old_mtime = time.time() - (10 * 86400)
+        os.utime(old_file, (old_mtime, old_mtime))
+
+        fb_mgr.get_pending_feedback()
+
+        assert not old_file.exists()
+
+    def test_gitkeep_preserved(self, fb_mgr):
+        """The .gitkeep file should never be removed."""
+        done_dir = Path(fb_mgr.done_dir)
+        gitkeep = done_dir / ".gitkeep"
+        gitkeep.write_text("")
+        old_mtime = time.time() - (30 * 86400)
+        os.utime(gitkeep, (old_mtime, old_mtime))
+
+        fb_mgr.get_pending_feedback()
+
+        assert gitkeep.exists()

@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -183,7 +184,7 @@ tr.expandable:hover{background:rgba(88,166,255,.05)}
   <div class="pagination" id="pagination"></div>
 
   <!-- Feedback panel -->
-  <h2 class="section-title" style="margin-top:24px">Feedback</h2>
+  <h2 class="section-title" style="margin-top:24px">Tasks</h2>
   <div class="tabs" id="feedback-tabs"></div>
   <div id="feedback-content"></div>
 
@@ -535,6 +536,12 @@ async function fetchFeedback(){
 }
 
 function renderFeedback(){
+  // Save form state before re-render
+  const oldContent = document.getElementById('fb-content');
+  const savedContent = oldContent ? oldContent.value : '';
+  const savedMsg = document.getElementById('fb-msg');
+  const savedMsgHtml = savedMsg ? savedMsg.innerHTML : '';
+
   const tabs = document.getElementById('feedback-tabs');
   const counts = {pending: feedbackData.pending?.length||0, done: feedbackData.done?.length||0, failed: feedbackData.failed?.length||0};
   tabs.innerHTML = ['pending','done','failed'].map(t =>
@@ -546,16 +553,15 @@ function renderFeedback(){
 
   if(activeTab === 'pending'){
     html += `<div class="feedback-form">
-      <input type="text" id="fb-filename" placeholder="filename.md" maxlength="100">
       <textarea id="fb-content" placeholder="Describe the task for Claude..."></textarea>
-      <button onclick="submitFeedback()">Submit Feedback</button>
+      <button onclick="submitFeedback()">Submit Task</button>
       <div id="fb-msg"></div>
     </div>`;
   }
 
   const items = feedbackData[activeTab] || [];
   if(items.length === 0){
-    html += '<div class="empty-state">No ' + activeTab + ' feedback items.</div>';
+    html += '<div class="empty-state">No ' + activeTab + ' tasks.</div>';
   } else {
     items.forEach(item => {
       const preview = (item.content||'').substring(0, 200);
@@ -574,6 +580,12 @@ function renderFeedback(){
     });
   }
   content.innerHTML = html;
+
+  // Restore form state after re-render
+  const newContent = document.getElementById('fb-content');
+  if(newContent && savedContent) newContent.value = savedContent;
+  const newMsg = document.getElementById('fb-msg');
+  if(newMsg && savedMsgHtml) newMsg.innerHTML = savedMsgHtml;
 }
 
 function switchTab(t){ activeTab=t; renderFeedback(); }
@@ -596,20 +608,18 @@ function toggleFbExpand(btn, name){
 }
 
 async function submitFeedback(){
-  const nameEl = document.getElementById('fb-filename');
   const contentEl = document.getElementById('fb-content');
   const msgEl = document.getElementById('fb-msg');
-  const name = nameEl.value.trim();
   const content = contentEl.value.trim();
-  if(!name || !content){ msgEl.innerHTML='<div class="msg error">Filename and content are required.</div>'; return; }
-  const r = await fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({filename:name, content:content})});
+  if(!content){ msgEl.innerHTML='<div class="msg error">Task content is required.</div>'; return; }
+  const r = await fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content:content})});
   const d = await r.json();
   if(d.error){ msgEl.innerHTML=`<div class="msg error">${escHtml(d.error)}</div>`; }
-  else { msgEl.innerHTML='<div class="msg ok">Feedback submitted.</div>'; nameEl.value=''; contentEl.value=''; fetchFeedback(); }
+  else { msgEl.innerHTML='<div class="msg ok">Task submitted.</div>'; contentEl.value=''; fetchFeedback(); }
 }
 
 async function deleteFeedback(name){
-  if(!confirm('Delete feedback file "'+name+'"?')) return;
+  if(!confirm('Delete task "'+name+'"?')) return;
   await fetch('/api/feedback/'+encodeURIComponent(name), {method:'DELETE'});
   fetchFeedback();
 }
@@ -1030,18 +1040,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
         filename = data.get("filename", "").strip()
         content = data.get("content", "").strip()
 
-        if not filename or not content:
-            self._send_error(400, "filename and content are required")
+        if not content:
+            self._send_error(400, "content is required")
             return
 
-        # Validate filename
-        if not FEEDBACK_FILENAME_RE.match(filename):
-            self._send_error(400, "Invalid filename. Use alphanumeric/hyphens/underscores/dots, ending with .md or .txt, max 100 chars.")
-            return
+        # Auto-generate filename if not provided
+        if not filename:
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            h = hashlib.md5(content.encode()).hexdigest()[:6]
+            filename = f"task-{ts}-{h}.md"
+        else:
+            # Validate user-provided filename
+            if not FEEDBACK_FILENAME_RE.match(filename):
+                self._send_error(400, "Invalid filename. Use alphanumeric/hyphens/underscores/dots, ending with .md or .txt, max 100 chars.")
+                return
 
-        if ".." in filename or "/" in filename:
-            self._send_error(400, "Invalid filename: path traversal not allowed")
-            return
+            if ".." in filename or "/" in filename:
+                self._send_error(400, "Invalid filename: path traversal not allowed")
+                return
 
         if len(content) > MAX_FEEDBACK_CONTENT_SIZE:
             self._send_error(400, f"Content too large (max {MAX_FEEDBACK_CONTENT_SIZE // 1024}KB)")

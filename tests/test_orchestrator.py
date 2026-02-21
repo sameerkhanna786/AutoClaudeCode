@@ -1220,3 +1220,135 @@ class TestRetryLoopClamping:
         record = clamp_orch.state.record_cycle.call_args[0][0]
         assert record.success is True
         assert record.validation_retry_count == 2
+
+
+class TestPlanningMaxTurns:
+    """Tests for separate planning_max_turns configuration."""
+
+    def test_planning_uses_planning_max_turns(self, orch_batch):
+        """Planning phase should temporarily use planning_max_turns."""
+        orch_batch.config.orchestrator.planning_max_turns = 8
+        orch_batch.config.claude.max_turns = 25
+
+        # Track max_turns value during each Claude call
+        captured_max_turns = []
+
+        original_run = orch_batch.claude.run
+        call_count = [0]
+
+        def tracking_run(prompt):
+            captured_max_turns.append(orch_batch.config.claude.max_turns)
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return ClaudeResult(success=True, result_text="Plan", cost_usd=0.03, duration_seconds=5.0)
+            else:
+                return ClaudeResult(success=True, result_text="Done", cost_usd=0.05, duration_seconds=10.0)
+
+        orch_batch.claude.run = tracking_run
+        orch_batch._cycle()
+
+        # First call (planning) should use planning_max_turns
+        assert captured_max_turns[0] == 8
+        # Second call (execution) should use original max_turns
+        assert captured_max_turns[1] == 25
+        # max_turns should be restored after planning
+        assert orch_batch.config.claude.max_turns == 25
+
+
+class TestTargetedRollback:
+    """Tests for passing allowed_dirty to rollback calls."""
+
+    def test_rollback_passes_allowed_dirty(self, orch):
+        """Failed validation rollback should pass allowed_dirty=pre_existing_files."""
+        orch.config.orchestrator.max_validation_retries = 0
+        orch.validator.validate.return_value = ValidationResult(
+            passed=False,
+            steps=[ValidationStep(name="tests", command="pytest", passed=False)],
+        )
+        orch.state.record_cycle = MagicMock()
+        orch._cycle()
+
+        orch.git.rollback.assert_called_once()
+        call_kwargs = orch.git.rollback.call_args
+        assert call_kwargs[1].get("allowed_dirty") is not None or \
+               (len(call_kwargs[0]) > 1 and call_kwargs[0][1] is not None)
+
+    def test_planning_failure_rollback_passes_allowed_dirty(self, orch_batch):
+        """Planning failure rollback should pass allowed_dirty."""
+        orch_batch.claude.run.side_effect = [
+            ClaudeResult(success=False, error="Planning timeout"),
+        ]
+        orch_batch.state.record_cycle = MagicMock()
+        orch_batch._cycle()
+
+        orch_batch.git.rollback.assert_called()
+        for call in orch_batch.git.rollback.call_args_list:
+            assert "allowed_dirty" in call[1]
+
+    def test_post_planning_cleanup_passes_allowed_dirty(self, orch_batch):
+        """Post-planning rollback should use allowed_dirty to preserve pre-existing changes."""
+        orch_batch.state.record_cycle = MagicMock()
+        orch_batch._cycle()
+
+        # The first rollback call is the post-planning cleanup
+        first_rollback = orch_batch.git.rollback.call_args_list[0]
+        assert "allowed_dirty" in first_rollback[1]
+
+
+class TestGitGcIntegration:
+    """Tests for periodic git gc after successful commits."""
+
+    def test_gc_called_after_n_commits(self, orch):
+        """gc_auto should be called after gc_interval successful commits."""
+        orch.config.orchestrator.gc_interval = 2
+        orch.state.record_cycle = MagicMock()
+
+        # Run two successful cycles
+        orch._cycle()
+        orch.git.gc_auto.assert_not_called()
+
+        orch._cycle()
+        orch.git.gc_auto.assert_called_once()
+
+    def test_gc_not_called_before_interval(self, orch):
+        """gc_auto should not be called before reaching gc_interval."""
+        orch.config.orchestrator.gc_interval = 10
+        orch.state.record_cycle = MagicMock()
+
+        orch._cycle()
+        orch.git.gc_auto.assert_not_called()
+
+
+class TestAgentWorkspaceCleanup:
+    """Tests for agent workspace cleanup at startup."""
+
+    def test_workspace_cleaned_on_init(self, tmp_path):
+        """Stale agent workspace files should be removed on Orchestrator init."""
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.paths.agent_workspace_dir = str(tmp_path / "state" / "agent_workspace")
+
+        # Create stale workspace files
+        workspace = tmp_path / "state" / "agent_workspace"
+        workspace.mkdir(parents=True)
+        (workspace / "plan.md").write_text("stale plan")
+        (workspace / "review.md").write_text("stale review")
+
+        with patch("orchestrator.GitManager"), \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0)
+            Orchestrator(cfg)
+
+        # Files should be cleaned up
+        assert not (workspace / "plan.md").exists()
+        assert not (workspace / "review.md").exists()

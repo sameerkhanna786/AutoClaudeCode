@@ -216,23 +216,39 @@ class TestCommitTimeout:
 
 
 class TestRollbackSafety:
-    def test_rollback_raises_on_unexpected_dirty_files(self, tmp_git_repo):
-        """Rollback should raise RuntimeError when unexpected dirty files exist."""
+    def test_rollback_reverts_files_not_in_allowed_dirty(self, tmp_git_repo):
+        """Rollback should revert dirty files not in the allowed set."""
         gm = GitManager(tmp_git_repo)
         snap = gm.create_snapshot()
-        # Create unexpected uncommitted files
+        # Create files that are NOT in the allowed set — should be reverted
         Path(tmp_git_repo, "unexpected.txt").write_text("surprise")
         Path(tmp_git_repo, "also_unexpected.txt").write_text("another surprise")
-        with pytest.raises(RuntimeError, match="unexpected uncommitted files"):
-            gm.rollback(snap, allowed_dirty=set())
+        gm.rollback(snap, allowed_dirty=set())
+        assert gm.is_clean() is True
+        assert not Path(tmp_git_repo, "unexpected.txt").exists()
+        assert not Path(tmp_git_repo, "also_unexpected.txt").exists()
 
-    def test_rollback_with_allowed_dirty_succeeds(self, tmp_git_repo):
-        """Rollback should succeed when all dirty files are in the allowed set."""
+    def test_rollback_preserves_allowed_dirty_files(self, tmp_git_repo):
+        """Rollback should preserve files that are in the allowed set."""
+        gm = GitManager(tmp_git_repo)
+        snap = gm.create_snapshot()
+        # Create a pre-existing file (allowed) and a Claude change (not allowed)
+        Path(tmp_git_repo, "preexisting.txt").write_text("keep me")
+        Path(tmp_git_repo, "claude_change.txt").write_text("revert me")
+        gm.rollback(snap, allowed_dirty={"preexisting.txt"})
+        # Pre-existing should be preserved
+        assert Path(tmp_git_repo, "preexisting.txt").exists()
+        # Claude's change should be reverted
+        assert not Path(tmp_git_repo, "claude_change.txt").exists()
+
+    def test_rollback_with_all_allowed_dirty_preserves_all(self, tmp_git_repo):
+        """Rollback should preserve all files when all are in the allowed set."""
         gm = GitManager(tmp_git_repo)
         snap = gm.create_snapshot()
         Path(tmp_git_repo, "expected.txt").write_text("expected change")
         gm.rollback(snap, allowed_dirty={"expected.txt"})
-        assert gm.is_clean() is True
+        # File should still exist (preserved)
+        assert Path(tmp_git_repo, "expected.txt").exists()
 
     def test_rollback_without_allowed_dirty_backward_compat(self, tmp_git_repo):
         """Rollback without allowed_dirty param should behave as before."""
@@ -398,11 +414,12 @@ class TestRollbackTimeout:
         gm = GitManager(tmp_git_repo)
         snap = gm.create_snapshot()
 
-        # Create several files to revert
+        # Create several files to revert (not in allowed set)
         for i in range(5):
             Path(tmp_git_repo, f"file_{i}.txt").write_text(f"content {i}")
 
-        allowed = {f"file_{i}.txt" for i in range(5)}
+        # Empty allowed set means all files should be reverted
+        allowed = set()
 
         # Mock time.monotonic to simulate deadline expiration after first file
         call_count = {"n": 0}
@@ -427,7 +444,8 @@ class TestRollbackTimeout:
         snap = gm.create_snapshot()
         Path(tmp_git_repo, "file_a.txt").write_text("a")
         Path(tmp_git_repo, "file_b.txt").write_text("b")
-        allowed = {"file_a.txt", "file_b.txt"}
+        # Empty allowed set: both files should be reverted
+        allowed = set()
 
         gm.rollback(snap, allowed_dirty=allowed)
         assert gm.is_clean() is True

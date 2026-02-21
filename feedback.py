@@ -123,7 +123,24 @@ class FeedbackManager:
                 source_file=str(fpath),
             ))
 
+        # Clean up old done/failed files
+        self._cleanup_old_files(self.done_dir)
+        self._cleanup_old_files(self.failed_dir)
+
         return tasks
+
+    def _cleanup_old_files(self, directory: Path, max_age_days: int = 7) -> None:
+        """Remove files older than max_age_days from a directory."""
+        cutoff = time.time() - (max_age_days * 86400)
+        if not directory.exists():
+            return
+        for fpath in directory.iterdir():
+            if fpath.is_file() and fpath.name != ".gitkeep":
+                try:
+                    if fpath.stat().st_mtime < cutoff:
+                        fpath.unlink()
+                except OSError:
+                    pass
 
     def _extract_priority(self, filename: str) -> int:
         """Extract priority from filename prefix number. Default is 1."""

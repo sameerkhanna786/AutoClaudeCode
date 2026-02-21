@@ -379,6 +379,61 @@ class TestAdaptiveBatchSize:
         # initial=3 + 1 + 1 + 1 = 6
         assert mgr.compute_adaptive_batch_size() == 6
 
+    def test_cost_aware_no_grow_above_ceiling(self, tmp_path, default_config):
+        """Batch size should not grow when cost exceeds batch_cost_ceiling."""
+        default_config.paths.history_file = str(tmp_path / "history.json")
+        default_config.orchestrator.batch_cost_ceiling = 5.0
+        mgr = StateManager(default_config)
+
+        now = time.time()
+        # Record successes with high cost
+        for i in range(5):
+            mgr.record_cycle(CycleRecord(
+                timestamp=now + i,
+                task_description=f"Expensive task {i}",
+                success=True,
+                cost_usd=6.0,  # Above ceiling
+            ))
+        # initial=3, no growth for any of these (all above ceiling)
+        assert mgr.compute_adaptive_batch_size() == 3
+
+    def test_cost_aware_grows_below_ceiling(self, tmp_path, default_config):
+        """Batch size should grow when cost is below batch_cost_ceiling."""
+        default_config.paths.history_file = str(tmp_path / "history.json")
+        default_config.orchestrator.batch_cost_ceiling = 10.0
+        mgr = StateManager(default_config)
+
+        now = time.time()
+        for i in range(5):
+            mgr.record_cycle(CycleRecord(
+                timestamp=now + i,
+                task_description=f"Cheap task {i}",
+                success=True,
+                cost_usd=2.0,  # Below ceiling
+            ))
+        # initial=3 + 5*1 = 8
+        assert mgr.compute_adaptive_batch_size() == 8
+
+    def test_cost_aware_mixed_costs(self, tmp_path, default_config):
+        """Mixed cost cycles: cheap ones grow, expensive ones hold steady."""
+        default_config.paths.history_file = str(tmp_path / "history.json")
+        default_config.orchestrator.batch_cost_ceiling = 5.0
+        mgr = StateManager(default_config)
+
+        now = time.time()
+        # Cheap success (+1), expensive success (hold), cheap success (+1)
+        mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Cheap", success=True, cost_usd=2.0,
+        ))
+        mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="Expensive", success=True, cost_usd=7.0,
+        ))
+        mgr.record_cycle(CycleRecord(
+            timestamp=now + 2, task_description="Cheap again", success=True, cost_usd=1.0,
+        ))
+        # initial=3 + 1 (cheap) + 0 (expensive, held) + 1 (cheap) = 5
+        assert mgr.compute_adaptive_batch_size() == 5
+
 
 class TestKeyBasedDedup:
     def test_was_recently_attempted_by_key(self, state_mgr):
