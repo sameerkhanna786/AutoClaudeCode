@@ -1226,7 +1226,7 @@ class TestPlanningMaxTurns:
     """Tests for separate planning_max_turns configuration."""
 
     def test_planning_uses_planning_max_turns(self, orch_batch):
-        """Planning phase should temporarily use planning_max_turns."""
+        """Planning phase should use planning_max_turns scaled by batch size."""
         orch_batch.config.orchestrator.planning_max_turns = 8
         orch_batch.config.claude.max_turns = 25
 
@@ -1247,8 +1247,9 @@ class TestPlanningMaxTurns:
         orch_batch.claude.run = tracking_run
         orch_batch._cycle()
 
-        # First call (planning) should use planning_max_turns
-        assert captured_max_turns[0] == 8
+        # First call (planning) should use planning_max_turns scaled by batch size.
+        # orch_batch has 3 tasks, so effective = 8 + (3-1)*2 = 12
+        assert captured_max_turns[0] == 12
         # Second call (execution) should use original max_turns
         assert captured_max_turns[1] == 25
         # max_turns should be restored after planning

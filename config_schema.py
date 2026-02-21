@@ -35,7 +35,7 @@ class OrchestratorConfig:
     self_improve: bool = False
     push_after_commit: bool = False
     plan_changes: bool = False
-    planning_max_turns: int = 10
+    planning_max_turns: int = 15
     max_feedback_retries: int = 3
     max_tasks_per_cycle: int = 10
     batch_mode: bool = True

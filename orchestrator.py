@@ -252,6 +252,7 @@ class Orchestrator:
         self._backoff_seconds = 0
         self._active_pipeline: Optional[AgentPipeline] = None
         self._successful_commits = 0
+        self._consecutive_empty_plans = 0  # Track planning failures to skip when futile
 
         # Clean stale agent workspace from previous runs
         workspace_dir = Path(self.config.paths.agent_workspace_dir)
@@ -1070,11 +1071,35 @@ class Orchestrator:
             total_cost = 0.0
             total_duration = 0.0
 
-            if self.config.orchestrator.plan_changes:
-                # Phase 1: Plan (use lower max_turns for planning)
+            # Skip planning if it has failed consecutively — go straight to
+            # direct execution to avoid wasting API calls on empty plans.
+            use_planning = self.config.orchestrator.plan_changes
+            if use_planning and self._consecutive_empty_plans >= 3:
+                logger.info(
+                    "Skipping planning phase: %d consecutive empty plans — "
+                    "using direct execution this cycle",
+                    self._consecutive_empty_plans,
+                )
+                use_planning = False
+
+            if use_planning:
+                # Phase 1: Plan (scale turns with batch size)
                 self.cycle_state.update(phase="planning")
                 original_max_turns = self.config.claude.max_turns
-                self.config.claude.max_turns = self.config.orchestrator.planning_max_turns
+                base_planning_turns = self.config.orchestrator.planning_max_turns
+                if is_batch and len(tasks) > 1:
+                    # Extra turns per additional task to give Claude time to
+                    # read files and formulate a plan for each task.
+                    effective_turns = base_planning_turns + (len(tasks) - 1) * 2
+                    # Cap at the main max_turns to avoid runaway
+                    effective_turns = min(effective_turns, original_max_turns)
+                else:
+                    effective_turns = base_planning_turns
+                self.config.claude.max_turns = effective_turns
+                logger.debug(
+                    "Planning with max_turns=%d (base=%d, batch_size=%d)",
+                    effective_turns, base_planning_turns, len(tasks),
+                )
                 if is_batch:
                     plan_prompt = self._build_batch_plan_prompt(tasks)
                 else:
@@ -1106,10 +1131,12 @@ class Orchestrator:
                 # direct execution without a plan to avoid wasting an API
                 # call on an empty PLAN TO EXECUTE section.
                 if not plan_result.result_text.strip():
+                    self._consecutive_empty_plans += 1
                     logger.warning(
                         "Planning phase returned empty result_text "
-                        "(error=%s) — falling back to direct execution",
+                        "(error=%s, consecutive=%d) — falling back to direct execution",
                         plan_result.error or "none",
+                        self._consecutive_empty_plans,
                     )
                     self.cycle_state.update(phase="executing")
                     if is_batch:
@@ -1117,6 +1144,7 @@ class Orchestrator:
                     else:
                         exec_prompt = self._build_prompt(tasks[0])
                 else:
+                    self._consecutive_empty_plans = 0  # Reset on successful plan
                     logger.info("Plan created, auto-accepting and executing...")
 
                     # Phase 2: Execute the plan
