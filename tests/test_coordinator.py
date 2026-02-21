@@ -52,7 +52,7 @@ class TestPartitionTasks:
         for fg in feedback_groups:
             assert len(fg) == 1
 
-    def test_auto_tasks_grouped_by_source(self, parallel_config):
+    def test_auto_tasks_one_per_worker(self, parallel_config):
         coord = ParallelCoordinator(parallel_config)
         tasks = [
             Task(description="Lint 1", priority=3, source="lint"),
@@ -60,10 +60,10 @@ class TestPartitionTasks:
             Task(description="Todo 1", priority=4, source="todo"),
         ]
         groups = coord._partition_tasks(tasks)
-        assert len(groups) >= 1
-        # All lint tasks should be in one group
-        lint_groups = [g for g in groups if g[0].source == "lint"]
-        assert len(lint_groups) == 1
+        # Each task gets its own worker
+        assert len(groups) == 3
+        for g in groups:
+            assert len(g) == 1
 
     def test_respects_max_workers(self, parallel_config):
         parallel_config.parallel.max_workers = 2
@@ -94,10 +94,9 @@ class TestPartitionTasks:
         assert len(groups) >= 2
         assert len(groups) <= parallel_config.parallel.max_workers
 
-    def test_single_source_splits_across_workers(self, parallel_config):
-        """8 tasks of same source, batch_size=2, 4 workers → 4 groups."""
+    def test_single_source_one_per_worker(self, parallel_config):
+        """8 tasks of same source, 4 workers → 4 groups of 1 each."""
         parallel_config.parallel.max_workers = 4
-        parallel_config.orchestrator.max_batch_size = 2
         coord = ParallelCoordinator(parallel_config)
         tasks = [
             Task(description=f"Idea {i}", priority=5, source="claude_idea")
@@ -106,12 +105,11 @@ class TestPartitionTasks:
         groups = coord._partition_tasks(tasks)
         assert len(groups) == 4
         for g in groups:
-            assert len(g) == 2
+            assert len(g) == 1
 
     def test_single_source_capped_by_max_workers(self, parallel_config):
-        """9 tasks of same source, batch_size=3, 2 workers → 2 groups."""
+        """9 tasks of same source, 2 workers → 2 groups of 1 each."""
         parallel_config.parallel.max_workers = 2
-        parallel_config.orchestrator.max_batch_size = 3
         coord = ParallelCoordinator(parallel_config)
         tasks = [
             Task(description=f"Idea {i}", priority=5, source="claude_idea")
@@ -120,12 +118,11 @@ class TestPartitionTasks:
         groups = coord._partition_tasks(tasks)
         assert len(groups) == 2
         for g in groups:
-            assert len(g) == 3
+            assert len(g) == 1
 
     def test_round_robin_across_sources(self, parallel_config):
-        """Lint + todo tasks distributed across workers."""
-        parallel_config.parallel.max_workers = 4
-        parallel_config.orchestrator.max_batch_size = 2
+        """Lint + todo tasks each get their own worker."""
+        parallel_config.parallel.max_workers = 6
         coord = ParallelCoordinator(parallel_config)
         tasks = [
             Task(description="Lint 1", priority=3, source="lint"),
@@ -136,20 +133,10 @@ class TestPartitionTasks:
             Task(description="Todo 2", priority=4, source="todo"),
         ]
         groups = coord._partition_tasks(tasks)
-        # lint: 4 tasks / batch_size 2 = 2 chunks; todo: 2 tasks / batch_size 2 = 1 chunk
-        # Total = 3 chunks, which fits within max_workers=4
-        assert len(groups) == 3
-        sources = [g[0].source for g in groups]
-        assert "lint" in sources
-        assert "todo" in sources
-        # Verify exact chunk counts per source
-        lint_groups = [g for g in groups if g[0].source == "lint"]
-        todo_groups = [g for g in groups if g[0].source == "todo"]
-        assert len(lint_groups) == 2
-        assert len(todo_groups) == 1
-        for lg in lint_groups:
-            assert len(lg) == 2
-        assert len(todo_groups[0]) == 2
+        # Each task gets its own worker, all 6 fit within max_workers=6
+        assert len(groups) == 6
+        for g in groups:
+            assert len(g) == 1
 
 
 class TestMergeWorkerBranch:

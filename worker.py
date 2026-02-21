@@ -68,7 +68,11 @@ class Worker:
         self._claude: Optional[ClaudeRunner] = None
 
     def execute(self) -> WorkerResult:
-        """Full worker lifecycle: create worktree -> run claude -> validate -> commit."""
+        """Full worker lifecycle: create worktree -> plan -> execute -> validate -> commit.
+
+        Supports plan-then-execute mode (when config.orchestrator.plan_changes
+        is True) and validation retries (re-invokes Claude with failure output).
+        """
         start_time = time.time()
         total_cost = 0.0
 
@@ -92,13 +96,11 @@ class Worker:
             state_dir = str(Path(self.config.paths.state_dir))
             cycle_state = CycleStateWriter(state_dir, worker_id=self.worker_id)
 
-            # Build prompt
             is_batch = len(self.tasks) > 1
-            prompt = self._build_prompt(self.tasks, is_batch)
 
             # Write cycle state
             cycle_state.write(CycleState(
-                phase="executing",
+                phase="planning" if self.config.orchestrator.plan_changes else "executing",
                 task_description=self.tasks[0].description,
                 task_type=self.tasks[0].source,
                 task_descriptions=[t.description for t in self.tasks],
@@ -110,13 +112,67 @@ class Worker:
             main_repo_git = GitManager(self.main_repo_dir)
             main_repo_pre_state = set(main_repo_git.get_changed_files())
 
-            # Invoke Claude in the worktree directory
+            # --- Plan-then-execute or direct execution ---
+            exec_prompt = self._build_prompt(self.tasks, is_batch)
+
+            if self.config.orchestrator.plan_changes:
+                # Planning phase
+                plan_prompt = self._build_plan_prompt(self.tasks, is_batch)
+                original_max_turns = self.config.claude.max_turns
+                base_turns = self.config.orchestrator.planning_max_turns
+                effective_turns = base_turns + max(0, len(self.tasks) - 1) * 2
+                effective_turns = min(effective_turns, original_max_turns)
+                self.config.claude.max_turns = effective_turns
+
+                logger.info(
+                    "Worker %d: planning with max_turns=%d",
+                    self.worker_id, effective_turns,
+                )
+                plan_result = self._claude.run(
+                    plan_prompt,
+                    add_dirs=[str(Path(self.worktree_dir).resolve())],
+                )
+                self.config.claude.max_turns = original_max_turns
+                total_cost += plan_result.cost_usd
+
+                if not plan_result.success:
+                    logger.warning(
+                        "Worker %d: planning failed: %s",
+                        self.worker_id, plan_result.error,
+                    )
+                    return WorkerResult(
+                        success=False,
+                        branch_name=self.branch_name,
+                        cost_usd=total_cost,
+                        duration_seconds=time.time() - start_time,
+                        error=f"Planning failed: {plan_result.error}",
+                        tasks=self.tasks,
+                    )
+
+                # Revert any accidental changes from planning
+                self._git.rollback()
+
+                if plan_result.result_text.strip():
+                    logger.info("Worker %d: plan created, executing...", self.worker_id)
+                    exec_prompt = self._build_execute_prompt(
+                        self.tasks, is_batch, plan_result.result_text,
+                    )
+                else:
+                    logger.warning(
+                        "Worker %d: planning returned empty result, "
+                        "falling back to direct execution",
+                        self.worker_id,
+                    )
+                    # exec_prompt already set to direct prompt above
+
+            # --- Execution phase ---
+            cycle_state.update(phase="executing")
             logger.info(
                 "Worker %d: invoking Claude for %d task(s) in %s",
                 self.worker_id, len(self.tasks), self.worktree_dir,
             )
             claude_result = self._claude.run(
-                prompt,
+                exec_prompt,
                 add_dirs=[str(Path(self.worktree_dir).resolve())],
             )
             total_cost += claude_result.cost_usd
@@ -193,15 +249,46 @@ class Worker:
                         tasks=self.tasks,
                     )
 
-            # Validate (run tests, lint, build)
+            # --- Validate with retries ---
+            max_retries = self.config.orchestrator.max_validation_retries
             cycle_state.update(phase="validating")
             validator = Validator(self.config)
             validation = validator.validate(self.worktree_dir)
 
+            retry = 0
+            while not validation.passed and retry < max_retries:
+                retry += 1
+                logger.info(
+                    "Worker %d: validation failed (attempt %d/%d), retrying...",
+                    self.worker_id, retry, max_retries + 1,
+                )
+                cycle_state.update(phase="retrying", retry_count=retry)
+
+                # Build retry prompt with failure output
+                retry_prompt = self._build_retry_prompt(
+                    self.tasks, is_batch, validation.summary,
+                )
+                retry_result = self._claude.run(
+                    retry_prompt,
+                    add_dirs=[str(Path(self.worktree_dir).resolve())],
+                )
+                total_cost += retry_result.cost_usd
+
+                if not retry_result.success:
+                    logger.warning(
+                        "Worker %d: retry Claude call failed: %s",
+                        self.worker_id, retry_result.error,
+                    )
+                    break
+
+                # Re-validate
+                cycle_state.update(phase="validating")
+                validation = validator.validate(self.worktree_dir)
+
             if not validation.passed:
                 logger.warning(
-                    "Worker %d: validation failed: %s",
-                    self.worker_id, validation.summary,
+                    "Worker %d: validation failed after %d retries: %s",
+                    self.worker_id, retry, validation.summary,
                 )
                 return WorkerResult(
                     success=False,
@@ -213,6 +300,7 @@ class Worker:
                 )
 
             # Commit locally on the branch
+            changed_files = self._git.get_changed_files()
             commit_msg = self._build_commit_message(self.tasks, is_batch)
             commit_hash = self._git.commit(commit_msg, files=changed_files)
 
@@ -323,6 +411,92 @@ class Worker:
                 for ctx_line in task.context.split("\n"):
                     lines.append(f"   {ctx_line}")
         return "\n".join(lines)
+
+    def _build_plan_prompt(self, tasks: List[Task], is_batch: bool) -> str:
+        """Build a planning-only prompt (no file changes)."""
+        protected = ", ".join(self.config.safety.protected_files)
+        wt = Path(self.worktree_dir).resolve()
+
+        if is_batch:
+            task_list = self._format_task_list(tasks)
+            task_section = f"TASKS:\n{task_list}"
+        else:
+            task = tasks[0]
+            ctx = f"\nCONTEXT:\n{task.context}\n" if task.context else ""
+            task_section = f"TASK: {task.description}\n{ctx}"
+
+        return (
+            f"You are working on the project at {wt}.\n"
+            "All file reads MUST use absolute paths within that directory.\n\n"
+            f"{task_section}\n\n"
+            "INSTRUCTIONS:\n"
+            "- Analyze the codebase and create a detailed plan.\n"
+            "- Do NOT make any changes yet. Only output a plan.\n"
+            "- List the files you would modify and what changes you would make.\n"
+            f"- Do NOT modify these protected files: {protected}\n"
+            "- Be specific about the changes (function names, line numbers, etc.).\n"
+        )
+
+    def _build_execute_prompt(
+        self, tasks: List[Task], is_batch: bool, plan_text: str,
+    ) -> str:
+        """Build an execution prompt that includes a pre-made plan."""
+        protected = ", ".join(self.config.safety.protected_files)
+        wt = Path(self.worktree_dir).resolve()
+
+        if is_batch:
+            task_list = self._format_task_list(tasks)
+            task_section = f"TASKS:\n{task_list}"
+        else:
+            task = tasks[0]
+            ctx = f"\nCONTEXT:\n{task.context}\n" if task.context else ""
+            task_section = f"TASK: {task.description}\n{ctx}"
+
+        return (
+            f"You are working on the project at {wt}.\n"
+            "All file reads, writes, and edits MUST use absolute paths within that directory.\n"
+            "WARNING: Do NOT modify any files outside that directory.\n\n"
+            f"{task_section}\n\n"
+            f"PLAN TO EXECUTE:\n{plan_text}\n\n"
+            "INSTRUCTIONS:\n"
+            "- Execute the plan above. Make the exact changes described.\n"
+            "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
+            f"- Do NOT modify these protected files: {protected}\n"
+            "- Focus on correctness. Do NOT run tests — the orchestrator handles testing.\n"
+        )
+
+    def _build_retry_prompt(
+        self, tasks: List[Task], is_batch: bool, failure_output: str,
+    ) -> str:
+        """Build a retry prompt with validation failure output."""
+        protected = ", ".join(self.config.safety.protected_files)
+        wt = Path(self.worktree_dir).resolve()
+
+        if is_batch:
+            task_list = self._format_task_list(tasks)
+            task_section = f"TASKS:\n{task_list}"
+        else:
+            task = tasks[0]
+            task_section = f"TASK: {task.description}"
+
+        # Truncate failure output to avoid exceeding prompt limits
+        max_output = 8000
+        if len(failure_output) > max_output:
+            failure_output = failure_output[:max_output] + "\n... (truncated)"
+
+        return (
+            f"You are working on the project at {wt}.\n"
+            "All file reads, writes, and edits MUST use absolute paths within that directory.\n"
+            "WARNING: Do NOT modify any files outside that directory.\n\n"
+            f"{task_section}\n\n"
+            "The previous attempt FAILED validation. Here is the failure output:\n\n"
+            f"```\n{failure_output}\n```\n\n"
+            "INSTRUCTIONS:\n"
+            "- Fix the issues shown in the failure output above.\n"
+            "- Do NOT run git commands. The orchestrator handles git.\n"
+            f"- Do NOT modify these protected files: {protected}\n"
+            "- Focus on fixing the test/lint/build failures.\n"
+        )
 
     def _build_commit_message(self, tasks: List[Task], is_batch: bool) -> str:
         """Build a commit message for the worker's changes."""

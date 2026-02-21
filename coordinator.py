@@ -407,42 +407,24 @@ class ParallelCoordinator:
         return tasks
 
     def _partition_tasks(self, tasks: List[Task]) -> List[List[Task]]:
-        """Split tasks into groups for parallel workers.
+        """Assign one task per worker, up to max_workers.
 
-        Each feedback task gets its own worker (high priority, human-written).
-        Remaining slots get auto-discovered tasks grouped by source type.
+        Feedback tasks get priority ordering (appear first), then
+        auto-discovered tasks fill remaining worker slots.
         """
-        groups: List[List[Task]] = []
-        feedback_tasks = [t for t in tasks if t.source == "feedback"]
-        auto_tasks = [t for t in tasks if t.source != "feedback"]
+        # Sort: feedback first (priority-ordered), then auto-discovered
+        feedback_tasks = sorted(
+            [t for t in tasks if t.source == "feedback"],
+            key=lambda t: t.priority,
+        )
+        auto_tasks = sorted(
+            [t for t in tasks if t.source != "feedback"],
+            key=lambda t: t.priority,
+        )
+        ordered = feedback_tasks + auto_tasks
 
-        # Each feedback task gets its own worker
-        for t in feedback_tasks:
-            if len(groups) < self.max_workers:
-                groups.append([t])
-
-        # Remaining slots get auto-discovered tasks, split into chunks
-        # and round-robin'd across available worker slots.
-        remaining_slots = self.max_workers - len(groups)
-        if remaining_slots > 0 and auto_tasks:
-            max_batch = self.config.orchestrator.max_batch_size
-            by_source: dict = defaultdict(list)
-            for t in auto_tasks:
-                by_source[t.source].append(t)
-
-            # Split each source's tasks into chunks of max_batch_size
-            source_chunks: list = []
-            for source_tasks in by_source.values():
-                for i in range(0, len(source_tasks), max_batch):
-                    source_chunks.append(source_tasks[i:i + max_batch])
-
-            # Round-robin chunks across remaining worker slots
-            for chunk in source_chunks:
-                if len(groups) >= self.max_workers:
-                    break
-                groups.append(chunk)
-
-        return groups
+        # One task per worker, capped at max_workers
+        return [[t] for t in ordered[:self.max_workers]]
 
     def _setup_signals(self) -> None:
         """Register signal handlers for graceful shutdown."""
