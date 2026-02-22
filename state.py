@@ -389,3 +389,30 @@ class StateManager:
                 status = "succeeded" if r.get("success") else "failed"
                 summaries.append(f"- {desc} ({status})")
         return summaries[-max_items:]
+
+    def get_success_rate_by_type(self, lookback_seconds: int = 86400) -> Dict[str, float]:
+        """Compute success rates per task_type over the lookback window.
+
+        Returns a dict mapping task_type -> success_rate (0.0-1.0).
+        Types with fewer than 2 attempts are not included.
+        """
+        cutoff = time.time() - lookback_seconds
+        records = self._load_history()
+
+        type_counts: Dict[str, Dict[str, int]] = {}  # type -> {total, successes}
+        for r in records:
+            if r.get("timestamp", 0) < cutoff:
+                continue
+            task_type = r.get("task_type", "unknown")
+            if task_type not in type_counts:
+                type_counts[task_type] = {"total": 0, "successes": 0}
+            type_counts[task_type]["total"] += 1
+            if r.get("success", False):
+                type_counts[task_type]["successes"] += 1
+
+        rates: Dict[str, float] = {}
+        for task_type, counts in type_counts.items():
+            if counts["total"] >= 2:
+                rates[task_type] = counts["successes"] / counts["total"]
+
+        return rates

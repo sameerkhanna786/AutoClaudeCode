@@ -56,6 +56,15 @@ def sanitize_feedback_content(content: str) -> str:
     # Remove control characters (keep \n, \r, \t)
     content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', content)
 
+    # Check for dangerous patterns (shell injection, command substitution)
+    for pattern in _DANGEROUS_PATTERNS:
+        if pattern.search(content):
+            logger.warning(
+                "Dangerous pattern detected in feedback content: %s",
+                pattern.pattern,
+            )
+            content = pattern.sub('', content)
+
     # Truncate to max length
     if len(content) > MAX_FEEDBACK_CONTENT_LENGTH:
         content = content[:MAX_FEEDBACK_CONTENT_LENGTH]

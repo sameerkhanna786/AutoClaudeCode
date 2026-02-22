@@ -16,12 +16,13 @@ from config_schema import Config
 from feedback import FeedbackManager
 from git_manager import GitManager
 from model_resolver import resolve_model_id
-from safety import SafetyError, SafetyGuard
+from safety import SafetyError, SafetyGuard, GracefulDegradation
 from state import CycleRecord
 from state_lock import LockedStateManager
 from task_discovery import Task, TaskDiscovery
 from validator import Validator
 from worker import Worker, WorkerResult
+from shared import gather_tasks as _shared_gather_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class ParallelCoordinator:
         self.safety = SafetyGuard(config, self.state)
         self.discovery = TaskDiscovery(config, state_manager=self.state)
         self.feedback = FeedbackManager(config)
+        self._degradation = GracefulDegradation(config)
         self.max_workers = config.parallel.max_workers
         self._running = True
         self._workers: List[Worker] = []
@@ -73,6 +75,13 @@ class ParallelCoordinator:
 
                 # Sleep in small increments for signal responsiveness
                 sleep_time = self.config.orchestrator.loop_interval_seconds
+                # Apply graceful degradation sleep multiplier
+                if self._degradation.is_degraded:
+                    deg = self._degradation.check_and_adjust(
+                        self.state.get_cycle_count_last_hour(),
+                        self.state.get_total_cost(lookback_seconds=3600),
+                    )
+                    sleep_time = int(sleep_time * deg["sleep_multiplier"])
                 while sleep_time > 0 and self._running:
                     time.sleep(min(1, sleep_time))
                     sleep_time -= 1
@@ -86,6 +95,16 @@ class ParallelCoordinator:
         """Run a single parallel cycle."""
         self.safety.pre_flight_checks()
         self._check_worktree_disk_space()
+
+        # Check for graceful degradation
+        cycles_per_hour = self.state.get_cycle_count_last_hour()
+        cost_per_hour = self.state.get_total_cost(lookback_seconds=3600)
+        degradation = self._degradation.check_and_adjust(cycles_per_hour, cost_per_hour)
+        if degradation["degraded"]:
+            logger.warning(
+                "Graceful degradation active (level %d): %s",
+                degradation["level"], degradation["reason"],
+            )
 
         tasks = self._gather_tasks()
         if not tasks:
@@ -374,37 +393,8 @@ class ParallelCoordinator:
                         shutil.rmtree(str(wt_dir), ignore_errors=True)
 
     def _gather_tasks(self) -> List[Task]:
-        """Gather all eligible tasks (same logic as Orchestrator._gather_tasks)."""
-        tasks: List[Task] = []
-
-        # Priority 1: developer feedback
-        max_retries = self.config.orchestrator.max_feedback_retries
-        for task in self.feedback.get_pending_feedback():
-            failure_count = self.state.get_task_failure_count(
-                task.description, "feedback", task_key=task.task_key,
-            )
-            if failure_count >= max_retries:
-                logger.warning(
-                    "Feedback task failed %d times, moving to failed/",
-                    failure_count,
-                )
-                if task.source_file:
-                    self.feedback.mark_failed(task.source_file)
-                continue
-            if not self.state.was_recently_attempted(
-                task.description, task_key=task.task_key,
-            ):
-                tasks.append(task)
-
-        # Auto-discovered tasks
-        discovered = self.discovery.discover_all()
-        for task in discovered:
-            if not self.state.was_recently_attempted(
-                task.description, task_key=task.task_key,
-            ):
-                tasks.append(task)
-
-        return tasks
+        """Gather all eligible tasks (delegates to shared implementation)."""
+        return _shared_gather_tasks(self.config, self.feedback, self.state, self.discovery)
 
     def _partition_tasks(self, tasks: List[Task]) -> List[List[Task]]:
         """Assign one task per worker, up to max_workers.
@@ -423,8 +413,15 @@ class ParallelCoordinator:
         )
         ordered = feedback_tasks + auto_tasks
 
-        # One task per worker, capped at max_workers
-        return [[t] for t in ordered[:self.max_workers]]
+        # One task per worker, capped at max_workers (reduced by degradation)
+        effective_workers = self.max_workers
+        if self._degradation.is_degraded:
+            deg = self._degradation.check_and_adjust(
+                self.state.get_cycle_count_last_hour(),
+                self.state.get_total_cost(lookback_seconds=3600),
+            )
+            effective_workers = max(1, int(self.max_workers * deg["batch_size_factor"]))
+        return [[t] for t in ordered[:effective_workers]]
 
     def _setup_signals(self) -> None:
         """Register signal handlers for graceful shutdown."""

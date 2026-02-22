@@ -64,6 +64,7 @@ class ValidationConfig:
     test_timeout: int = 7200
     lint_timeout: int = 7200
     build_timeout: int = 7200
+    incremental_tests: bool = False  # Run only tests affected by changed files
 
 
 @dataclass
@@ -84,6 +85,7 @@ class DiscoveryConfig:
     discovery_max_turns: int = 15
     discovery_prompt: str = ""  # Custom prompt for claude_ideas; empty = use default
     idea_cooldown_seconds: int = 0  # Minimum seconds between claude_ideas runs; 0 = no limit
+    adaptive_priority: bool = False  # Boost priority of high-success-rate task types
 
 
 @dataclass
@@ -172,6 +174,7 @@ class NotificationEventsConfig:
     on_consecutive_failure_threshold: bool = True
     on_cost_limit_exceeded: bool = True
     on_safety_error: bool = True
+    summary_interval_cycles: int = 0  # Send periodic summary every N cycles; 0 = disabled
 
 
 @dataclass

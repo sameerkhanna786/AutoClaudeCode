@@ -64,11 +64,11 @@ class TestParseReviewVerdict:
     def test_revise(self):
         assert self.pipeline._parse_review_verdict("VERDICT: REVISE\nNeeds fixes.") is False
 
-    def test_no_verdict_defaults_approved(self):
-        assert self.pipeline._parse_review_verdict("Some review text without verdict") is True
+    def test_no_verdict_defaults_revise(self):
+        assert self.pipeline._parse_review_verdict("Some review text without verdict") is False
 
-    def test_empty_string_defaults_approved(self):
-        assert self.pipeline._parse_review_verdict("") is True
+    def test_empty_string_defaults_revise(self):
+        assert self.pipeline._parse_review_verdict("") is False
 
     def test_case_insensitive_approved(self):
         assert self.pipeline._parse_review_verdict("verdict: approved\nGood work.") is True

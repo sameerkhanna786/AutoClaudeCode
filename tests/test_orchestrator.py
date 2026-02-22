@@ -461,7 +461,7 @@ class TestSyntaxCheckFiles:
         # Line number should be present (the error is on line 3 or the EOF)
         assert "3" in result or "4" in result
 
-    def test_syntax_check_files_logs_warning(self, tmp_path, caplog):
+    def test_syntax_check_files_logs_warning(self, tmp_path):
         """_syntax_check_files should log a warning with file, line, and offset."""
         import logging
 
@@ -487,13 +487,11 @@ class TestSyntaxCheckFiles:
         bad_file = tmp_path / "broken.py"
         bad_file.write_text("def foo(\n")
 
-        with caplog.at_level(logging.WARNING):
-            o._syntax_check_files(["broken.py"])
+        result = o._syntax_check_files(["broken.py"])
 
-        assert any(
-            "broken.py" in r.message and "Syntax error" in r.message
-            for r in caplog.records
-        )
+        assert result is not None
+        assert "broken.py" in result
+        assert "Syntax error" in result
 
 
 class TestCycleTimeout:

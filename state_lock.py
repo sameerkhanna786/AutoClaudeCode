@@ -69,3 +69,28 @@ class LockedStateManager(StateManager):
         with self._file_lock():
             self._cache = None
             return super().get_task_failure_count(task_description, task_type, task_key)
+
+    def compute_adaptive_batch_size(self) -> int:
+        with self._file_lock():
+            self._cache = None
+            return super().compute_adaptive_batch_size()
+
+    def get_recent_task_summaries(self, lookback_seconds: int = 86400, max_items: int = 20) -> List[str]:
+        with self._file_lock():
+            self._cache = None
+            return super().get_recent_task_summaries(lookback_seconds, max_items)
+
+    def should_auto_reset_failures(self, min_idle_seconds: int = 3600) -> bool:
+        with self._file_lock():
+            self._cache = None
+            return super().should_auto_reset_failures(min_idle_seconds)
+
+    def reset_consecutive_failures(self, reason: str = "manual reset") -> None:
+        with self._file_lock():
+            self._cache = None
+            super().reset_consecutive_failures(reason)
+
+    def get_success_rate_by_type(self, lookback_seconds: int = 86400) -> Dict[str, float]:
+        with self._file_lock():
+            self._cache = None
+            return super().get_success_rate_by_type(lookback_seconds)

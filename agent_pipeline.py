@@ -156,14 +156,14 @@ class AgentPipeline:
 
     @staticmethod
     def _parse_review_verdict(review_text: str) -> bool:
-        """Parse VERDICT from reviewer output. Defaults to approved."""
+        """Parse VERDICT from reviewer output. Defaults to REVISE (conservative)."""
         if not review_text:
-            return True
+            return False
         for line in review_text.splitlines():
             match = re.match(r"\s*VERDICT:\s*(APPROVED|REVISE)\s*", line, re.IGNORECASE)
             if match:
                 return match.group(1).upper() == "APPROVED"
-        return True
+        return False
 
     def _build_task_description(self, tasks: list) -> str:
         """Combine task descriptions into a single prompt block."""

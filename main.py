@@ -154,16 +154,17 @@ def main() -> None:
             print(f"[watchdog] Import/syntax error (attempt {attempt + 1}): {e}", file=sys.stderr)
             if attempt == 0:
                 restore_and_retry(own_dir)
-                # Clear cached modules so re-import works
+                # Clear cached modules so re-import works.
+                # Dynamically discover all project modules instead of
+                # maintaining a hardcoded list that goes stale.
+                own_dir_path = Path(own_dir)
+                project_module_names = {
+                    p.stem for p in own_dir_path.glob("*.py")
+                    if p.name != "main.py" and not p.name.startswith("test_")
+                }
                 mods_to_remove = [
                     m for m in sys.modules
-                    if m in (
-                        "config_schema", "orchestrator", "claude_runner",
-                        "git_manager", "validator", "state", "safety",
-                        "task_discovery", "feedback",
-                        "model_resolver", "process_utils", "agent_pipeline",
-                        "cycle_state",
-                    )
+                    if m in project_module_names
                 ]
                 for m in mods_to_remove:
                     del sys.modules[m]

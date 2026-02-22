@@ -161,9 +161,52 @@ class TaskDiscovery:
         if dc.enable_quality_review:
             tasks.extend(self._discover_quality_issues())
 
+        # Group related tasks to avoid duplicate work
+        tasks = self._group_related_tasks(tasks)
+
         # Sort by priority (lower number = higher priority)
         tasks.sort(key=lambda t: t.priority)
         return tasks
+
+    def _group_related_tasks(self, tasks: List[Task]) -> List[Task]:
+        """Group related tasks by file path to avoid duplicate work.
+
+        When multiple tasks share the same source file (e.g., multiple test
+        failures in the same file, or multiple lint errors in the same file),
+        they likely share a root cause. This method keeps only the first
+        (highest-priority) task per file for each source type, reducing
+        wasted cycles on tasks that will auto-resolve when the root cause
+        is fixed.
+
+        Tasks without a source_file are always kept.
+        """
+        from collections import defaultdict
+
+        # Group by (source, source_file) — only group when source_file is set
+        grouped: dict = defaultdict(list)
+        ungrouped: List[Task] = []
+
+        for task in tasks:
+            if task.source_file and task.source in ("test_failure", "lint", "todo"):
+                key = (task.source, task.source_file)
+                grouped[key].append(task)
+            else:
+                ungrouped.append(task)
+
+        result: List[Task] = list(ungrouped)
+        for key, group in grouped.items():
+            # Sort by priority (lower = better), keep the representative task
+            group.sort(key=lambda t: t.priority)
+            representative = group[0]
+            if len(group) > 1:
+                # Enrich the representative's description with count
+                representative.description = (
+                    f"{representative.description} "
+                    f"(+{len(group) - 1} related in {key[1]})"
+                )
+            result.append(representative)
+
+        return result
 
     def _extract_test_traceback(self, full_output: str, test_id: str) -> str:
         """Extract the traceback section for a specific test from pytest output."""

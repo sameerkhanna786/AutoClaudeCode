@@ -180,7 +180,7 @@ class TestWorkerCommitMessage:
         worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
 
         msg = worker._build_commit_message(tasks, is_batch=True)
-        assert "2 tasks" in msg
+        # Batch message uses shared builder which groups by source type
         assert "Fix A" in msg
         assert "Fix B" in msg
 

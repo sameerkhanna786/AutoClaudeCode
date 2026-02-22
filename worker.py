@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import logging
 import shutil
 import time
@@ -19,6 +18,12 @@ from state import CycleRecord
 from state_lock import LockedStateManager
 from task_discovery import Task
 from validator import Validator
+from shared import (
+    format_task_list as _shared_format_task_list,
+    syntax_check_files as _shared_syntax_check_files,
+    build_commit_message as _shared_build_commit_message,
+    build_batch_commit_message as _shared_build_batch_commit_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,23 +121,39 @@ class Worker:
             exec_prompt = self._build_prompt(self.tasks, is_batch)
 
             if self.config.orchestrator.plan_changes:
-                # Planning phase
+                # Cost guard before planning phase
+                if self._cost_limit_exceeded(total_cost):
+                    return WorkerResult(
+                        success=False,
+                        branch_name=self.branch_name,
+                        cost_usd=total_cost,
+                        duration_seconds=time.time() - start_time,
+                        error="Cost limit approaching, aborting before planning",
+                        tasks=self.tasks,
+                    )
+
+                # Planning phase — use a local variable for effective turns
+                # instead of mutating self.config.claude.max_turns (which is
+                # shared across workers and would cause a race condition).
                 plan_prompt = self._build_plan_prompt(self.tasks, is_batch)
                 original_max_turns = self.config.claude.max_turns
                 base_turns = self.config.orchestrator.planning_max_turns
                 effective_turns = base_turns + max(0, len(self.tasks) - 1) * 2
                 effective_turns = min(effective_turns, original_max_turns)
-                self.config.claude.max_turns = effective_turns
 
                 logger.info(
                     "Worker %d: planning with max_turns=%d",
                     self.worker_id, effective_turns,
                 )
-                plan_result = self._claude.run(
+                # Create a worker-local ClaudeRunner with overridden max_turns
+                import copy
+                plan_config = copy.deepcopy(self.config)
+                plan_config.claude.max_turns = effective_turns
+                plan_runner = ClaudeRunner(plan_config)
+                plan_result = plan_runner.run(
                     plan_prompt,
                     add_dirs=[str(Path(self.worktree_dir).resolve())],
                 )
-                self.config.claude.max_turns = original_max_turns
                 total_cost += plan_result.cost_usd
 
                 if not plan_result.success:
@@ -258,6 +279,15 @@ class Worker:
             retry = 0
             while not validation.passed and retry < max_retries:
                 retry += 1
+
+                # Cost guard before retry
+                if self._cost_limit_exceeded(total_cost):
+                    logger.warning(
+                        "Worker %d: cost limit approaching, aborting retries",
+                        self.worker_id,
+                    )
+                    break
+
                 logger.info(
                     "Worker %d: validation failed (attempt %d/%d), retrying...",
                     self.worker_id, retry, max_retries + 1,
@@ -403,14 +433,7 @@ class Worker:
 
     def _format_task_list(self, tasks: List[Task]) -> str:
         """Format tasks as a numbered list."""
-        lines = []
-        for i, task in enumerate(tasks, 1):
-            lines.append(f"{i}. {task.description} [{task.source}]")
-            if task.context:
-                lines.append(f"   CONTEXT:")
-                for ctx_line in task.context.split("\n"):
-                    lines.append(f"   {ctx_line}")
-        return "\n".join(lines)
+        return _shared_format_task_list(tasks)
 
     def _build_plan_prompt(self, tasks: List[Task], is_batch: bool) -> str:
         """Build a planning-only prompt (no file changes)."""
@@ -501,24 +524,29 @@ class Worker:
     def _build_commit_message(self, tasks: List[Task], is_batch: bool) -> str:
         """Build a commit message for the worker's changes."""
         if is_batch:
-            subject = f"Auto-fix {len(tasks)} tasks"
-            body_lines = [f"- {t.description[:100]}" for t in tasks]
-            return subject + "\n\n" + "\n".join(body_lines)
-        task = tasks[0]
-        desc = task.description[:72]
-        if len(task.description) > 72:
-            desc = task.description[:69] + "..."
-        return desc
+            return _shared_build_batch_commit_message(tasks)
+        return _shared_build_commit_message(tasks[0])
 
     def _syntax_check_files(self, changed_files: List[str]) -> Optional[str]:
         """Syntax-check modified .py files."""
-        for f in changed_files:
-            if f.endswith(".py"):
-                full_path = Path(self.worktree_dir) / f
-                if full_path.exists():
-                    try:
-                        source = full_path.read_text()
-                        ast.parse(source, filename=f)
-                    except SyntaxError as e:
-                        return f"Syntax error in {f} at line {e.lineno}: {e.msg}"
-        return None
+        return _shared_syntax_check_files(changed_files, self.worktree_dir)
+
+    def _cost_limit_exceeded(self, worker_cost: float) -> bool:
+        """Check if the hourly cost budget is nearly exhausted.
+
+        Returns True if accumulated cost (hourly + this worker) exceeds 90%
+        of the configured limit, signaling that the worker should stop.
+        """
+        try:
+            hourly_cost = self.state.get_total_cost(lookback_seconds=3600)
+            cost_limit = self.config.safety.max_cost_usd_per_hour
+            if hourly_cost + worker_cost >= cost_limit * 0.9:
+                logger.warning(
+                    "Worker %d: cost guard triggered — $%.2f accumulated "
+                    "(limit $%.2f)",
+                    self.worker_id, hourly_cost + worker_cost, cost_limit,
+                )
+                return True
+        except Exception as e:
+            logger.debug("Worker %d: cost check failed: %s", self.worker_id, e)
+        return False

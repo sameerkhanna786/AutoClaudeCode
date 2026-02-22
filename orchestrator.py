@@ -28,6 +28,12 @@ from agent_pipeline import AgentPipeline
 from structured_logging import apply_json_logging
 from cost_predictor import check_cost_budget
 from notifications import NotificationManager
+from shared import (
+    format_task_list, syntax_check_files, gather_tasks,
+    build_commit_message, build_batch_commit_message,
+    clean_description, extract_file_names,
+)
+from telemetry import compute_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -247,12 +253,14 @@ class Orchestrator:
         self.feedback = FeedbackManager(config)
         self.cycle_state = CycleStateWriter(str(Path(config.paths.history_file).parent))
         self.notifier = NotificationManager(config.notifications)
+        self._degradation = GracefulDegradation(config)
         self._running = True
         self._consecutive_exceptions = 0
         self._backoff_seconds = 0
         self._active_pipeline: Optional[AgentPipeline] = None
         self._successful_commits = 0
         self._consecutive_empty_plans = 0  # Track planning failures to skip when futile
+        self._cycle_counter = 0  # For periodic summary notifications
 
         # Clean stale agent workspace from previous runs
         workspace_dir = Path(self.config.paths.agent_workspace_dir)
@@ -327,27 +335,7 @@ class Orchestrator:
 
     def _gather_tasks(self) -> List[Task]:
         """Gather all eligible tasks, respecting batch_mode and adaptive sizing."""
-        tasks: List[Task] = []
-
-        # Priority 1: developer feedback
-        max_retries = self.config.orchestrator.max_feedback_retries
-        for task in self.feedback.get_pending_feedback():
-            failure_count = self.state.get_task_failure_count(task.description, "feedback", task_key=task.task_key)
-            if failure_count >= max_retries:
-                logger.warning(
-                    "Feedback task failed %d times, moving to failed/", failure_count
-                )
-                if task.source_file:
-                    self.feedback.mark_failed(task.source_file)
-                continue
-            if not self.state.was_recently_attempted(task.description, task_key=task.task_key):
-                tasks.append(task)
-
-        # Auto-discovered tasks
-        discovered = self.discovery.discover_all()
-        for task in discovered:
-            if not self.state.was_recently_attempted(task.description, task_key=task.task_key):
-                tasks.append(task)
+        tasks = gather_tasks(self.config, self.feedback, self.state, self.discovery)
 
         if not self.config.orchestrator.batch_mode:
             return tasks[:1]
@@ -356,19 +344,27 @@ class Orchestrator:
         if batch_size < 1:
             logger.warning("Adaptive batch size was %d, clamping to 1", batch_size)
             batch_size = 1
+
+        # Apply graceful degradation factor to batch size
+        if self._degradation.is_degraded:
+            degradation = self._degradation.check_and_adjust(
+                self.state.get_cycle_count_last_hour(),
+                self.state.get_total_cost(lookback_seconds=3600),
+            )
+            adjusted = max(1, int(batch_size * degradation["batch_size_factor"]))
+            if adjusted < batch_size:
+                logger.info(
+                    "Degradation reduced batch size: %d -> %d (factor=%.2f)",
+                    batch_size, adjusted, degradation["batch_size_factor"],
+                )
+                batch_size = adjusted
+
         logger.info("Adaptive batch size: %d", batch_size)
         return tasks[:batch_size]
 
     def _format_task_list(self, tasks: List[Task]) -> str:
         """Format tasks as a numbered list with source tags and context."""
-        lines = []
-        for i, task in enumerate(tasks, 1):
-            lines.append(f"{i}. {task.description} [{task.source}]")
-            if task.context:
-                lines.append(f"   CONTEXT:")
-                for ctx_line in task.context.split("\n"):
-                    lines.append(f"   {ctx_line}")
-        return "\n".join(lines)
+        return format_task_list(tasks)
 
     def _build_batch_plan_prompt(self, tasks: List[Task]) -> str:
         """Build a batch planning prompt for multiple tasks."""
@@ -433,231 +429,37 @@ class Orchestrator:
 
     @staticmethod
     def _clean_description(desc: str) -> str:
-        """Clean an auto-generated task description for use in commit messages.
-
-        1. Strip common auto-generated prefixes.
-        2. Remove backtick formatting.
-        3. Strip line-number ranges from file references (file.py:10-20 → file.py).
-        4. Strip leading/trailing whitespace.
-        5. Ensure the first character is uppercase.
-        """
-        text = desc.strip()
-
-        # Strip known auto-generated prefixes (case-insensitive first match)
-        lower = text.lower()
-        for pfx in Orchestrator._STRIP_PREFIXES:
-            if lower.startswith(pfx.lower()):
-                text = text[len(pfx):]
-                break
-
-        # Remove backtick formatting
-        text = text.replace("`", "")
-
-        # Strip line-number ranges from file references:
-        # file.py:10-20  → file.py
-        # file.py:10     → file.py
-        text = re.sub(r'(\.\w+):\d+(?:-\d+)?', r'\1', text)
-
-        text = text.strip()
-
-        # Capitalize first character
-        if text:
-            text = text[0].upper() + text[1:]
-
-        return text
+        """Clean an auto-generated task description for use in commit messages."""
+        return clean_description(desc)
 
     def _build_commit_message(self, task: Task) -> str:
-        """Build a conventional, human-style commit message for a single task.
-
-        Returns a subject line (max 72 chars) optionally followed by a blank
-        line and a body with the full description if it was truncated.
-        """
-        cleaned = self._clean_description(task.description)
-        verb = self._SOURCE_VERBS.get(task.source)
-
-        if task.source == "todo":
-            subject = self._derive_todo_subject(task.description)
-        elif verb is None:
-            # feedback / claude_idea — use cleaned description directly
-            subject = cleaned
-        else:
-            # Avoid double-verbing: if cleaned already starts with the verb, skip
-            if cleaned.lower().startswith(verb.lower()):
-                subject = cleaned
-            else:
-                subject = f"{verb} {cleaned[0].lower() + cleaned[1:]}" if cleaned else verb
-
-        # Ensure first char is uppercase
-        if subject:
-            subject = subject[0].upper() + subject[1:]
-
-        # Truncate subject at 72 characters (git convention)
-        if len(subject) > 72:
-            full_subject = subject
-            # Try to break at a word boundary
-            truncated = subject[:69]
-            last_space = truncated.rfind(" ")
-            if last_space > 40:
-                truncated = truncated[:last_space]
-            subject = truncated + "..."
-            return subject + "\n\n" + full_subject
-        return subject
+        """Build a conventional, human-style commit message for a single task."""
+        return build_commit_message(task)
 
     @staticmethod
     def _derive_todo_subject(description: str) -> str:
-        """Derive a commit subject from a TODO task description.
-
-        Examples:
-          "Address TODO in foo.py:10: add input validation"
-            → "Add input validation in foo.py"
-          "Address TODO in bar.py:5: FIXME: broken edge case"
-            → "Fix broken edge case in bar.py"
-        """
-        text = description.strip()
-
-        # Try to extract "Address TODO in <file>:<line>: <action>"
-        m = re.match(
-            r'(?:Address\s+)?TODO\s+in\s+'
-            r'([a-zA-Z0-9_/.\-]+\.\w+)'     # file path
-            r'(?::\d+(?:-\d+)?)?'            # optional :line or :line-line
-            r':\s*(.+)',                       # colon + action text
-            text, re.IGNORECASE,
-        )
-        if m:
-            filepath = m.group(1)
-            action = m.group(2).strip()
-
-            # Strip leading marker prefixes from the action text
-            action = re.sub(r'^(?:FIXME|TODO|XXX)\s*:?\s*', '', action, flags=re.IGNORECASE)
-
-            if action:
-                # Capitalize first letter of action
-                action = action[0].upper() + action[1:]
-                return f"{action} in {filepath}"
-            return f"Address TODO in {filepath}"
-
-        # Fallback: clean the description generically
-        cleaned = Orchestrator._clean_description(text)
-        return cleaned if cleaned else "Address TODO"
+        """Derive a commit subject from a TODO task description."""
+        from shared import _derive_todo_subject
+        return _derive_todo_subject(description)
 
     def _build_batch_commit_message(self, tasks: List[Task]) -> str:
         """Build a natural commit message summarizing a batch of tasks."""
-        sources = set(t.source for t in tasks)
-        count = len(tasks)
-
-        if len(sources) == 1:
-            source = next(iter(sources))
-            subject = self._summarize_same_source(source, tasks)
-        else:
-            subject = self._summarize_mixed_sources(sources, tasks)
-
-        # Truncate subject at 72 chars
-        if len(subject) > 72:
-            truncated = subject[:69]
-            last_space = truncated.rfind(" ")
-            if last_space > 40:
-                truncated = truncated[:last_space]
-            subject = truncated + "..."
-
-        body_lines = [f"- {self._clean_description(t.description)}" for t in tasks]
-        return subject + "\n\n" + "\n".join(body_lines)
+        return build_batch_commit_message(tasks)
 
     def _summarize_same_source(self, source: str, tasks: List[Task]) -> str:
         """Generate a summary subject when all tasks share the same source."""
-        count = len(tasks)
-        files = self._extract_file_names(tasks)
-
-        if source == "test_failure":
-            if files and len(files) <= 2:
-                return f"Fix test failures in {' and '.join(files)}"
-            return f"Fix test failures in {count} files"
-
-        if source == "lint":
-            if files and len(files) <= 2:
-                return f"Fix lint errors in {' and '.join(files)}"
-            return f"Fix lint errors in {count} files"
-
-        if source == "todo":
-            return f"Address TODOs across {count} modules"
-
-        if source == "coverage":
-            return f"Add test coverage for {count} modules"
-
-        if source == "quality":
-            return f"Refactor {count} modules"
-
-        if source == "claude_idea":
-            # Use the first task's cleaned description as a representative subject
-            cleaned = self._clean_description(tasks[0].description)
-            if count > 1:
-                return f"{cleaned} and {count - 1} more improvements"
-            return cleaned
-
-        if source == "feedback":
-            cleaned = self._clean_description(tasks[0].description)
-            if count > 1:
-                return f"{cleaned} and {count - 1} more tasks"
-            return cleaned
-
-        # Unknown source fallback
-        return f"Apply {count} changes"
+        from shared import _summarize_same_source
+        return _summarize_same_source(source, tasks)
 
     def _summarize_mixed_sources(self, sources: set, tasks: List[Task]) -> str:
         """Generate a summary subject for tasks with mixed source types."""
-        parts = []
-        source_groups = {}
-        for t in tasks:
-            source_groups.setdefault(t.source, []).append(t)
-
-        # Build a natural summary from the source types present
-        for src in ["test_failure", "lint", "todo", "coverage", "quality",
-                     "claude_idea", "feedback"]:
-            group = source_groups.get(src)
-            if not group:
-                continue
-            if src == "test_failure":
-                parts.append("fix test failures")
-            elif src == "lint":
-                parts.append("fix lint errors")
-            elif src == "todo":
-                parts.append("address TODOs")
-            elif src == "coverage":
-                parts.append("add test coverage")
-            elif src == "quality":
-                parts.append("refactor")
-            elif src in ("claude_idea", "feedback"):
-                parts.append(self._clean_description(group[0].description).lower())
-
-        file_count = len(set().union(*(set(self._extract_file_names(source_groups[s]))
-                                       for s in source_groups)))
-        subject_parts = " and ".join(parts[:2])
-        if len(parts) > 2:
-            subject_parts += f" and {len(parts) - 2} more"
-
-        # Capitalize first letter
-        subject = subject_parts[0].upper() + subject_parts[1:] if subject_parts else "Apply changes"
-
-        if file_count:
-            subject += f" in {file_count} files"
-
-        return subject
+        from shared import _summarize_mixed_sources
+        return _summarize_mixed_sources(sources, tasks)
 
     @staticmethod
     def _extract_file_names(tasks: List[Task]) -> List[str]:
         """Extract file names mentioned in task descriptions."""
-        files = []
-        for t in tasks:
-            # Look for file references in the description
-            m = re.search(
-                r'([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json|md|txt))',
-                t.description,
-            )
-            if m:
-                # Use just the basename for brevity
-                fname = m.group(1).split("/")[-1]
-                if fname not in files:
-                    files.append(fname)
-        return files
+        return extract_file_names(tasks)
 
     def _format_validation_errors(self, validation: ValidationResult) -> str:
         """Extract failure details from ValidationResult for the retry prompt."""
@@ -762,7 +564,12 @@ class Orchestrator:
                 return
 
             # Validate
-            validation = self.validator.validate(self.config.target_dir)
+            if self.config.validation.incremental_tests:
+                validation = self.validator.validate_incremental(
+                    self.config.target_dir, changed_files,
+                )
+            else:
+                validation = self.validator.validate(self.config.target_dir)
 
             if validation.passed:
                 # Commit
@@ -906,40 +713,33 @@ class Orchestrator:
         """If self_improve is on, syntax-check any modified .py files."""
         if not self.config.orchestrator.self_improve:
             return None
-
-        for f in changed_files:
-            if f.endswith(".py"):
-                full_path = Path(self.config.target_dir) / f
-                if full_path.exists():
-                    try:
-                        source = full_path.read_text()
-                        ast.parse(source, filename=f)
-                    except SyntaxError as e:
-                        logger.warning(
-                            "Syntax error in %s at line %s, offset %s: %s",
-                            f, e.lineno, e.offset, e.msg,
-                        )
-                        return f"Syntax error in {f} at line {e.lineno}: {e.msg}"
-        return None
+        return syntax_check_files(changed_files, self.config.target_dir)
 
     def _backup_orchestrator_files(self) -> None:
-        """If self_improve is on, back up key orchestrator files before a cycle."""
+        """If self_improve is on, back up key orchestrator files before a cycle.
+
+        Dynamically discovers all .py files in the project root (excluding
+        main.py, test files, and non-project files) to ensure new modules
+        are always included.
+        """
         if not self.config.orchestrator.self_improve:
             return
 
         backup_dir = Path(self.config.paths.backup_dir)
         backup_dir.mkdir(parents=True, exist_ok=True)
 
-        files_to_backup = [
-            "orchestrator.py", "claude_runner.py", "validator.py",
-            "git_manager.py", "state.py", "safety.py", "task_discovery.py",
-            "feedback.py", "config_schema.py",
-        ]
-        for fname in files_to_backup:
-            src = Path(self.config.target_dir) / fname
-            if src.exists():
-                dst = backup_dir / fname
-                shutil.copy2(str(src), str(dst))
+        target = Path(self.config.target_dir)
+        for py_file in target.glob("*.py"):
+            # Skip main.py (protected), test files, and setup files
+            if py_file.name in ("main.py", "setup.py"):
+                continue
+            if py_file.name.startswith("test_"):
+                continue
+            try:
+                dst = backup_dir / py_file.name
+                shutil.copy2(str(py_file), str(dst))
+            except OSError as e:
+                logger.warning("Failed to backup %s: %s", py_file.name, e)
 
     def _run_claude_with_timeout(self, prompt: str) -> ClaudeResult:
         """Run Claude CLI with a cycle-level timeout safety net.
@@ -986,6 +786,16 @@ class Orchestrator:
             logger.warning("Pre-flight check failed: %s", e)
             self.notifier.notify("safety_error", {"error": str(e)})
             return
+
+        # Check for graceful degradation (throttle instead of hard-stop)
+        cycles_per_hour = self.state.get_cycle_count_last_hour()
+        cost_per_hour = self.state.get_total_cost(lookback_seconds=3600)
+        degradation = self._degradation.check_and_adjust(cycles_per_hour, cost_per_hour)
+        if degradation["degraded"]:
+            logger.warning(
+                "Graceful degradation active (level %d): %s",
+                degradation["level"], degradation["reason"],
+            )
 
         # 2-5. Gather tasks
         tasks = self._gather_tasks()
@@ -1269,6 +1079,36 @@ class Orchestrator:
             },
         )
 
+    def _send_periodic_summary(self) -> None:
+        """Send a periodic summary notification every N cycles.
+
+        Uses telemetry.compute_metrics() to generate a structured report
+        of recent orchestrator performance.
+        """
+        interval = self.config.notifications.events.summary_interval_cycles
+        if interval <= 0 or self._cycle_counter % interval != 0:
+            return
+
+        records = self.state._load_history()
+        metrics = compute_metrics(records, lookback_seconds=interval * 3600)
+
+        summary = {
+            "total_cycles": metrics["total_cycles"],
+            "successes": metrics["successes"],
+            "failures": metrics["failures"],
+            "success_rate": f"{metrics['success_rate']}%",
+            "total_cost_usd": f"${metrics['cost']['total']:.2f}",
+            "top_task_types": list(metrics.get("type_breakdown", {}).keys())[:5],
+            "degradation_level": self._degradation.degradation_level,
+        }
+        self.notifier.notify("periodic_summary", summary)
+        logger.info(
+            "Periodic summary (cycle %d): %d cycles, %d/%d pass/fail, $%.2f cost",
+            self._cycle_counter, metrics["total_cycles"],
+            metrics["successes"], metrics["failures"],
+            metrics["cost"]["total"],
+        )
+
     def run(self, once: bool = False) -> None:
         """Run the main loop. If once=True, run a single cycle and exit."""
         if self.config.parallel.enabled:
@@ -1290,6 +1130,8 @@ class Orchestrator:
             while self._running:
                 try:
                     self._cycle()
+                    self._cycle_counter += 1
+                    self._send_periodic_summary()
                     # Reset backoff on successful cycle (no exception)
                     self._consecutive_exceptions = 0
                     self._backoff_seconds = 0
@@ -1327,6 +1169,13 @@ class Orchestrator:
 
                 # 13. Sleep (with exponential backoff if exceptions are recurring)
                 sleep_total = self.config.orchestrator.loop_interval_seconds + self._backoff_seconds
+                # Apply graceful degradation sleep multiplier
+                if self._degradation.is_degraded:
+                    deg = self._degradation.check_and_adjust(
+                        self.state.get_cycle_count_last_hour(),
+                        self.state.get_total_cost(lookback_seconds=3600),
+                    )
+                    sleep_total = int(sleep_total * deg["sleep_multiplier"])
                 if self._backoff_seconds > 0:
                     logger.info(
                         "Sleeping %ds (includes %ds backoff after %d consecutive errors)",
