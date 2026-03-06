@@ -8,9 +8,13 @@ import pytest
 from model_resolver import resolve_model_id
 
 
+# All tests patch _read_cache to return None (bypassing disk cache) so that
+# the subprocess.run mock is always exercised.
+@patch("model_resolver._read_cache", return_value=None)
+@patch("model_resolver._write_cache")
 class TestResolveModelId:
     @patch("model_resolver.subprocess.run")
-    def test_successful_resolution(self, mock_run):
+    def test_successful_resolution(self, mock_run, _wc, _rc):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout='{"result": "", "modelUsage": {"claude-opus-4-6": {"inputTokens": 5}}}',
@@ -20,19 +24,19 @@ class TestResolveModelId:
         assert result == "claude-opus-4-6"
 
     @patch("model_resolver.subprocess.run")
-    def test_timeout_returns_none(self, mock_run):
+    def test_timeout_returns_none(self, mock_run, _wc, _rc):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=30)
         result = resolve_model_id("opus")
         assert result is None
 
     @patch("model_resolver.subprocess.run")
-    def test_cli_not_found_returns_none(self, mock_run):
+    def test_cli_not_found_returns_none(self, mock_run, _wc, _rc):
         mock_run.side_effect = FileNotFoundError()
         result = resolve_model_id("opus")
         assert result is None
 
     @patch("model_resolver.subprocess.run")
-    def test_nonzero_exit_returns_none(self, mock_run):
+    def test_nonzero_exit_returns_none(self, mock_run, _wc, _rc):
         mock_run.return_value = MagicMock(
             returncode=1,
             stdout="",
@@ -42,7 +46,7 @@ class TestResolveModelId:
         assert result is None
 
     @patch("model_resolver.subprocess.run")
-    def test_invalid_json_returns_none(self, mock_run):
+    def test_invalid_json_returns_none(self, mock_run, _wc, _rc):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="Not JSON at all\nJust text\n",
@@ -52,7 +56,7 @@ class TestResolveModelId:
         assert result is None
 
     @patch("model_resolver.subprocess.run")
-    def test_missing_model_usage_returns_none(self, mock_run):
+    def test_missing_model_usage_returns_none(self, mock_run, _wc, _rc):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout='{"result": "done", "cost_usd": 0.01}',
@@ -62,7 +66,7 @@ class TestResolveModelId:
         assert result is None
 
     @patch("model_resolver.subprocess.run")
-    def test_empty_model_usage_returns_none(self, mock_run):
+    def test_empty_model_usage_returns_none(self, mock_run, _wc, _rc):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout='{"result": "done", "modelUsage": {}}',
@@ -72,7 +76,7 @@ class TestResolveModelId:
         assert result is None
 
     @patch("model_resolver.subprocess.run")
-    def test_banner_lines_before_json(self, mock_run):
+    def test_banner_lines_before_json(self, mock_run, _wc, _rc):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=(
@@ -86,13 +90,13 @@ class TestResolveModelId:
         assert result == "claude-sonnet-4-20250514"
 
     @patch("model_resolver.subprocess.run")
-    def test_os_error_returns_none(self, mock_run):
+    def test_os_error_returns_none(self, mock_run, _wc, _rc):
         mock_run.side_effect = OSError("Connection refused")
         result = resolve_model_id("opus")
         assert result is None
 
     @patch("model_resolver.subprocess.run")
-    def test_custom_command_and_timeout(self, mock_run):
+    def test_custom_command_and_timeout(self, mock_run, _wc, _rc):
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout='{"result": "", "modelUsage": {"claude-opus-4-6": {"inputTokens": 5}}}',
@@ -105,7 +109,7 @@ class TestResolveModelId:
         assert mock_run.call_args[1]["timeout"] == 60
 
     @patch("model_resolver.subprocess.run")
-    def test_model_usage_not_dict_returns_none(self, mock_run):
+    def test_model_usage_not_dict_returns_none(self, mock_run, _wc, _rc):
         """modelUsage present but not a dict should return None."""
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -116,7 +120,7 @@ class TestResolveModelId:
         assert result is None
 
     @patch("model_resolver.subprocess.run")
-    def test_multiple_json_lines_picks_first_with_model_usage(self, mock_run):
+    def test_multiple_json_lines_picks_first_with_model_usage(self, mock_run, _wc, _rc):
         """When stdout has multiple JSON lines, the first with modelUsage wins."""
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -131,7 +135,7 @@ class TestResolveModelId:
         assert result == "claude-haiku-3-5-20241022"
 
     @patch("model_resolver.subprocess.run")
-    def test_cli_args_constructed_correctly(self, mock_run):
+    def test_cli_args_constructed_correctly(self, mock_run, _wc, _rc):
         """Verify the exact CLI arguments used for model resolution."""
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -152,7 +156,7 @@ class TestResolveModelId:
         assert mock_run.call_args[1]["timeout"] == 30
 
     @patch("model_resolver.subprocess.run")
-    def test_json_line_not_starting_with_brace_skipped(self, mock_run):
+    def test_json_line_not_starting_with_brace_skipped(self, mock_run, _wc, _rc):
         """Lines that don't start with '{' after stripping should be skipped."""
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -168,7 +172,7 @@ class TestResolveModelId:
         assert result == "claude-opus-4-6"
 
     @patch("model_resolver.subprocess.run")
-    def test_data_not_dict_skipped(self, mock_run):
+    def test_data_not_dict_skipped(self, mock_run, _wc, _rc):
         """JSON line that parses to a non-dict (e.g., string) should be skipped."""
         mock_run.return_value = MagicMock(
             returncode=0,

@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 from cost_predictor import (
     CHARS_PER_TOKEN,
-    OUTPUT_COST_MULTIPLIER,
+    _DEFAULT_OUTPUT_COST_MULTIPLIER as OUTPUT_COST_MULTIPLIER,
     OUTPUT_TO_INPUT_RATIO,
-    _MODEL_COST_PER_M_INPUT_TOKENS,
+    _DEFAULT_MODEL_COST_PER_M_INPUT_TOKENS as _MODEL_COST_PER_M_INPUT_TOKENS,
     check_cost_budget,
     estimate_prompt_tokens,
     estimate_task_cost,

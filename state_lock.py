@@ -47,50 +47,42 @@ class LockedStateManager(StateManager):
 
     def was_recently_attempted(self, task_description: str, lookback_seconds: int = 3600, task_key: str = "") -> bool:
         with self._file_lock():
-            self._cache = None
             return super().was_recently_attempted(task_description, lookback_seconds, task_key)
 
     def get_cycle_count_last_hour(self) -> int:
         with self._file_lock():
-            self._cache = None
             return super().get_cycle_count_last_hour()
 
     def get_total_cost(self, lookback_seconds: int = 3600) -> float:
         with self._file_lock():
-            self._cache = None
             return super().get_total_cost(lookback_seconds)
 
     def get_consecutive_failures(self) -> int:
         with self._file_lock():
-            self._cache = None
             return super().get_consecutive_failures()
 
     def get_task_failure_count(self, task_description: str, task_type: str = "", task_key: str = "") -> int:
         with self._file_lock():
-            self._cache = None
             return super().get_task_failure_count(task_description, task_type, task_key)
 
     def compute_adaptive_batch_size(self) -> int:
         with self._file_lock():
-            self._cache = None
             return super().compute_adaptive_batch_size()
 
     def get_recent_task_summaries(self, lookback_seconds: int = 86400, max_items: int = 20) -> List[str]:
         with self._file_lock():
-            self._cache = None
             return super().get_recent_task_summaries(lookback_seconds, max_items)
 
     def should_auto_reset_failures(self, min_idle_seconds: int = 3600) -> bool:
         with self._file_lock():
-            self._cache = None
             return super().should_auto_reset_failures(min_idle_seconds)
 
     def reset_consecutive_failures(self, reason: str = "manual reset") -> None:
         with self._file_lock():
+            # Invalidate cache — this method writes to disk
             self._cache = None
             super().reset_consecutive_failures(reason)
 
     def get_success_rate_by_type(self, lookback_seconds: int = 86400) -> Dict[str, float]:
         with self._file_lock():
-            self._cache = None
             return super().get_success_rate_by_type(lookback_seconds)

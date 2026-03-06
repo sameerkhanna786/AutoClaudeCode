@@ -81,7 +81,7 @@ class CycleStateWriter:
 
     def update(self, **kwargs: Any) -> None:
         """Read current state, merge kwargs, and write back."""
-        current = read_cycle_state(str(self._path.parent))
+        current = read_cycle_state(str(self._path.parent), filename=self._path.name)
         if current is None:
             current = CycleState()
         for k, v in kwargs.items():
@@ -90,9 +90,9 @@ class CycleStateWriter:
         self.write(current)
 
 
-def read_cycle_state(state_dir: str) -> Optional[CycleState]:
+def read_cycle_state(state_dir: str, filename: str = "current_cycle.json") -> Optional[CycleState]:
     """Read current cycle state from disk. Returns None if no active cycle."""
-    path = Path(state_dir) / "current_cycle.json"
+    path = Path(state_dir) / filename
     if not path.exists():
         return None
     try:

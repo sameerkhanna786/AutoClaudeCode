@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
-from claude_runner import ClaudeResult
+from claude_runner import ClaudeRunner, ClaudeResult
 from config_schema import Config
 from git_manager import Snapshot
 from orchestrator import Orchestrator
@@ -992,17 +992,20 @@ class TestCommitMessageStyling:
         assert "[auto]" not in msg
 
     def test_clean_description_strips_backticks(self, msg_orch):
-        result = Orchestrator._clean_description("`file.py` has a bug in `func()`")
+        from shared import clean_description
+        result = clean_description("`file.py` has a bug in `func()`")
         assert "`" not in result
         assert "File.py has a bug in func()" == result
 
     def test_clean_description_strips_line_numbers(self, msg_orch):
-        result = Orchestrator._clean_description("In safety.py:98-105, check_protected_files")
+        from shared import clean_description
+        result = clean_description("In safety.py:98-105, check_protected_files")
         assert ":98-105" not in result
         assert "safety.py" in result
 
     def test_clean_description_strips_single_line_number(self, msg_orch):
-        result = Orchestrator._clean_description("Fix bug in foo.py:42")
+        from shared import clean_description
+        result = clean_description("Fix bug in foo.py:42")
         assert ":42" not in result
         assert "foo.py" in result
 
@@ -1224,34 +1227,62 @@ class TestPlanningMaxTurns:
     """Tests for separate planning_max_turns configuration."""
 
     def test_planning_uses_planning_max_turns(self, orch_batch):
-        """Planning phase should use planning_max_turns scaled by batch size."""
+        """Planning phase should use a deepcopy config with scaled max_turns,
+        leaving the original config.claude.max_turns untouched."""
         orch_batch.config.orchestrator.planning_max_turns = 8
         orch_batch.config.claude.max_turns = 25
 
-        # Track max_turns value during each Claude call
-        captured_max_turns = []
+        # The orchestrator module patches ClaudeRunner, so when the code
+        # creates ClaudeRunner(plan_config) for planning, it calls the mock.
+        # We capture those constructor calls to verify the plan config.
+        from unittest.mock import call as mock_call
+        import orchestrator as orch_mod
 
-        original_run = orch_batch.claude.run
-        call_count = [0]
+        # Get the patched ClaudeRunner class from the orchestrator module
+        MockClaudeClass = type(orch_batch.claude)
 
-        def tracking_run(prompt):
-            captured_max_turns.append(orch_batch.config.claude.max_turns)
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return ClaudeResult(success=True, result_text="Plan", cost_usd=0.03, duration_seconds=5.0)
-            else:
-                return ClaudeResult(success=True, result_text="Done", cost_usd=0.05, duration_seconds=10.0)
+        # Track constructor calls: plan_runner = ClaudeRunner(plan_config)
+        init_calls_max_turns = []
+        original_call = MockClaudeClass.__call__
 
-        orch_batch.claude.run = tracking_run
+        # Replace the mock's __call__ to capture config
+        mock_class_ref = orch_mod.ClaudeRunner
+        original_side_effect = mock_class_ref.side_effect
+
+        def capture_init(*args, **kwargs):
+            if args:
+                config_arg = args[0]
+                if hasattr(config_arg, 'claude') and hasattr(config_arg.claude, 'max_turns'):
+                    init_calls_max_turns.append(config_arg.claude.max_turns)
+            result = MagicMock()
+            result.run.return_value = ClaudeResult(
+                success=True, result_text="Plan result",
+                cost_usd=0.03, duration_seconds=5.0,
+            )
+            return result
+
+        mock_class_ref.side_effect = capture_init
+
+        # Also set up orch_batch.claude.run for the execution phase
+        orch_batch.claude.run.return_value = ClaudeResult(
+            success=True, result_text="Done",
+            cost_usd=0.05, duration_seconds=10.0,
+        )
+
         orch_batch._cycle()
 
-        # First call (planning) should use planning_max_turns scaled by batch size.
-        # orch_batch has 3 tasks, so effective = 8 + (3-1)*2 = 12
-        assert captured_max_turns[0] == 12
-        # Second call (execution) should use original max_turns
-        assert captured_max_turns[1] == 25
-        # max_turns should be restored after planning
+        # Original config max_turns should never be mutated
         assert orch_batch.config.claude.max_turns == 25
+
+        # A ClaudeRunner should have been created for planning with
+        # effective_turns = 8 + (3-1)*2 = 12
+        assert 12 in init_calls_max_turns, (
+            f"Expected a ClaudeRunner with max_turns=12 for planning, "
+            f"got configs with max_turns: {init_calls_max_turns}"
+        )
+
+        # Restore
+        mock_class_ref.side_effect = original_side_effect
 
 
 class TestTargetedRollback:

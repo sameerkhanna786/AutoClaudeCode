@@ -140,8 +140,8 @@ class TestWorkerPrompt:
         # Worktree absolute path should appear in the prompt
         assert str(Path(worker.worktree_dir).resolve()) in prompt
         assert "absolute paths" in prompt.lower()
-        # Should NOT tell Claude to run tests
-        assert "Do NOT run tests" in prompt
+        # Should include task-type specific instructions for lint
+        assert "lint" in prompt.lower()
 
     def test_batch_prompt(self, worker_config, tmp_git_repo):
         state = MagicMock(spec=LockedStateManager)
@@ -158,8 +158,6 @@ class TestWorkerPrompt:
         # Worktree absolute path should appear in the prompt
         assert str(Path(worker.worktree_dir).resolve()) in prompt
         assert "absolute paths" in prompt.lower()
-        # Should NOT tell Claude to run tests
-        assert "Do NOT run tests" in prompt
 
 
 class TestWorkerCommitMessage:

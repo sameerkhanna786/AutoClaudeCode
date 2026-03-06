@@ -166,7 +166,7 @@ class TestCommitEmptyChanges:
 
 class TestCommitTimeout:
     def test_commit_timeout_returns_empty_string(self, tmp_git_repo, caplog):
-        """When git commit times out (returncode -1), commit() returns empty string."""
+        """When git commit times out (returncode -1), commit() returns None."""
         import logging
         from unittest.mock import patch, call
         gm = GitManager(tmp_git_repo)
@@ -187,11 +187,11 @@ class TestCommitTimeout:
             with caplog.at_level(logging.WARNING):
                 result = gm.commit("this should timeout", files=["timeout_test.txt"])
 
-        assert result == ""
+        assert result is None
         assert any("git commit failed" in r.message for r in caplog.records)
 
     def test_commit_nonzero_exit_returns_empty_string(self, tmp_git_repo, caplog):
-        """When git commit fails with nonzero exit, commit() returns empty string."""
+        """When git commit fails with nonzero exit, commit() returns None."""
         import logging
         from unittest.mock import patch
         gm = GitManager(tmp_git_repo)
@@ -211,7 +211,7 @@ class TestCommitTimeout:
             with caplog.at_level(logging.WARNING):
                 result = gm.commit("hook should fail", files=["fail_test.txt"])
 
-        assert result == ""
+        assert result is None
         assert any("git commit failed" in r.message for r in caplog.records)
 
 

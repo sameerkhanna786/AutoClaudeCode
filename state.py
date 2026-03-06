@@ -107,7 +107,6 @@ class StateManager:
             # Back up corrupted file so record_cycle won't overwrite it
             backup = str(self.history_file) + ".corrupt"
             try:
-                import shutil
                 shutil.copy2(str(self.history_file), backup)
                 logger.warning("Backed up corrupted history to %s", backup)
             except OSError as backup_err:
@@ -416,3 +415,45 @@ class StateManager:
                 rates[task_type] = counts["successes"] / counts["total"]
 
         return rates
+
+    def get_strategy_performance(self, lookback_seconds: int = 86400) -> Dict[str, Dict[str, Any]]:
+        """Return per-source performance metrics: source -> {total, successes, success_rate, avg_cost, avg_duration}"""
+        cutoff = time.time() - lookback_seconds
+        records = self._load_history()
+        performance: Dict[str, Dict[str, Any]] = {}
+        for r in records:
+            if r.get("timestamp", 0) < cutoff:
+                continue
+            source = r.get("task_type", "unknown")
+            if source not in performance:
+                performance[source] = {"total": 0, "successes": 0, "total_cost": 0.0, "total_duration": 0.0}
+            perf = performance[source]
+            perf["total"] += 1
+            if r.get("success", False):
+                perf["successes"] += 1
+            perf["total_cost"] += r.get("cost_usd", 0.0)
+            perf["total_duration"] += r.get("duration_seconds", 0.0)
+        for source, perf in performance.items():
+            total = perf["total"]
+            perf["success_rate"] = perf["successes"] / total if total > 0 else 0.0
+            perf["avg_cost"] = perf["total_cost"] / total if total > 0 else 0.0
+            perf["avg_duration"] = perf["total_duration"] / total if total > 0 else 0.0
+        return performance
+
+    def get_productive_files(self, lookback_seconds: int = 86400) -> List[str]:
+        """Return files successfully modified most often, sorted by frequency."""
+        import re
+        cutoff = time.time() - lookback_seconds
+        records = self._load_history()
+        file_counts: Dict[str, int] = {}
+        for r in records:
+            if r.get("timestamp", 0) < cutoff or not r.get("success", False):
+                continue
+            for task_desc in r.get("task_descriptions", [r.get("task_description", "")]):
+                matches = re.findall(
+                    r'([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json))',
+                    task_desc,
+                )
+                for m in matches:
+                    file_counts[m] = file_counts.get(m, 0) + 1
+        return sorted(file_counts.keys(), key=lambda f: file_counts[f], reverse=True)
