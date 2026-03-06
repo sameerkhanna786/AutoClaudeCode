@@ -24,7 +24,6 @@ MAX_FEEDBACK_CONTENT_LENGTH = 64 * 1024  # 64 KB
 # These could be used to inject commands or manipulate Claude's behavior.
 _DANGEROUS_PATTERNS = [
     # Shell command injection patterns
-    re.compile(r'`[^`]*`'),                       # backtick command substitution
     re.compile(r'\$\([^)]+\)'),                    # $() command substitution
     re.compile(r'\$\{[^}]+\}'),                    # ${} variable expansion
     # Null bytes and control characters (excluding newlines/tabs)
