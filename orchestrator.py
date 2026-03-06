@@ -871,7 +871,7 @@ class Orchestrator:
                         "Pipeline thread still alive 30s after terminate — "
                         "continuing without blocking"
                     )
-                self.git.rollback(snapshot)
+                self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
                 self.state.record_cycle(self._make_cycle_record(
                     tasks,
                     success=False,
@@ -890,7 +890,7 @@ class Orchestrator:
 
         if not pipeline_result.success:
             logger.warning("Multi-agent pipeline failed: %s", pipeline_result.error)
-            self.git.rollback(snapshot)
+            self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
             self.state.record_cycle(self._make_cycle_record(
                 tasks,
                 success=False,
