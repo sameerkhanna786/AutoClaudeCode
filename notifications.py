@@ -48,7 +48,7 @@ class NaturalLanguageSummarizer:
             source = task.get("source", "") if isinstance(task, dict) else getattr(task, "source", "unknown")
             desc = task.get("description", "") if isinstance(task, dict) else getattr(task, "description", "")
             template = self._TEMPLATES.get(source, "I worked on: {desc}")
-            return template.format(desc=desc)
+            return f"I {status} {template.format(desc=desc)}" if not success else template.format(desc=desc)
 
         source_counts: Dict[str, int] = {}
         for t in tasks:
