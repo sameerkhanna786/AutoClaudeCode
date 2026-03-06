@@ -789,6 +789,22 @@ class Orchestrator:
                         self.config.orchestrator.max_context_pct,
                     )
 
+            # Smart zone: auto-split tasks when context is exhausted
+            if self.config.orchestrator.smart_split and claude_result.success:
+                from context_monitor import ContextMonitor, write_split_tasks_as_feedback
+                monitor = ContextMonitor(self.config)
+                signals = monitor.extract_signals(claude_result)
+                if monitor.should_split(signals):
+                    split_tasks = monitor.generate_split_tasks(tasks[0], claude_result)
+                    if split_tasks:
+                        written = write_split_tasks_as_feedback(
+                            split_tasks, self.config.paths.feedback_dir,
+                        )
+                        logger.info(
+                            "Smart split: wrote %d follow-up tasks to feedback/",
+                            written,
+                        )
+
             # 8-11. Validate with retries, commit or rollback
             self.cycle_state.update(phase="validating")
             self._validate_with_retries(

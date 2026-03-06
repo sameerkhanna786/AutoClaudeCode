@@ -57,6 +57,9 @@ class OrchestratorConfig:
     # Context isolation: warn/split when context window usage is high
     max_context_pct: float = 80.0
     context_isolation: bool = True
+    # Smart zone: auto-split tasks when context is exhausted
+    smart_split: bool = True
+    max_split_depth: int = 3
 
 
 @dataclass
