@@ -124,7 +124,10 @@ class StateManager:
                 )
                 self._cache = []
                 self._history_corrupt = False
-            self._cache_mtime = self.history_file.stat().st_mtime
+            try:
+                self._cache_mtime = self.history_file.stat().st_mtime
+            except FileNotFoundError:
+                self._cache_mtime = 0.0
             return self._cache
         except OSError as e:
             logger.warning("Failed to read history: %s", e)
