@@ -86,3 +86,7 @@ class LockedStateManager(StateManager):
     def get_success_rate_by_type(self, lookback_seconds: int = 86400) -> Dict[str, float]:
         with self._file_lock():
             return super().get_success_rate_by_type(lookback_seconds)
+
+    def load_history(self) -> List[Dict[str, Any]]:
+        with self._file_lock():
+            return super().load_history()

@@ -373,7 +373,7 @@ class Orchestrator:
                 try:
                     from config_tuner import ConfigTuner
                     tuner = ConfigTuner(str(Path(self.config.paths.state_dir)))
-                    recs = tuner.analyze(self.state._load_history(), self.config)
+                    recs = tuner.analyze(self.state.load_history(), self.config)
                     if recs:
                         tuner.save_recommendations(recs)
                 except Exception as e:
@@ -927,7 +927,7 @@ class Orchestrator:
         if interval <= 0 or self._cycle_counter % interval != 0:
             return
 
-        records = self.state._load_history()
+        records = self.state.load_history()
         metrics = compute_metrics(records, lookback_seconds=interval * 3600)
 
         summary = {

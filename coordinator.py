@@ -486,7 +486,7 @@ class ParallelCoordinator:
         # Filter out tasks with unmet dependencies
         completed_keys = set()
         try:
-            history = self.state._load_history()
+            history = self.state.load_history()
             for record in history:
                 if record.get("success"):
                     for key in record.get("task_keys", []):

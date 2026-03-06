@@ -457,3 +457,7 @@ class StateManager:
                 for m in matches:
                     file_counts[m] = file_counts.get(m, 0) + 1
         return sorted(file_counts.keys(), key=lambda f: file_counts[f], reverse=True)
+
+    def load_history(self) -> List[Dict[str, Any]]:
+        """Public API for loading history (safe for external callers)."""
+        return self._load_history()
