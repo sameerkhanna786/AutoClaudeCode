@@ -21,26 +21,20 @@ Three commands. Zero configuration required for defaults. It discovers tasks aut
 ## How It Works
 
 ```
-                    ┌──────────────────────────────────────────────────┐
-                    │                  AUTO CLAUDE CODE                │
-                    │                                                  │
-  feedback/*.md ──► │  ┌─────────┐    ┌──────────┐    ┌───────────┐   │
-                    │  │  TASK    │───►│  CLAUDE   │───►│ VALIDATE  │   │
-  Auto-Discovery ─► │  │ GATHER  │    │  INVOKE   │    │ test/lint │   │
-  (tests, lint,     │  └─────────┘    └──────────┘    └───────────┘   │
-   TODO, ideas)     │       │              │               │          │
-                    │       ▼              ▼               ▼          │
-                    │  ┌─────────┐    ┌──────────┐    ┌───────────┐   │
-                    │  │  DEDUP  │    │ LLM JUDGE │    │  COMMIT   │   │
-                    │  │ + DAG   │    │  (panel)  │    │ or RETRY  │   │
-                    │  └─────────┘    └──────────┘    └───────────┘   │
-                    │       │                              │          │
-                    │       ▼                              ▼          │
-                    │  ┌─────────┐                   ┌───────────┐   │
-                    │  │ CONTEXT │                   │  HISTORY   │   │
-                    │  │ MONITOR │                   │  + LEARN   │   │
-                    │  └─────────┘                   └───────────┘   │
-                    └──────────────────────────────────────────────────┘
+                ┌───────────────────────────────────────────────────────┐
+                │                    AUTO CLAUDE CODE                   │
+                │                                                       │
+feedback/*.md ─►│  ┌────────┐   ┌────────┐   ┌──────────┐  ┌────────┐ │
+                │  │  TASK  │──►│ CLAUDE │──►│ VALIDATE │─►│ COMMIT │ │
+auto-discover ─►│  │ GATHER │   │ INVOKE │   │test/lint │  │or RETRY│ │
+(tests, lint,   │  └───┬────┘   └───┬────┘   └──────────┘  └───┬────┘ │
+ TODOs, ideas)  │      │            │                            │      │
+                │      ▼            ▼                            ▼      │
+                │  ┌────────┐   ┌────────┐                  ┌────────┐ │
+                │  │ DEDUP  │   │  LLM   │                  │HISTORY │ │
+                │  │ + DAG  │   │ JUDGES │                  │+ LEARN │ │
+                │  └────────┘   └────────┘                  └────────┘ │
+                └───────────────────────────────────────────────────────┘
 ```
 
 ### The 13-Step Loop
