@@ -155,7 +155,8 @@ class Worker:
                 import copy
                 plan_config = copy.deepcopy(self.config)
                 plan_config.claude.max_turns = effective_turns
-                plan_runner = ClaudeRunner(plan_config)
+                from provider_runner import create_runner
+                plan_runner = create_runner(plan_config)
                 plan_result = plan_runner.run(
                     plan_prompt,
                     add_dirs=[str(Path(self.worktree_dir).resolve())],

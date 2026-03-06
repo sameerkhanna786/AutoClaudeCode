@@ -718,7 +718,8 @@ class Orchestrator:
                 # mutating self.config.claude.max_turns (race condition).
                 plan_config = copy.deepcopy(self.config)
                 plan_config.claude.max_turns = effective_turns
-                plan_runner = ClaudeRunner(plan_config)
+                from provider_runner import create_runner
+                plan_runner = create_runner(plan_config)
                 logger.debug(
                     "Planning with max_turns=%d (base=%d, batch_size=%d)",
                     effective_turns, base_planning_turns, len(tasks),
