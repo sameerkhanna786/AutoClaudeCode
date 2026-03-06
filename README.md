@@ -21,20 +21,20 @@ Three commands. Zero configuration required for defaults. It discovers tasks aut
 ## How It Works
 
 ```
-                ┌───────────────────────────────────────────────────────┐
-                │                    AUTO CLAUDE CODE                   │
-                │                                                       │
-feedback/*.md ─►│  ┌────────┐   ┌────────┐   ┌──────────┐  ┌────────┐ │
-                │  │  TASK  │──►│ CLAUDE │──►│ VALIDATE │─►│ COMMIT │ │
-auto-discover ─►│  │ GATHER │   │ INVOKE │   │test/lint │  │or RETRY│ │
-(tests, lint,   │  └───┬────┘   └───┬────┘   └──────────┘  └───┬────┘ │
- TODOs, ideas)  │      │            │                            │      │
-                │      ▼            ▼                            ▼      │
-                │  ┌────────┐   ┌────────┐                  ┌────────┐ │
-                │  │ DEDUP  │   │  LLM   │                  │HISTORY │ │
-                │  │ + DAG  │   │ JUDGES │                  │+ LEARN │ │
-                │  └────────┘   └────────┘                  └────────┘ │
-                └───────────────────────────────────────────────────────┘
+                ┌─────────────────────────────────────────────────────────┐
+                │                     AUTO CLAUDE CODE                    │
+                │                                                         │
+feedback/*.md ─►│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
+                │  │   TASK   │─►│  CLAUDE  │─►│ VALIDATE │─►│  COMMIT  │ │
+auto-discover ─►│  │  GATHER  │  │  INVOKE  │  │ test/lint│  │ or RETRY │ │
+(tests, lint,   │  └────┬─────┘  └────┬─────┘  └──────────┘  └────┬─────┘ │
+ TODOs, ideas)  │       │             │                             │      │
+                │       ▼             ▼                             ▼      │
+                │  ┌──────────┐  ┌──────────┐                ┌──────────┐  │
+                │  │  DEDUP   │  │   LLM    │                │ HISTORY  │  │
+                │  │  + DAG   │  │  JUDGES  │                │ + LEARN  │  │
+                │  └──────────┘  └──────────┘                └──────────┘  │
+                └─────────────────────────────────────────────────────────┘
 ```
 
 ### The 13-Step Loop
