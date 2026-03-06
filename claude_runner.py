@@ -23,6 +23,9 @@ CB_FAILURE_THRESHOLD = 5  # consecutive failures before opening
 CB_RECOVERY_TIMEOUT = 300  # seconds to wait before half-open
 CB_HALF_OPEN_MAX_CALLS = 1  # max calls allowed in half-open state
 
+# Default context window size for token usage percentage calculation
+_DEFAULT_CONTEXT_WINDOW = 200_000
+
 # Stderr patterns that count toward circuit breaker (rate limits, server errors)
 _CB_ERROR_PATTERNS = (
     "rate limit",
@@ -504,7 +507,7 @@ class ClaudeRunner:
         input_tokens = usage.get("input_tokens", 0)
         output_tokens = usage.get("output_tokens", 0)
         total_tokens = input_tokens + output_tokens
-        context_window_pct = (total_tokens / 200000) * 100 if total_tokens else 0.0
+        context_window_pct = (total_tokens / _DEFAULT_CONTEXT_WINDOW) * 100 if total_tokens else 0.0
 
         # Detect error_max_turns: Claude ran out of turns before producing
         # a final result.  Still return success=True because the subprocess
