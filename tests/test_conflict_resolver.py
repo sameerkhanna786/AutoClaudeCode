@@ -322,6 +322,7 @@ class TestMarkResolvedAndCommit:
         result = gm.mark_resolved_and_commit([], "msg")
         assert result == ""
 
+    @pytest.mark.requires_subprocess
     def test_successful_commit(self, tmp_git_repo):
         gm = GitManager(tmp_git_repo)
         # Create a file that can be staged
@@ -366,6 +367,7 @@ class TestMarkResolvedAndCommit:
 # ---------------------------------------------------------------------------
 
 class TestGetConflictedFilesRealRepo:
+    @pytest.mark.requires_subprocess
     def test_detects_real_merge_conflict(self, tmp_git_repo):
         """Create a real merge conflict and verify get_conflicted_files detects it."""
         gm = GitManager(tmp_git_repo)

@@ -45,6 +45,7 @@ class TestWorkerInit:
 
 
 class TestWorkerWorktree:
+    @pytest.mark.requires_subprocess
     def test_setup_and_cleanup_worktree(self, worker_config, tmp_git_repo):
         """Worker can create and clean up a worktree."""
         state = MagicMock(spec=LockedStateManager)

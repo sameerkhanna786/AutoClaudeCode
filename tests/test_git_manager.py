@@ -10,6 +10,7 @@ import pytest
 from git_manager import GitManager, Snapshot
 
 
+@pytest.mark.requires_subprocess
 class TestGitManager:
     def test_create_snapshot(self, tmp_git_repo):
         gm = GitManager(tmp_git_repo)
@@ -96,6 +97,7 @@ class TestGitManager:
         assert gm.is_clean() is True
 
 
+@pytest.mark.requires_subprocess
 class TestGetChangedFilesErrorHandling:
     def test_get_changed_files_raises_on_git_failure(self, tmp_git_repo):
         """When all git commands fail, get_changed_files should raise RuntimeError."""
@@ -143,6 +145,7 @@ class TestGetChangedFilesErrorHandling:
         assert any("failed" in r.message for r in caplog.records)
 
 
+@pytest.mark.requires_subprocess
 class TestCommitEmptyChanges:
     def test_commit_empty_file_list(self, tmp_git_repo, caplog):
         """commit() with files=[] should return empty string without error."""
@@ -164,6 +167,7 @@ class TestCommitEmptyChanges:
         assert any("No staged changes" in r.message for r in caplog.records)
 
 
+@pytest.mark.requires_subprocess
 class TestCommitTimeout:
     def test_commit_timeout_returns_empty_string(self, tmp_git_repo, caplog):
         """When git commit times out (returncode -1), commit() returns None."""
@@ -215,6 +219,7 @@ class TestCommitTimeout:
         assert any("git commit failed" in r.message for r in caplog.records)
 
 
+@pytest.mark.requires_subprocess
 class TestRollbackSafety:
     def test_rollback_reverts_files_not_in_allowed_dirty(self, tmp_git_repo):
         """Rollback should revert dirty files not in the allowed set."""
@@ -260,6 +265,7 @@ class TestRollbackSafety:
         assert not Path(tmp_git_repo, "anything.txt").exists()
 
 
+@pytest.mark.requires_subprocess
 class TestCommitMessageLengthValidation:
     def test_commit_truncates_oversized_message(self, tmp_git_repo, caplog):
         """Commit messages exceeding 65536 bytes are truncated."""
@@ -282,6 +288,7 @@ class TestCommitMessageLengthValidation:
         assert len(commit_hash) == 40
 
 
+@pytest.mark.requires_subprocess
 class TestWorktreeManagement:
     def test_create_and_remove_worktree(self, tmp_git_repo):
         """Can create and remove a worktree."""
@@ -407,6 +414,7 @@ class TestWorktreeManagement:
         gm.delete_branch("nonexistent-branch")  # Should not raise
 
 
+@pytest.mark.requires_subprocess
 class TestRollbackTimeout:
     def test_rollback_raises_timeout_when_deadline_exceeded(self, tmp_git_repo):
         """Rollback with many files should raise TimeoutError when deadline is exceeded."""

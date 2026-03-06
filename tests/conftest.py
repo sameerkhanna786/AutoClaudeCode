@@ -1,6 +1,7 @@
 """Shared test fixtures."""
 
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -13,6 +14,39 @@ import pytest
 _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+
+
+# ---------------------------------------------------------------------------
+# Custom marker: requires_subprocess
+# ---------------------------------------------------------------------------
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_subprocess: mark test as needing real subprocess execution "
+        "(skipped in sandboxed environments)",
+    )
+
+
+def _is_sandbox_restricted():
+    """Detect if subprocess spawning is restricted (e.g. macOS sandbox-exec)."""
+    try:
+        result = subprocess.run(
+            ["echo", "test"], capture_output=True, timeout=5,
+        )
+        return result.returncode != 0
+    except (OSError, subprocess.TimeoutExpired, PermissionError):
+        return True
+
+
+def pytest_collection_modifyitems(config, items):
+    if _is_sandbox_restricted():
+        skip_marker = pytest.mark.skip(
+            reason="Subprocess execution restricted in this environment",
+        )
+        for item in items:
+            if "requires_subprocess" in item.keywords:
+                item.add_marker(skip_marker)
 
 from config_schema import Config, load_config
 

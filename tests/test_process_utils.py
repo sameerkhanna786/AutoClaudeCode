@@ -7,6 +7,8 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from process_utils import RunResult, kill_process_group, run_with_group_kill
 
 
@@ -26,29 +28,34 @@ class TestRunResult(unittest.TestCase):
 
 class TestRunWithGroupKill(unittest.TestCase):
 
+    @pytest.mark.requires_subprocess
     def test_success(self):
         result = run_with_group_kill(["echo", "hello"])
         self.assertEqual(result.returncode, 0)
         self.assertIn("hello", result.stdout)
         self.assertFalse(result.timed_out)
 
+    @pytest.mark.requires_subprocess
     def test_failure(self):
         result = run_with_group_kill(["false"])
         self.assertEqual(result.returncode, 1)
         self.assertFalse(result.timed_out)
 
+    @pytest.mark.requires_subprocess
     def test_timeout(self):
         result = run_with_group_kill(["sleep", "60"], timeout=1)
         self.assertEqual(result.returncode, -1)
         self.assertTrue(result.timed_out)
         self.assertTrue(result.stdout.startswith("[TIMEOUT after 1s]"))
 
+    @pytest.mark.requires_subprocess
     def test_shell_mode(self):
         result = run_with_group_kill("echo hello && echo world", shell=True)
         self.assertEqual(result.returncode, 0)
         self.assertIn("hello", result.stdout)
         self.assertIn("world", result.stdout)
 
+    @pytest.mark.requires_subprocess
     def test_cwd(self):
         result = run_with_group_kill(["pwd"], cwd="/tmp")
         self.assertEqual(result.returncode, 0)
@@ -58,6 +65,7 @@ class TestRunWithGroupKill(unittest.TestCase):
             f"Expected /tmp or /private/tmp in stdout, got: {result.stdout!r}",
         )
 
+    @pytest.mark.requires_subprocess
     def test_stderr_captured(self):
         result = run_with_group_kill(
             [sys.executable, "-c", "import sys; sys.stderr.write('errtext\\n')"]

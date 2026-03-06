@@ -62,6 +62,7 @@ def integration_repo(tmp_path):
     return repo
 
 
+@pytest.mark.requires_subprocess
 def test_full_cycle_fix_and_commit(integration_repo):
     """Simulate a full cycle: discover test failure, Claude fixes it, validate, commit."""
     repo = str(integration_repo)
@@ -121,6 +122,7 @@ def test_full_cycle_fix_and_commit(integration_repo):
     assert history[0]["success"] is True
 
 
+@pytest.mark.requires_subprocess
 def test_full_cycle_rollback_on_bad_fix(integration_repo):
     """Simulate a cycle where Claude's fix doesn't pass validation."""
     repo = str(integration_repo)
@@ -175,6 +177,7 @@ def test_full_cycle_rollback_on_bad_fix(integration_repo):
     assert history[0]["success"] is False
 
 
+@pytest.mark.requires_subprocess
 def test_full_batch_cycle(integration_repo):
     """Simulate a batch cycle: discover multiple tasks, Claude fixes them all, validate, commit."""
     repo = str(integration_repo)

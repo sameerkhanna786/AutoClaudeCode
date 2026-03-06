@@ -140,6 +140,7 @@ class TestPartitionTasks:
 
 
 class TestMergeWorkerBranch:
+    @pytest.mark.requires_subprocess
     def test_fast_forward_merge(self, tmp_git_repo, parallel_config):
         """Test that fast-forward merge works when main hasn't moved."""
         from git_manager import GitManager
