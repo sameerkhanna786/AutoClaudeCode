@@ -171,6 +171,24 @@ class FeedbackManager:
             if f.is_file() and f.suffix in (".md", ".txt") and f.name != ".gitkeep"
         )
 
+        # Auto-import PRD files
+        prd_files = sorted(
+            f for f in self.feedback_dir.iterdir()
+            if f.is_file() and (
+                f.name.endswith(".prd.yaml") or f.name.endswith(".prd.json")
+                or f.name.endswith(".prd.yml")
+            )
+        )
+        for prd_file in prd_files:
+            try:
+                from prd_generator import import_prd
+                prd_tasks = import_prd(str(prd_file))
+                tasks.extend(prd_tasks)
+                # Move processed PRD to done
+                self.mark_done(str(prd_file))
+            except Exception as e:
+                logger.warning("Failed to import PRD %s: %s", prd_file, e)
+
         for fpath in files:
             try:
                 with open(fpath, 'r', encoding='utf-8') as f:
