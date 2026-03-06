@@ -45,6 +45,7 @@ class ParallelCoordinator:
         self.max_workers = config.parallel.max_workers
         self._running = True
         self._workers: List[Worker] = []
+        self._consecutive_merge_failures: int = 0
 
     def run(self, once: bool = False) -> None:
         """Main loop: discover tasks, dispatch to workers, merge results."""
@@ -111,6 +112,18 @@ class ParallelCoordinator:
             logger.info("No actionable tasks found")
             return
 
+        # Circuit breaker: if merges have failed too many times consecutively,
+        # skip dispatching workers to avoid wasting Claude invocations
+        merge_threshold = self.config.parallel.max_merge_retries * 2
+        if self._consecutive_merge_failures >= merge_threshold:
+            logger.error(
+                "Merge circuit breaker tripped: %d consecutive merge failures "
+                "(threshold %d). Skipping worker dispatch — manual intervention "
+                "or conflict resolution may be needed.",
+                self._consecutive_merge_failures, merge_threshold,
+            )
+            return
+
         groups = self._partition_tasks(tasks)
         if not groups:
             return
@@ -122,6 +135,7 @@ class ParallelCoordinator:
 
         # Claim feedback files before dispatching
         for group in groups:
+            to_remove = []
             for task in group:
                 if task.source == "feedback" and task.source_file:
                     if not self.feedback.claim_feedback(task.source_file):
@@ -129,7 +143,9 @@ class ParallelCoordinator:
                             "Could not claim feedback file %s, skipping",
                             task.source_file,
                         )
-                        group.remove(task)
+                        to_remove.append(task)
+            for task in to_remove:
+                group.remove(task)
 
         # Remove empty groups
         groups = [g for g in groups if g]
@@ -188,12 +204,14 @@ class ParallelCoordinator:
         if result.success:
             merged = self._merge_worker_branch(worker, result)
             if merged:
+                self._consecutive_merge_failures = 0
                 # Mark feedback as done
                 for task in result.tasks:
                     if task.source == "feedback" and task.source_file:
                         self.feedback.mark_done_claimed(task.source_file)
             else:
                 # Merge failed — record as failure
+                self._consecutive_merge_failures += 1
                 for task in result.tasks:
                     if task.source == "feedback" and task.source_file:
                         self.feedback.unclaim_feedback(task.source_file)
@@ -244,6 +262,7 @@ class ParallelCoordinator:
 
         # Remember current branch (should be main)
         original_branch = self.git.get_current_branch()
+        pre_merge_snapshot = self.git.create_snapshot()
 
         for attempt in range(max_retries + 1):
             # Ensure we're on the main branch
@@ -298,7 +317,7 @@ class ParallelCoordinator:
                                 worker.worker_id, validation.summary,
                             )
                             # Reset main back to before the merge
-                            self.git.rollback()
+                            self.git.rollback(pre_merge_snapshot)
                             return False
                     else:
                         logger.warning(
@@ -310,6 +329,43 @@ class ParallelCoordinator:
                         "Worker %d: rebase failed on attempt %d/%d",
                         worker.worker_id, attempt + 1, max_retries + 1,
                     )
+
+        # --- AI Conflict Resolution ---
+        if self.config.parallel.ai_conflict_resolution:
+            logger.info(
+                "Worker %d: attempting AI conflict resolution for branch %s",
+                worker.worker_id, worker.branch_name,
+            )
+            ai_snapshot = self.git.create_snapshot()
+
+            # Attempt merge leaving conflicts in working tree
+            self.git._run("merge", "--no-commit", "--no-ff", worker.branch_name, check=False)
+
+            conflicted = self.git.get_conflicted_files()
+            if conflicted:
+                from conflict_resolver import ConflictResolver
+                resolver = ConflictResolver(self.config)
+                success, cost = resolver.resolve_conflicts(
+                    self.config.target_dir, conflicted, worker.branch_name, original_branch,
+                )
+
+                if success:
+                    commit_msg = f"Merge branch '{worker.branch_name}' (AI-resolved conflicts)"
+                    commit_hash = self.git.mark_resolved_and_commit(conflicted, commit_msg)
+                    if commit_hash:
+                        validator = Validator(self.config)
+                        validation = validator.validate(self.config.target_dir)
+                        if validation.passed:
+                            logger.info("Worker %d: AI conflict resolution succeeded", worker.worker_id)
+                            return True
+                        else:
+                            logger.warning("Worker %d: validation failed after AI resolution: %s",
+                                           worker.worker_id, validation.summary)
+
+                # AI resolution failed — rollback
+                self.git.rollback(ai_snapshot)
+            else:
+                self.git.abort_merge()
 
         # All attempts exhausted
         logger.error(
@@ -401,14 +457,38 @@ class ParallelCoordinator:
 
         Feedback tasks get priority ordering (appear first), then
         auto-discovered tasks fill remaining worker slots.
+        Tasks with unmet dependencies are filtered out.
         """
+        # Filter out tasks with unmet dependencies
+        completed_keys = set()
+        try:
+            history = self.state._load_history()
+            for record in history:
+                if record.get("success"):
+                    for key in record.get("task_keys", []):
+                        completed_keys.add(key)
+        except Exception:
+            pass
+
+        eligible = []
+        for t in tasks:
+            if t.depends_on:
+                unmet = [dep for dep in t.depends_on if dep not in completed_keys]
+                if unmet:
+                    logger.info(
+                        "Skipping task %s: unmet dependencies %s",
+                        t.task_id, unmet,
+                    )
+                    continue
+            eligible.append(t)
+
         # Sort: feedback first (priority-ordered), then auto-discovered
         feedback_tasks = sorted(
-            [t for t in tasks if t.source == "feedback"],
+            [t for t in eligible if t.source == "feedback"],
             key=lambda t: t.priority,
         )
         auto_tasks = sorted(
-            [t for t in tasks if t.source != "feedback"],
+            [t for t in eligible if t.source != "feedback"],
             key=lambda t: t.priority,
         )
         ordered = feedback_tasks + auto_tasks

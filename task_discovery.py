@@ -89,11 +89,15 @@ class Task:
     source_file: Optional[str] = None  # file path for feedback tasks
     line_number: Optional[int] = None
     context: str = ""  # rich context: tracebacks, file snippets, error details
+    task_id: str = ""
+    depends_on: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         self.description = _sanitize_description(self.description)
         if len(self.context) > MAX_TASK_CONTEXT_LENGTH:
             self.context = self.context[:MAX_TASK_CONTEXT_LENGTH] + "\n... (truncated)"
+        if not self.task_id:
+            self.task_id = self.task_key
 
     @property
     def task_key(self) -> str:
@@ -163,6 +167,23 @@ class TaskDiscovery:
 
         # Group related tasks to avoid duplicate work
         tasks = self._group_related_tasks(tasks)
+
+        # Boost priority for historically high-success-rate sources
+        if self.state_manager and dc.adaptive_priority and tasks:
+            try:
+                performance = self.state_manager.get_strategy_performance(lookback_seconds=86400)
+                if performance:
+                    for task in tasks:
+                        perf = performance.get(task.source)
+                        if perf and perf.get("total", 0) >= 2:
+                            success_rate = perf.get("success_rate", 0.0)
+                            if success_rate > 0.5:
+                                # Higher success rate -> lower priority number (higher priority)
+                                # e.g., 90% success -> priority reduced by 2
+                                boost = int(success_rate * 3)  # 0-3 boost
+                                task.priority = max(1, task.priority - boost)
+            except Exception as e:
+                logger.debug("Strategy performance boosting failed: %s", e)
 
         # Sort by priority (lower number = higher priority)
         tasks.sort(key=lambda t: t.priority)

@@ -13,6 +13,86 @@ from task_discovery import Task
 logger = logging.getLogger(__name__)
 
 
+# ------------------------------------------------------------------
+# Task dependency ordering (DAG topological sort)
+# ------------------------------------------------------------------
+
+def topological_sort_tasks(tasks: List[Task]) -> List[Task]:
+    """Topological sort using Kahn's algorithm with priority tie-breaking.
+
+    Raises ValueError if a dependency cycle is detected.
+    """
+    task_map = {t.task_id: t for t in tasks}
+    in_degree = {t.task_id: 0 for t in tasks}
+    for t in tasks:
+        for dep in t.depends_on:
+            if dep in task_map:
+                in_degree[t.task_id] += 1
+    queue = sorted(
+        [t for t in tasks if in_degree[t.task_id] == 0],
+        key=lambda t: t.priority,
+    )
+    result: List[Task] = []
+    while queue:
+        task = queue.pop(0)
+        result.append(task)
+        for t in tasks:
+            if task.task_id in t.depends_on:
+                in_degree[t.task_id] -= 1
+                if in_degree[t.task_id] == 0:
+                    queue.append(t)
+                    queue.sort(key=lambda x: x.priority)
+    if len(result) != len(tasks):
+        raise ValueError("Cycle detected in task dependencies")
+    return result
+
+
+# ------------------------------------------------------------------
+# Task-type-specific instructions appended to prompts
+# ------------------------------------------------------------------
+TASK_TYPE_INSTRUCTIONS = {
+    "test_failure": """\
+- Read the failing test(s) carefully. Understand what the test expects.
+- The traceback in the CONTEXT section shows exactly where the failure occurs.
+- Determine whether the bug is in the implementation or the test.
+- Fix whichever side is wrong. You may fix the code, fix the tests, or both.
+- Run the specific failing test to verify your fix.""",
+
+    "lint": """\
+- The lint error details are in the CONTEXT section showing the exact line.
+- Fix only the specific lint violations listed. Do not refactor unrelated code.
+- For style issues (line length, whitespace), make minimal formatting changes.
+- For semantic issues (unused imports, undefined names), fix the root cause.""",
+
+    "todo": """\
+- The TODO/FIXME comment and surrounding code are in the CONTEXT section.
+- Address the intent of the comment. Remove the TODO/FIXME marker when done.
+- If the TODO requires significant design decisions, implement the simplest correct approach.
+- Add or update tests if your change modifies behavior.""",
+
+    "coverage": """\
+- Write tests for the uncovered code paths in the specified file.
+- Focus on testing meaningful behavior, not just line coverage.
+- Follow the existing test patterns in the project's test directory.
+- Use descriptive test names that explain what scenario is being tested.""",
+
+    "quality": """\
+- Focus on improving code clarity and maintainability.
+- Break up overly long functions or files into logical units.
+- Do NOT change behavior. All existing tests must continue to pass.""",
+
+    "claude_idea": """\
+- Implement the improvement described above.
+- Be thorough but conservative. Follow existing code patterns.
+- Add tests for any new functionality you introduce.""",
+
+    "feedback": """\
+- This task was written by a human developer. Follow it precisely.
+- If the instructions are ambiguous, make the most reasonable interpretation.
+- After implementing, verify that your changes match the developer's intent.""",
+}
+
+
 def format_task_list(tasks: List[Task]) -> str:
     """Format tasks as a numbered list with source tags and context."""
     lines = []
@@ -91,9 +171,15 @@ def gather_tasks(config, feedback_manager, state_manager, discovery) -> List[Tas
                     factor = max(0.1, 1.0 - rate)
                     task.priority = max(1, int(task.priority * factor))
 
+    # Apply topological sort if any tasks have dependencies
+    if any(t.depends_on for t in tasks):
+        try:
+            tasks = topological_sort_tasks(tasks)
+        except ValueError as e:
+            logger.warning("Task dependency cycle: %s", e)
+            tasks.sort(key=lambda t: t.priority)
+
     return tasks
-
-
 # ------------------------------------------------------------------
 # Commit-message helpers (shared between Orchestrator and Worker)
 # ------------------------------------------------------------------
@@ -307,3 +393,239 @@ def _summarize_mixed_sources(sources: set, tasks: List[Task]) -> str:
         subject += f" in {file_count} files"
 
     return subject
+
+
+# ------------------------------------------------------------------
+# Shared prompt builders (used by both Orchestrator and Worker)
+# ------------------------------------------------------------------
+
+def _working_dir_preamble(working_dir: Optional[str] = None) -> str:
+    """Build the working directory preamble for prompts.
+
+    When working_dir is set (worker mode), tells Claude to use absolute paths
+    within that directory and to not modify files outside it.
+    When None (orchestrator mode), uses simpler "current directory" phrasing.
+    """
+    if working_dir:
+        return (
+            f"You are working on the project at {working_dir}.\n"
+            "All file reads, writes, and edits MUST use absolute paths within that directory.\n"
+            "WARNING: Do NOT modify any files outside that directory. Do NOT use relative paths.\n"
+        )
+    return "You are working on the project in the current directory.\n"
+
+
+def build_task_prompt(
+    tasks: List[Task],
+    protected_files: List[str],
+    working_dir: Optional[str] = None,
+) -> str:
+    """Build a direct execution prompt for one or more tasks.
+
+    Args:
+        tasks: The task(s) to include.
+        protected_files: Files that must not be modified.
+        working_dir: If set, absolute path used in worktree preamble.
+    """
+    protected = ", ".join(protected_files)
+    preamble = _working_dir_preamble(working_dir)
+
+    if len(tasks) > 1:
+        task_list = format_task_list(tasks)
+        return (
+            f"{preamble}\n"
+            "You have been given a batch of tasks to address in a single comprehensive change.\n\n"
+            f"TASKS:\n{task_list}\n\n"
+            "INSTRUCTIONS:\n"
+            "- Make the minimal changes needed to complete ALL tasks above.\n"
+            "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
+            f"- Do NOT modify these protected files: {protected}\n"
+            "- Focus on correctness. Run tests if available.\n"
+            "- If a task is unclear or impossible, make your best effort and explain what you did.\n"
+            "- Use the CONTEXT provided with each task to understand the code and errors involved.\n"
+        )
+
+    task = tasks[0]
+    context_section = ""
+    if task.context:
+        context_section = f"\nCONTEXT:\n{task.context}\n"
+    specific_instructions = TASK_TYPE_INSTRUCTIONS.get(task.source, "")
+    return (
+        f"{preamble}\n"
+        f"TASK: {task.description}\n"
+        f"{context_section}\n"
+        "INSTRUCTIONS:\n"
+        "- Make the minimal changes needed to complete this task.\n"
+        "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
+        f"- Do NOT modify these protected files: {protected}\n"
+        "- Focus on correctness. Run tests if available.\n"
+        "- If the task is unclear or impossible, make your best effort and explain what you did.\n"
+        f"{specific_instructions}\n"
+    )
+
+
+def build_plan_prompt(
+    tasks: List[Task],
+    protected_files: List[str],
+    working_dir: Optional[str] = None,
+) -> str:
+    """Build a planning-only prompt (no file changes).
+
+    Args:
+        tasks: The task(s) to plan for.
+        protected_files: Files that must not be modified.
+        working_dir: If set, absolute path used in worktree preamble.
+    """
+    protected = ", ".join(protected_files)
+    preamble = _working_dir_preamble(working_dir)
+
+    if len(tasks) > 1:
+        task_list = format_task_list(tasks)
+        task_count = len(tasks) + 1
+        task_count_plus1 = len(tasks) + 2
+        return (
+            f"{preamble}\n"
+            "You have been given a batch of tasks to address in a single comprehensive change.\n\n"
+            f"TASKS:\n{task_list}\n\n"
+            f"ADDITIONAL CHECKS (always perform these):\n"
+            f"{task_count}. Check whether any of the above changes require NEW tests to be added. "
+            "If new functionality is introduced or existing behavior is changed, plan to add or update tests.\n"
+            f"{task_count_plus1}. Check whether README.md needs updating to reflect any of the above changes. "
+            "If user-facing behavior, configuration options, or architecture changed, plan to update README.md.\n\n"
+            "INSTRUCTIONS:\n"
+            "- Analyze the codebase and create a detailed, comprehensive plan that addresses ALL tasks above.\n"
+            "- Do NOT make any changes yet. Only output a plan.\n"
+            "- List every file you would modify and what changes you would make in each.\n"
+            f"- Do NOT modify these protected files: {protected}\n"
+            "- Be specific about the changes (function names, line numbers, etc.).\n"
+            "- Group related changes together where possible for clarity.\n"
+            "- Address the tasks in priority order but look for opportunities to combine related changes.\n"
+            "- Use the CONTEXT provided with each task to understand the code and errors involved.\n"
+        )
+
+    task = tasks[0]
+    context_section = ""
+    if task.context:
+        context_section = f"\nCONTEXT:\n{task.context}\n"
+    specific_instructions = TASK_TYPE_INSTRUCTIONS.get(task.source, "")
+    return (
+        f"{preamble}\n"
+        f"TASK: {task.description}\n"
+        f"{context_section}\n"
+        "INSTRUCTIONS:\n"
+        "- Analyze the codebase and create a detailed plan to complete this task.\n"
+        "- Do NOT make any changes yet. Only output a plan.\n"
+        "- List the files you would modify and what changes you would make.\n"
+        f"- Do NOT modify these protected files: {protected}\n"
+        "- Be specific about the changes (function names, line numbers, etc.).\n"
+        f"{specific_instructions}\n"
+    )
+
+
+def build_execute_prompt(
+    tasks: List[Task],
+    plan_text: str,
+    protected_files: List[str],
+    working_dir: Optional[str] = None,
+) -> str:
+    """Build an execution prompt that includes a pre-made plan.
+
+    Args:
+        tasks: The task(s) to execute.
+        plan_text: The plan generated by the planning phase.
+        protected_files: Files that must not be modified.
+        working_dir: If set, absolute path used in worktree preamble.
+    """
+    protected = ", ".join(protected_files)
+    preamble = _working_dir_preamble(working_dir)
+
+    if len(tasks) > 1:
+        task_list = format_task_list(tasks)
+        return (
+            f"{preamble}\n"
+            "You have been given a batch of tasks to address in a single comprehensive change.\n\n"
+            f"TASKS:\n{task_list}\n\n"
+            f"PLAN TO EXECUTE:\n{plan_text}\n\n"
+            "INSTRUCTIONS:\n"
+            "- Execute the plan above by making ALL described changes.\n"
+            "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
+            f"- Do NOT modify these protected files: {protected}\n"
+            "- Focus on correctness. Run tests after making changes.\n"
+            "- Stick to the plan. Do not deviate unless the plan has an obvious error.\n"
+            "- Make ALL changes in this single session. This is a comprehensive revamp, not incremental.\n"
+            "- Use the CONTEXT provided with each task to understand the code and errors involved.\n"
+        )
+
+    task = tasks[0]
+    context_section = ""
+    if task.context:
+        context_section = f"\nCONTEXT:\n{task.context}\n"
+    specific_instructions = TASK_TYPE_INSTRUCTIONS.get(task.source, "")
+    return (
+        f"{preamble}\n"
+        f"TASK: {task.description}\n"
+        f"{context_section}\n"
+        f"PLAN TO EXECUTE:\n{plan_text}\n\n"
+        "INSTRUCTIONS:\n"
+        "- Execute the plan above by making the described changes.\n"
+        "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
+        f"- Do NOT modify these protected files: {protected}\n"
+        "- Focus on correctness. Run tests if available.\n"
+        "- Stick to the plan. Do not deviate unless the plan has an obvious error.\n"
+        f"{specific_instructions}\n"
+    )
+
+
+def build_retry_prompt(
+    tasks: List[Task],
+    failure_output: str,
+    protected_files: List[str],
+    working_dir: Optional[str] = None,
+    attempt: int = 0,
+    max_attempts: int = 0,
+) -> str:
+    """Build a retry prompt with validation failure output.
+
+    Args:
+        tasks: The task(s) being retried.
+        failure_output: The validation failure output.
+        protected_files: Files that must not be modified.
+        working_dir: If set, absolute path used in worktree preamble.
+        attempt: Current attempt number (for orchestrator-style formatting).
+        max_attempts: Total max attempts (for orchestrator-style formatting).
+    """
+    protected = ", ".join(protected_files)
+    preamble = _working_dir_preamble(working_dir)
+
+    # Truncate failure output to avoid exceeding prompt limits
+    max_output = 8000
+    if len(failure_output) > max_output:
+        failure_output = failure_output[:max_output] + "\n... (truncated)"
+
+    if len(tasks) > 1:
+        task_list = format_task_list(tasks)
+        task_section = f"TASKS:\n{task_list}"
+    else:
+        task_section = f"TASK: {tasks[0].description}"
+
+    attempt_info = ""
+    if attempt and max_attempts:
+        attempt_info = f" (attempt {attempt} of {max_attempts})"
+
+    return (
+        f"{preamble}\n"
+        f"ORIGINAL {task_section}\n\n"
+        f"YOUR PREVIOUS CHANGES FAILED VALIDATION{attempt_info}.\n\n"
+        f"VALIDATION FAILURES:\n"
+        f"```\n{failure_output}\n```\n\n"
+        "INSTRUCTIONS:\n"
+        "- Read the failure output above carefully.\n"
+        "- Determine whether the bug is in the code you changed or in the tests.\n"
+        "  Sometimes the test expectation is wrong (e.g., wrong return value asserted).\n"
+        "  Other times the implementation has the actual bug.\n"
+        "- Fix whichever side is wrong. You may fix the code, fix the tests, or both.\n"
+        "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
+        f"- Do NOT modify these protected files: {protected}\n"
+        "- Your previous changes are still in the working tree. Build on them, do not start over.\n"
+        "- Focus on making ALL validations pass.\n"
+    )

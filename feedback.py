@@ -57,11 +57,11 @@ def sanitize_feedback_content(content: str) -> str:
     content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', content)
 
     # Check for dangerous patterns (shell injection, command substitution)
-    for pattern in _DANGEROUS_PATTERNS:
+    for i, pattern in enumerate(_DANGEROUS_PATTERNS):
         if pattern.search(content):
             logger.warning(
-                "Dangerous pattern detected in feedback content: %s",
-                pattern.pattern,
+                "Dangerous pattern detected in feedback content (pattern %d)",
+                i,
             )
             content = pattern.sub('', content)
 
@@ -195,15 +195,44 @@ class FeedbackManager:
                 logger.warning("Feedback file %s was empty or invalid after sanitization", fpath)
                 continue
 
+            # Parse YAML frontmatter for task_id and depends_on
+            task_id = ""
+            depends_on: List[str] = []
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    frontmatter = parts[1].strip()
+                    content_body = parts[2].strip()
+                    for fm_line in frontmatter.split("\n"):
+                        fm_line = fm_line.strip()
+                        if fm_line.startswith("task_id:"):
+                            task_id = fm_line[len("task_id:"):].strip().strip('"').strip("'")
+                        elif fm_line.startswith("depends_on:"):
+                            deps_str = fm_line[len("depends_on:"):].strip()
+                            if deps_str.startswith("[") and deps_str.endswith("]"):
+                                deps_str = deps_str[1:-1]
+                            depends_on = [
+                                d.strip().strip('"').strip("'")
+                                for d in deps_str.split(",") if d.strip()
+                            ]
+                    if content_body:
+                        content = content_body
+
             # Extract priority from filename prefix (e.g., "01-fix-bug.md" → priority 1)
             priority = self._extract_priority(fpath.name)
 
-            tasks.append(Task(
+            task = Task(
                 description=content,
                 priority=priority,
                 source="feedback",
                 source_file=str(fpath),
-            ))
+            )
+            if task_id:
+                task.task_id = task_id
+            if depends_on:
+                task.depends_on = depends_on
+
+            tasks.append(task)
 
         # Clean up old done/failed files
         self._cleanup_old_files(self.done_dir)
