@@ -138,7 +138,7 @@ class AgentPipeline:
             runner.terminate()
 
     def _build_runner_for_agent(self, role: AgentRole) -> ClaudeRunner:
-        """Build a ClaudeRunner with per-agent model/timeout overrides."""
+        """Build a runner with per-agent model/timeout overrides."""
         agent_config = copy.deepcopy(self.config)
         role_cfg = getattr(self.config.agent_pipeline, role.value)
         required_attrs = ("model", "max_turns", "timeout_seconds")
@@ -152,7 +152,8 @@ class AgentPipeline:
         agent_config.claude.resolved_model = ""
         agent_config.claude.max_turns = role_cfg.max_turns
         agent_config.claude.timeout_seconds = role_cfg.timeout_seconds
-        return ClaudeRunner(agent_config)
+        from provider_runner import create_runner
+        return create_runner(agent_config)
 
     @staticmethod
     def _parse_review_verdict(review_text: str) -> bool:
@@ -367,7 +368,26 @@ class AgentPipeline:
                 logger.info(result.format_cost_report())
                 return result
 
+            # If the reviewer CLI crashed, abort rather than wasting revisions
+            if not reviewer_result.success:
+                result.error = f"Reviewer agent failed: {reviewer_result.error}"
+                logger.warning(result.error)
+                logger.info(result.format_cost_report())
+                return result
+
             review_content = workspace.read("review.md") or reviewer_result.output_text
+
+            # If the reviewer produced no VERDICT line, abort rather than
+            # defaulting to REVISE and wasting costly revision iterations
+            if not review_content or "VERDICT:" not in review_content.upper():
+                result.error = (
+                    "Reviewer produced no VERDICT line — aborting to avoid "
+                    "wasteful revision loop"
+                )
+                logger.warning(result.error)
+                logger.info(result.format_cost_report())
+                return result
+
             approved = self._parse_review_verdict(review_content)
 
             if approved:

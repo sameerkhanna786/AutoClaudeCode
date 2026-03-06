@@ -75,7 +75,10 @@ class Orchestrator:
         # Apply structured JSON logging if configured
         if config.logging.format == "json":
             apply_json_logging()
-        self.claude = ClaudeRunner(config)
+
+        # Create runner (provider-agnostic: Claude CLI, OpenAI, or Gemini)
+        from provider_runner import create_runner
+        self.claude = create_runner(config)
         self.git = GitManager(config.target_dir)
         self.validator = Validator(config)
         self.discovery = TaskDiscovery(config, state_manager=self.state)

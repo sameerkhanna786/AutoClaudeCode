@@ -26,6 +26,8 @@ class ClaudeConfig:
     retry_delays: List[int] = field(default_factory=lambda: [2, 8, 32])
     rate_limit_base_delay: int = 5
     rate_limit_multiplier: int = 3
+    provider: str = "claude"      # "claude" | "openai" | "gemini"
+    api_key_env: str = ""         # env var name for API key
 
 
 @dataclass

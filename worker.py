@@ -100,7 +100,8 @@ class Worker:
         try:
             # Create worker-local components pointing at the worktree
             self._git = GitManager(self.worktree_dir)
-            self._claude = ClaudeRunner(self.config)
+            from provider_runner import create_runner
+            self._claude = create_runner(self.config)
 
             # Create worker-specific cycle state writer
             state_dir = str(Path(self.config.paths.state_dir))
