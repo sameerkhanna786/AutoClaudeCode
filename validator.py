@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -176,7 +177,7 @@ class Validator:
             return self.validate(working_dir)
 
         # Phase 1: Run targeted tests
-        targeted_cmd = f"python3 -m pytest {' '.join(test_files)} -x -q"
+        targeted_cmd = f"python3 -m pytest {' '.join(shlex.quote(f) for f in test_files)} -x -q"
         steps: List[ValidationStep] = []
 
         # Run lint first
