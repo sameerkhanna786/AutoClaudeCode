@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import ast
 import concurrent.futures
+import copy
 import logging
 import os
-import re
 import shutil
 import signal
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
@@ -32,184 +30,15 @@ from shared import (
     format_task_list, syntax_check_files, gather_tasks,
     build_commit_message, build_batch_commit_message,
     clean_description, extract_file_names,
+    TASK_TYPE_INSTRUCTIONS,
+    build_task_prompt as shared_build_task_prompt,
+    build_plan_prompt as shared_build_plan_prompt,
+    build_execute_prompt as shared_build_execute_prompt,
+    build_retry_prompt as shared_build_retry_prompt,
 )
 from telemetry import compute_metrics
 
 logger = logging.getLogger(__name__)
-
-# The prompt template sent to Claude
-CLAUDE_PROMPT_TEMPLATE = """\
-You are working on the project in the current directory.
-
-TASK: {task_description}
-{context_section}
-INSTRUCTIONS:
-- Make the minimal changes needed to complete this task.
-- Do NOT run git commands (add, commit, push). The orchestrator handles git.
-- Do NOT modify these protected files: {protected_files}
-- Focus on correctness. Run tests if available.
-- If the task is unclear or impossible, make your best effort and explain what you did.
-{specific_instructions}
-"""
-
-CLAUDE_PLAN_TEMPLATE = """\
-You are working on the project in the current directory.
-
-TASK: {task_description}
-{context_section}
-INSTRUCTIONS:
-- Analyze the codebase and create a detailed plan to complete this task.
-- Do NOT make any changes yet. Only output a plan.
-- List the files you would modify and what changes you would make.
-- Do NOT modify these protected files: {protected_files}
-- Be specific about the changes (function names, line numbers, etc.).
-{specific_instructions}
-"""
-
-CLAUDE_EXECUTE_TEMPLATE = """\
-You are working on the project in the current directory.
-
-TASK: {task_description}
-{context_section}
-PLAN TO EXECUTE:
-{plan}
-
-INSTRUCTIONS:
-- Execute the plan above by making the described changes.
-- Do NOT run git commands (add, commit, push). The orchestrator handles git.
-- Do NOT modify these protected files: {protected_files}
-- Focus on correctness. Run tests if available.
-- Stick to the plan. Do not deviate unless the plan has an obvious error.
-{specific_instructions}
-"""
-
-BATCH_PLAN_TEMPLATE = """\
-You are working on the project in the current directory.
-
-You have been given a batch of tasks to address in a single comprehensive change.
-
-TASKS:
-{task_list}
-
-ADDITIONAL CHECKS (always perform these):
-{task_count}. Check whether any of the above changes require NEW tests to be added. \
-If new functionality is introduced or existing behavior is changed, plan to add or update tests.
-{task_count_plus1}. Check whether README.md needs updating to reflect any of the above changes. \
-If user-facing behavior, configuration options, or architecture changed, plan to update README.md.
-
-INSTRUCTIONS:
-- Analyze the codebase and create a detailed, comprehensive plan that addresses ALL tasks above.
-- Do NOT make any changes yet. Only output a plan.
-- List every file you would modify and what changes you would make in each.
-- Do NOT modify these protected files: {protected_files}
-- Be specific about the changes (function names, line numbers, etc.).
-- Group related changes together where possible for clarity.
-- Address the tasks in priority order but look for opportunities to combine related changes.
-- Use the CONTEXT provided with each task to understand the code and errors involved.
-"""
-
-BATCH_EXECUTE_TEMPLATE = """\
-You are working on the project in the current directory.
-
-You have been given a batch of tasks to address in a single comprehensive change.
-
-TASKS:
-{task_list}
-
-PLAN TO EXECUTE:
-{plan}
-
-INSTRUCTIONS:
-- Execute the plan above by making ALL described changes.
-- Do NOT run git commands (add, commit, push). The orchestrator handles git.
-- Do NOT modify these protected files: {protected_files}
-- Focus on correctness. Run tests after making changes.
-- Stick to the plan. Do not deviate unless the plan has an obvious error.
-- Make ALL changes in this single session. This is a comprehensive revamp, not incremental.
-- Use the CONTEXT provided with each task to understand the code and errors involved.
-"""
-
-BATCH_PROMPT_TEMPLATE = """\
-You are working on the project in the current directory.
-
-You have been given a batch of tasks to address in a single comprehensive change.
-
-TASKS:
-{task_list}
-
-INSTRUCTIONS:
-- Make the minimal changes needed to complete ALL tasks above.
-- Do NOT run git commands (add, commit, push). The orchestrator handles git.
-- Do NOT modify these protected files: {protected_files}
-- Focus on correctness. Run tests if available.
-- If a task is unclear or impossible, make your best effort and explain what you did.
-- Use the CONTEXT provided with each task to understand the code and errors involved.
-"""
-
-VALIDATION_RETRY_PROMPT_TEMPLATE = """\
-You are working on the project in the current directory.
-
-ORIGINAL TASK: {task_description}
-
-YOUR PREVIOUS CHANGES FAILED VALIDATION (attempt {attempt} of {max_attempts}).
-
-VALIDATION FAILURES:
-{validation_errors}
-
-INSTRUCTIONS:
-- Read the failure output above carefully.
-- Determine whether the bug is in the code you changed or in the tests.
-  Sometimes the test expectation is wrong (e.g., wrong return value asserted).
-  Other times the implementation has the actual bug.
-- Fix whichever side is wrong. You may fix the code, fix the tests, or both.
-- Do NOT run git commands (add, commit, push). The orchestrator handles git.
-- Do NOT modify these protected files: {protected_files}
-- Your previous changes are still in the working tree. Build on them, do not start over.
-- Focus on making ALL validations pass.
-"""
-
-
-_TASK_TYPE_INSTRUCTIONS = {
-    "test_failure": """\
-- Read the failing test(s) carefully. Understand what the test expects.
-- The traceback in the CONTEXT section shows exactly where the failure occurs.
-- Determine whether the bug is in the implementation or the test.
-- Fix whichever side is wrong. You may fix the code, fix the tests, or both.
-- Run the specific failing test to verify your fix.""",
-
-    "lint": """\
-- The lint error details are in the CONTEXT section showing the exact line.
-- Fix only the specific lint violations listed. Do not refactor unrelated code.
-- For style issues (line length, whitespace), make minimal formatting changes.
-- For semantic issues (unused imports, undefined names), fix the root cause.""",
-
-    "todo": """\
-- The TODO/FIXME comment and surrounding code are in the CONTEXT section.
-- Address the intent of the comment. Remove the TODO/FIXME marker when done.
-- If the TODO requires significant design decisions, implement the simplest correct approach.
-- Add or update tests if your change modifies behavior.""",
-
-    "coverage": """\
-- Write tests for the uncovered code paths in the specified file.
-- Focus on testing meaningful behavior, not just line coverage.
-- Follow the existing test patterns in the project's test directory.
-- Use descriptive test names that explain what scenario is being tested.""",
-
-    "quality": """\
-- Focus on improving code clarity and maintainability.
-- Break up overly long functions or files into logical units.
-- Do NOT change behavior. All existing tests must continue to pass.""",
-
-    "claude_idea": """\
-- Implement the improvement described above.
-- Be thorough but conservative. Follow existing code patterns.
-- Add tests for any new functionality you introduce.""",
-
-    "feedback": """\
-- This task was written by a human developer. Follow it precisely.
-- If the instructions are ambiguous, make the most reasonable interpretation.
-- After implementing, verify that your changes match the developer's intent.""",
-}
 
 
 class Orchestrator:
@@ -287,45 +116,16 @@ class Orchestrator:
 
     def _build_prompt(self, task: Task) -> str:
         """Build the Claude prompt for a given task."""
-        protected = ", ".join(self.config.safety.protected_files)
-        context_section = ""
-        if task.context:
-            context_section = f"\nCONTEXT:\n{task.context}\n"
-        specific_instructions = _TASK_TYPE_INSTRUCTIONS.get(task.source, "")
-        return CLAUDE_PROMPT_TEMPLATE.format(
-            task_description=task.description,
-            protected_files=protected,
-            context_section=context_section,
-            specific_instructions=specific_instructions,
-        )
+        return shared_build_task_prompt([task], self.config.safety.protected_files)
 
     def _build_plan_prompt(self, task: Task) -> str:
         """Build a planning-only prompt for a task."""
-        protected = ", ".join(self.config.safety.protected_files)
-        context_section = ""
-        if task.context:
-            context_section = f"\nCONTEXT:\n{task.context}\n"
-        specific_instructions = _TASK_TYPE_INSTRUCTIONS.get(task.source, "")
-        return CLAUDE_PLAN_TEMPLATE.format(
-            task_description=task.description,
-            protected_files=protected,
-            context_section=context_section,
-            specific_instructions=specific_instructions,
-        )
+        return shared_build_plan_prompt([task], self.config.safety.protected_files)
 
     def _build_execute_prompt(self, task: Task, plan: str) -> str:
         """Build an execution prompt with a pre-approved plan."""
-        protected = ", ".join(self.config.safety.protected_files)
-        context_section = ""
-        if task.context:
-            context_section = f"\nCONTEXT:\n{task.context}\n"
-        specific_instructions = _TASK_TYPE_INSTRUCTIONS.get(task.source, "")
-        return CLAUDE_EXECUTE_TEMPLATE.format(
-            task_description=task.description,
-            plan=plan,
-            protected_files=protected,
-            context_section=context_section,
-            specific_instructions=specific_instructions,
+        return shared_build_execute_prompt(
+            [task], plan, self.config.safety.protected_files,
         )
 
     def _pick_task(self) -> Optional[Task]:
@@ -368,98 +168,29 @@ class Orchestrator:
 
     def _build_batch_plan_prompt(self, tasks: List[Task]) -> str:
         """Build a batch planning prompt for multiple tasks."""
-        protected = ", ".join(self.config.safety.protected_files)
-        task_list = self._format_task_list(tasks)
-        task_count = len(tasks) + 1
-        task_count_plus1 = len(tasks) + 2
-        return BATCH_PLAN_TEMPLATE.format(
-            task_list=task_list,
-            task_count=task_count,
-            task_count_plus1=task_count_plus1,
-            protected_files=protected,
-        )
+        return shared_build_plan_prompt(tasks, self.config.safety.protected_files)
 
     def _build_batch_execute_prompt(self, tasks: List[Task], plan: str) -> str:
         """Build a batch execution prompt with a pre-approved plan."""
-        protected = ", ".join(self.config.safety.protected_files)
-        task_list = self._format_task_list(tasks)
-        return BATCH_EXECUTE_TEMPLATE.format(
-            task_list=task_list,
-            plan=plan,
-            protected_files=protected,
+        return shared_build_execute_prompt(
+            tasks, plan, self.config.safety.protected_files,
         )
 
     def _build_batch_prompt(self, tasks: List[Task]) -> str:
         """Build a single-shot prompt for batch tasks (no plan phase)."""
-        protected = ", ".join(self.config.safety.protected_files)
-        task_list = self._format_task_list(tasks)
-        return BATCH_PROMPT_TEMPLATE.format(
-            task_list=task_list,
-            protected_files=protected,
-        )
+        return shared_build_task_prompt(tasks, self.config.safety.protected_files)
 
     # ------------------------------------------------------------------
     # Commit-message helpers
     # ------------------------------------------------------------------
 
-    # Verb prefix applied to the commit subject based on the task source.
-    # None means "use the description as-is" (or derive the verb from text).
-    _SOURCE_VERBS = {
-        "test_failure": "Fix",
-        "lint": "Fix",
-        "todo": None,       # handled by _derive_todo_subject()
-        "feedback": None,   # human-written, use as-is
-        "claude_idea": None, # already descriptive, use as-is
-        "coverage": "Add test coverage for",
-        "quality": "Refactor",
-    }
-
-    # Prefixes commonly produced by task_discovery that should be stripped
-    # to avoid stuttering (e.g. "Fix Fix test failure: …").
-    _STRIP_PREFIXES = [
-        "Fix test failure: ",
-        "Fix test failure in ",
-        "FAILED ",
-        "Fix lint error in ",
-        "Fix lint error: ",
-        "Address TODO in ",
-        "Address TODO: ",
-        "IDEA: ",
-    ]
-
-    @staticmethod
-    def _clean_description(desc: str) -> str:
-        """Clean an auto-generated task description for use in commit messages."""
-        return clean_description(desc)
-
     def _build_commit_message(self, task: Task) -> str:
         """Build a conventional, human-style commit message for a single task."""
         return build_commit_message(task)
 
-    @staticmethod
-    def _derive_todo_subject(description: str) -> str:
-        """Derive a commit subject from a TODO task description."""
-        from shared import _derive_todo_subject
-        return _derive_todo_subject(description)
-
     def _build_batch_commit_message(self, tasks: List[Task]) -> str:
         """Build a natural commit message summarizing a batch of tasks."""
         return build_batch_commit_message(tasks)
-
-    def _summarize_same_source(self, source: str, tasks: List[Task]) -> str:
-        """Generate a summary subject when all tasks share the same source."""
-        from shared import _summarize_same_source
-        return _summarize_same_source(source, tasks)
-
-    def _summarize_mixed_sources(self, sources: set, tasks: List[Task]) -> str:
-        """Generate a summary subject for tasks with mixed source types."""
-        from shared import _summarize_mixed_sources
-        return _summarize_mixed_sources(sources, tasks)
-
-    @staticmethod
-    def _extract_file_names(tasks: List[Task]) -> List[str]:
-        """Extract file names mentioned in task descriptions."""
-        return extract_file_names(tasks)
 
     def _format_validation_errors(self, validation: ValidationResult) -> str:
         """Extract failure details from ValidationResult for the retry prompt."""
@@ -480,16 +211,10 @@ class Orchestrator:
     def _build_retry_prompt(self, tasks: List[Task], validation: ValidationResult,
                             attempt: int, max_attempts: int) -> str:
         """Build a prompt for retrying after validation failure."""
-        protected = ", ".join(self.config.safety.protected_files)
         errors = self._format_validation_errors(validation)
-        if len(tasks) > 1:
-            desc = self._format_task_list(tasks)
-        else:
-            desc = tasks[0].description
-        return VALIDATION_RETRY_PROMPT_TEMPLATE.format(
-            task_description=desc, attempt=attempt,
-            max_attempts=max_attempts, validation_errors=errors,
-            protected_files=protected,
+        return shared_build_retry_prompt(
+            tasks, errors, self.config.safety.protected_files,
+            attempt=attempt, max_attempts=max_attempts,
         )
 
     def _validate_with_retries(
@@ -579,12 +304,35 @@ class Orchestrator:
                     commit_msg = self._build_commit_message(tasks[0])
 
                 commit_hash = self.git.commit(commit_msg, files=changed_files)
+
+                if commit_hash is None:
+                    # Git command itself failed (distinct from "nothing staged")
+                    logger.error("git commit command failed")
+                    self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
+                    self.state.record_cycle(self._make_cycle_record(
+                        tasks, success=False,
+                        cost_usd=total_cost, duration_seconds=total_duration,
+                        error="git commit command failed",
+                        validation_retry_count=retry_count, **extra,
+                    ))
+                    return
+
                 logger.info("Cycle succeeded: %s", commit_msg.split("\n")[0])
 
                 # Periodic git gc to clean up loose objects
                 self._successful_commits += 1
                 if self._successful_commits % self.config.orchestrator.gc_interval == 0:
                     self.git.gc_auto()
+
+                # Run config tuner
+                try:
+                    from config_tuner import ConfigTuner
+                    tuner = ConfigTuner(str(Path(self.config.paths.state_dir)))
+                    recs = tuner.analyze(self.state._load_history(), self.config)
+                    if recs:
+                        tuner.save_recommendations(recs)
+                except Exception as e:
+                    logger.debug("Config tuner failed: %s", e)
 
                 if self.config.orchestrator.push_after_commit:
                     push_ok = self.git.push()
@@ -741,7 +489,7 @@ class Orchestrator:
             except OSError as e:
                 logger.warning("Failed to backup %s: %s", py_file.name, e)
 
-    def _run_claude_with_timeout(self, prompt: str) -> ClaudeResult:
+    def _run_claude_with_timeout(self, prompt: str, runner: Optional[ClaudeRunner] = None) -> ClaudeResult:
         """Run Claude CLI with a cycle-level timeout safety net.
 
         Wraps self.claude.run() in a thread pool with a configurable timeout
@@ -751,16 +499,17 @@ class Orchestrator:
         avoid blocking the main loop if the thread refuses to die.
         """
         timeout = self.config.orchestrator.cycle_timeout_seconds
+        actual_runner = runner or self.claude
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            future = executor.submit(self.claude.run, prompt)
+            future = executor.submit(actual_runner.run, prompt)
             try:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
                 logger.warning(
                     "Claude CLI cycle timeout fired after %ds — killing subprocess", timeout,
                 )
-                self.claude.terminate()
+                actual_runner.terminate()
                 future.cancel()
                 # Short secondary wait for the thread to finish
                 try:
@@ -895,17 +644,20 @@ class Orchestrator:
             if use_planning:
                 # Phase 1: Plan (scale turns with batch size)
                 self.cycle_state.update(phase="planning")
-                original_max_turns = self.config.claude.max_turns
                 base_planning_turns = self.config.orchestrator.planning_max_turns
                 if is_batch and len(tasks) > 1:
                     # Extra turns per additional task to give Claude time to
                     # read files and formulate a plan for each task.
                     effective_turns = base_planning_turns + (len(tasks) - 1) * 2
                     # Cap at the main max_turns to avoid runaway
-                    effective_turns = min(effective_turns, original_max_turns)
+                    effective_turns = min(effective_turns, self.config.claude.max_turns)
                 else:
                     effective_turns = base_planning_turns
-                self.config.claude.max_turns = effective_turns
+                # Create a separate config/runner for planning to avoid
+                # mutating self.config.claude.max_turns (race condition).
+                plan_config = copy.deepcopy(self.config)
+                plan_config.claude.max_turns = effective_turns
+                plan_runner = ClaudeRunner(plan_config)
                 logger.debug(
                     "Planning with max_turns=%d (base=%d, batch_size=%d)",
                     effective_turns, base_planning_turns, len(tasks),
@@ -914,8 +666,7 @@ class Orchestrator:
                     plan_prompt = self._build_batch_plan_prompt(tasks)
                 else:
                     plan_prompt = self._build_plan_prompt(tasks[0])
-                plan_result = self._run_claude_with_timeout(plan_prompt)
-                self.config.claude.max_turns = original_max_turns
+                plan_result = self._run_claude_with_timeout(plan_prompt, runner=plan_runner)
                 total_cost += plan_result.cost_usd
                 total_duration += plan_result.duration_seconds
                 self.cycle_state.update(accumulated_cost=total_cost)
@@ -990,6 +741,15 @@ class Orchestrator:
                     error=claude_result.error,
                 ))
                 return
+
+            # Context isolation: warn if context window usage is high
+            if self.config.orchestrator.context_isolation and claude_result.success:
+                if claude_result.context_window_pct > self.config.orchestrator.max_context_pct:
+                    logger.warning(
+                        "Context window %.1f%% used (threshold %.1f%%)",
+                        claude_result.context_window_pct,
+                        self.config.orchestrator.max_context_pct,
+                    )
 
             # 8-11. Validate with retries, commit or rollback
             self.cycle_state.update(phase="validating")

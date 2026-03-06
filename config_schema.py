@@ -54,6 +54,9 @@ class OrchestratorConfig:
     max_validation_retries: int = 5
     retry_include_full_output: bool = True
     gc_interval: int = 10
+    # Context isolation: warn/split when context window usage is high
+    max_context_pct: float = 80.0
+    context_isolation: bool = True
 
 
 @dataclass
@@ -135,6 +138,8 @@ class ParallelConfig:
     max_merge_retries: int = 2
     cleanup_on_exit: bool = True
     cleanup_timeout: int = 60
+    ai_conflict_resolution: bool = True
+    conflict_resolution_max_cost: float = 2.0
 
 
 @dataclass
@@ -183,6 +188,31 @@ class NotificationsConfig:
     enabled: bool = False
     webhooks: List[WebhookConfig] = field(default_factory=list)
     events: NotificationEventsConfig = field(default_factory=NotificationEventsConfig)
+    nl_summaries: bool = False
+
+
+@dataclass
+class PricingConfig:
+    """Pricing configuration for cost prediction."""
+    cost_per_million_input_tokens: dict = field(default_factory=lambda: {
+        "opus": 15.0,
+        "sonnet": 3.0,
+        "haiku": 0.25,
+    })
+    output_cost_multiplier: float = 5.0
+
+
+@dataclass
+class GitHubConfig:
+    """Configuration for GitHub integration."""
+    enabled: bool = False
+    token: str = ""
+    repo_owner: str = ""
+    repo_name: str = ""
+    base_branch: str = "main"
+    create_prs: bool = True
+    auto_merge: bool = False
+    label: str = "auto-claude"
 
 
 @dataclass
@@ -198,6 +228,8 @@ class Config:
     agent_pipeline: AgentPipelineConfig = field(default_factory=AgentPipelineConfig)
     parallel: ParallelConfig = field(default_factory=ParallelConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    pricing: PricingConfig = field(default_factory=PricingConfig)
+    github: GitHubConfig = field(default_factory=GitHubConfig)
 
 
 def _get_expected_type(dc_class, field_name: str):
@@ -292,6 +324,8 @@ def load_config(path: Optional[str] = None) -> Config:
         "paths": config.paths,
         "logging": config.logging,
         "parallel": config.parallel,
+        "pricing": config.pricing,
+        "github": config.github,
     }
 
     for section_name, dc_instance in section_map.items():

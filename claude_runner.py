@@ -203,6 +203,9 @@ class ClaudeResult:
     duration_seconds: float = 0.0
     raw_json: Optional[Dict[str, Any]] = None
     error: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    context_window_pct: float = 0.0
 
 
 class ClaudeRunner:
@@ -496,6 +499,13 @@ class ClaudeRunner:
         duration_ms = data.get("duration_ms", 0)
         duration = duration_ms / 1000.0 if duration_ms else data.get("duration_seconds", 0.0)
 
+        # Extract token usage for context window tracking
+        usage = data.get("usage", {})
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+        total_tokens = input_tokens + output_tokens
+        context_window_pct = (total_tokens / 200000) * 100 if total_tokens else 0.0
+
         # Detect error_max_turns: Claude ran out of turns before producing
         # a final result.  Still return success=True because the subprocess
         # completed normally and may have made useful file changes, but
@@ -517,4 +527,7 @@ class ClaudeRunner:
             duration_seconds=duration,
             raw_json=data,
             error=error_msg,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            context_window_pct=context_window_pct,
         )
