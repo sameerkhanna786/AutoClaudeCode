@@ -38,7 +38,7 @@ class SessionState:
             started_at=data.get("started_at", 0.0),
             tasks=data.get("tasks", []),
             completed_task_ids=data.get("completed_task_ids", []),
-            worker_states=data.get("worker_states", {}),
+            worker_states={int(k): v for k, v in data.get("worker_states", {}).items()},
             total_cost_usd=data.get("total_cost_usd", 0.0),
             phase=data.get("phase", "starting"),
         )
