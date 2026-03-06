@@ -216,6 +216,27 @@ class GitHubConfig:
 
 
 @dataclass
+class JudgeConfig:
+    """Configuration for a single LLM judge."""
+    enabled: bool = True
+    model: str = "sonnet"
+    max_turns: int = 5
+    timeout_seconds: int = 300
+    max_cost_usd: float = 0.50
+
+
+@dataclass
+class JudgesConfig:
+    """Configuration for the LLM judges panel."""
+    enabled: bool = False
+    security: JudgeConfig = field(default_factory=lambda: JudgeConfig(enabled=True))
+    quality: JudgeConfig = field(default_factory=lambda: JudgeConfig(enabled=True))
+    architecture: JudgeConfig = field(default_factory=lambda: JudgeConfig(enabled=False))
+    max_total_cost_usd: float = 2.0
+    fail_action: str = "retry"   # "retry" | "rollback" | "warn"
+
+
+@dataclass
 class Config:
     target_dir: str = "."
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
@@ -230,6 +251,7 @@ class Config:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     pricing: PricingConfig = field(default_factory=PricingConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)
+    judges: JudgesConfig = field(default_factory=JudgesConfig)
 
 
 def _get_expected_type(dc_class, field_name: str):
@@ -362,6 +384,17 @@ def load_config(path: Optional[str] = None) -> Config:
                 WebhookConfig(**wh) for wh in notif_raw["webhooks"]
                 if isinstance(wh, dict) and wh.get("url")
             ]
+
+    # Nested judges config
+    if "judges" in raw and isinstance(raw["judges"], dict):
+        judges_raw = raw["judges"]
+        _merge_dataclass(config.judges, {
+            k: v for k, v in judges_raw.items()
+            if k not in ("security", "quality", "architecture")
+        })
+        for judge_name in ("security", "quality", "architecture"):
+            if judge_name in judges_raw and isinstance(judges_raw[judge_name], dict):
+                _merge_dataclass(getattr(config.judges, judge_name), judges_raw[judge_name])
 
     validate_config(config)
     return config

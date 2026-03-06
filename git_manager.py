@@ -233,8 +233,12 @@ class GitManager:
         self._run("clean", "-fd")
         logger.info("Working tree cleaned")
 
-    def commit(self, message: str, files: Optional[List[str]] = None) -> str:
-        """Stage specified files (or all if none given) and commit. Returns the new commit hash."""
+    def commit(self, message: str, files: Optional[List[str]] = None) -> Optional[str]:
+        """Stage specified files (or all if none given) and commit.
+
+        Returns the new commit hash on success, empty string if nothing was
+        staged, or None if the git commit command itself failed.
+        """
         if files is not None and len(files) == 0:
             logger.warning("commit() called with empty file list, nothing to commit")
             return ""
@@ -268,7 +272,7 @@ class GitManager:
                 "git commit failed (exit code %d): %s",
                 result.returncode, result.stderr.strip(),
             )
-            return ""
+            return None
         head = self._run("rev-parse", "HEAD")
         commit_hash = head.stdout.strip()
         logger.info("Committed: %s — %s", commit_hash[:8], message.split("\n", 1)[0])
@@ -372,6 +376,25 @@ class GitManager:
         """Abort an in-progress merge."""
         self._run("merge", "--abort", check=False)
 
+    def get_conflicted_files(self) -> List[str]:
+        """List files with unresolved merge conflicts."""
+        result = self._run("diff", "--name-only", "--diff-filter=U", check=False)
+        if result.returncode != 0:
+            return []
+        return [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+
+    def mark_resolved_and_commit(self, files: List[str], message: str) -> Optional[str]:
+        """Stage resolved files and complete a merge commit."""
+        if not files:
+            return ""
+        self._run("add", "--", *files)
+        result = self._run("commit", "-m", message, check=False, timeout=GIT_COMMIT_TIMEOUT)
+        if result.returncode != 0:
+            logger.warning("Merge commit failed: %s", result.stderr.strip())
+            return None
+        head = self._run("rev-parse", "HEAD")
+        return head.stdout.strip()
+
     def rebase_onto(self, target: str, branch: str) -> bool:
         """Rebase branch onto target. Returns True on success.
 
@@ -402,3 +425,8 @@ class GitManager:
             self._run("gc", "--auto", timeout=120, check=False)
         except Exception as e:
             logger.debug("git gc --auto failed: %s", e)
+
+    def get_diff(self) -> str:
+        """Return the diff of uncommitted changes against HEAD."""
+        result = self._run("diff", "HEAD", check=False)
+        return result.stdout if result.returncode == 0 else ""

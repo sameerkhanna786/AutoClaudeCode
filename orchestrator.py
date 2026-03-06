@@ -297,6 +297,44 @@ class Orchestrator:
                 validation = self.validator.validate(self.config.target_dir)
 
             if validation.passed:
+                # LLM Judge evaluation (before commit)
+                if self.config.judges.enabled:
+                    from llm_judges import JudgePanel
+                    panel = JudgePanel(self.config)
+                    diff_text = self.git.get_diff()
+                    panel_result = panel.evaluate(
+                        changed_files, diff_text,
+                        tasks[0].description,
+                    )
+                    total_cost += panel_result.total_cost_usd
+                    total_duration += panel_result.total_duration_seconds
+                    if not panel_result.passed:
+                        if self.config.judges.fail_action == "retry" and attempt < max_retries:
+                            retry_count += 1
+                            retry_prompt = shared_build_retry_prompt(
+                                tasks, panel_result.blocking_feedback,
+                                self.config.safety.protected_files,
+                                attempt=attempt + 1, max_attempts=max_retries + 1,
+                            )
+                            retry_result = self._run_claude_with_timeout(retry_prompt)
+                            total_cost += retry_result.cost_usd
+                            total_duration += retry_result.duration_seconds
+                            continue  # re-validate
+                        elif self.config.judges.fail_action == "rollback":
+                            self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
+                            self.state.record_cycle(self._make_cycle_record(
+                                tasks, success=False,
+                                cost_usd=total_cost, duration_seconds=total_duration,
+                                error="LLM judges rejected changes",
+                                validation_retry_count=retry_count, **extra,
+                            ))
+                            return
+                        # else "warn": log and continue to commit
+                        logger.warning(
+                            "LLM judges failed but fail_action=%s, continuing",
+                            self.config.judges.fail_action,
+                        )
+
                 # Commit
                 if is_batch:
                     commit_msg = self._build_batch_commit_message(tasks)

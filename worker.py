@@ -23,6 +23,11 @@ from shared import (
     syntax_check_files as _shared_syntax_check_files,
     build_commit_message as _shared_build_commit_message,
     build_batch_commit_message as _shared_build_batch_commit_message,
+    TASK_TYPE_INSTRUCTIONS,
+    build_task_prompt as _shared_build_task_prompt,
+    build_plan_prompt as _shared_build_plan_prompt,
+    build_execute_prompt as _shared_build_execute_prompt,
+    build_retry_prompt as _shared_build_retry_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -329,10 +334,50 @@ class Worker:
                     tasks=self.tasks,
                 )
 
+            # LLM Judge evaluation (before commit)
+            if self.config.judges.enabled:
+                from llm_judges import JudgePanel
+                panel = JudgePanel(self.config)
+                diff_text = self._git.get_diff()
+                panel_result = panel.evaluate(
+                    changed_files, diff_text,
+                    self.tasks[0].description,
+                )
+                total_cost += panel_result.total_cost_usd
+                if not panel_result.passed:
+                    if self.config.judges.fail_action == "rollback":
+                        logger.warning(
+                            "Worker %d: LLM judges rejected changes",
+                            self.worker_id,
+                        )
+                        return WorkerResult(
+                            success=False,
+                            branch_name=self.branch_name,
+                            cost_usd=total_cost,
+                            duration_seconds=time.time() - start_time,
+                            error="LLM judges rejected changes",
+                            tasks=self.tasks,
+                        )
+                    elif self.config.judges.fail_action != "warn":
+                        logger.warning(
+                            "Worker %d: LLM judges failed (action=%s)",
+                            self.worker_id, self.config.judges.fail_action,
+                        )
+
             # Commit locally on the branch
             changed_files = self._git.get_changed_files()
             commit_msg = self._build_commit_message(self.tasks, is_batch)
             commit_hash = self._git.commit(commit_msg, files=changed_files)
+
+            if commit_hash is None:
+                return WorkerResult(
+                    success=False,
+                    branch_name=self.branch_name,
+                    cost_usd=total_cost,
+                    duration_seconds=time.time() - start_time,
+                    error="Commit failed (git error)",
+                    tasks=self.tasks,
+                )
 
             if not commit_hash:
                 return WorkerResult(
@@ -395,40 +440,10 @@ class Worker:
 
     def _build_prompt(self, tasks: List[Task], is_batch: bool) -> str:
         """Build the Claude prompt for the task(s)."""
-        protected = ", ".join(self.config.safety.protected_files)
-
-        if is_batch:
-            task_list = self._format_task_list(tasks)
-            return (
-                f"You are working on the project at {Path(self.worktree_dir).resolve()}.\n"
-                "All file reads, writes, and edits MUST use absolute paths within that directory.\n"
-                "WARNING: Do NOT modify any files outside that directory. Do NOT use relative paths.\n\n"
-                "You have been given a batch of tasks to address in a single comprehensive change.\n\n"
-                f"TASKS:\n{task_list}\n\n"
-                "INSTRUCTIONS:\n"
-                "- Make the minimal changes needed to complete ALL tasks above.\n"
-                "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
-                f"- Do NOT modify these protected files: {protected}\n"
-                "- Focus on correctness. Do NOT run tests — the orchestrator handles testing.\n"
-                "- If a task is unclear or impossible, make your best effort and explain what you did.\n"
-            )
-
-        task = tasks[0]
-        context_section = ""
-        if task.context:
-            context_section = f"\nCONTEXT:\n{task.context}\n"
-        return (
-            f"You are working on the project at {Path(self.worktree_dir).resolve()}.\n"
-            "All file reads, writes, and edits MUST use absolute paths within that directory.\n"
-            "WARNING: Do NOT modify any files outside that directory. Do NOT use relative paths.\n\n"
-            f"TASK: {task.description}\n"
-            f"{context_section}\n"
-            "INSTRUCTIONS:\n"
-            "- Make the minimal changes needed to complete this task.\n"
-            "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
-            f"- Do NOT modify these protected files: {protected}\n"
-            "- Focus on correctness. Do NOT run tests — the orchestrator handles testing.\n"
-            "- If the task is unclear or impossible, make your best effort and explain what you did.\n"
+        return _shared_build_task_prompt(
+            tasks,
+            self.config.safety.protected_files,
+            working_dir=str(Path(self.worktree_dir).resolve()),
         )
 
     def _format_task_list(self, tasks: List[Task]) -> str:
@@ -437,88 +452,32 @@ class Worker:
 
     def _build_plan_prompt(self, tasks: List[Task], is_batch: bool) -> str:
         """Build a planning-only prompt (no file changes)."""
-        protected = ", ".join(self.config.safety.protected_files)
-        wt = Path(self.worktree_dir).resolve()
-
-        if is_batch:
-            task_list = self._format_task_list(tasks)
-            task_section = f"TASKS:\n{task_list}"
-        else:
-            task = tasks[0]
-            ctx = f"\nCONTEXT:\n{task.context}\n" if task.context else ""
-            task_section = f"TASK: {task.description}\n{ctx}"
-
-        return (
-            f"You are working on the project at {wt}.\n"
-            "All file reads MUST use absolute paths within that directory.\n\n"
-            f"{task_section}\n\n"
-            "INSTRUCTIONS:\n"
-            "- Analyze the codebase and create a detailed plan.\n"
-            "- Do NOT make any changes yet. Only output a plan.\n"
-            "- List the files you would modify and what changes you would make.\n"
-            f"- Do NOT modify these protected files: {protected}\n"
-            "- Be specific about the changes (function names, line numbers, etc.).\n"
+        return _shared_build_plan_prompt(
+            tasks,
+            self.config.safety.protected_files,
+            working_dir=str(Path(self.worktree_dir).resolve()),
         )
 
     def _build_execute_prompt(
         self, tasks: List[Task], is_batch: bool, plan_text: str,
     ) -> str:
         """Build an execution prompt that includes a pre-made plan."""
-        protected = ", ".join(self.config.safety.protected_files)
-        wt = Path(self.worktree_dir).resolve()
-
-        if is_batch:
-            task_list = self._format_task_list(tasks)
-            task_section = f"TASKS:\n{task_list}"
-        else:
-            task = tasks[0]
-            ctx = f"\nCONTEXT:\n{task.context}\n" if task.context else ""
-            task_section = f"TASK: {task.description}\n{ctx}"
-
-        return (
-            f"You are working on the project at {wt}.\n"
-            "All file reads, writes, and edits MUST use absolute paths within that directory.\n"
-            "WARNING: Do NOT modify any files outside that directory.\n\n"
-            f"{task_section}\n\n"
-            f"PLAN TO EXECUTE:\n{plan_text}\n\n"
-            "INSTRUCTIONS:\n"
-            "- Execute the plan above. Make the exact changes described.\n"
-            "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
-            f"- Do NOT modify these protected files: {protected}\n"
-            "- Focus on correctness. Do NOT run tests — the orchestrator handles testing.\n"
+        return _shared_build_execute_prompt(
+            tasks,
+            plan_text,
+            self.config.safety.protected_files,
+            working_dir=str(Path(self.worktree_dir).resolve()),
         )
 
     def _build_retry_prompt(
         self, tasks: List[Task], is_batch: bool, failure_output: str,
     ) -> str:
         """Build a retry prompt with validation failure output."""
-        protected = ", ".join(self.config.safety.protected_files)
-        wt = Path(self.worktree_dir).resolve()
-
-        if is_batch:
-            task_list = self._format_task_list(tasks)
-            task_section = f"TASKS:\n{task_list}"
-        else:
-            task = tasks[0]
-            task_section = f"TASK: {task.description}"
-
-        # Truncate failure output to avoid exceeding prompt limits
-        max_output = 8000
-        if len(failure_output) > max_output:
-            failure_output = failure_output[:max_output] + "\n... (truncated)"
-
-        return (
-            f"You are working on the project at {wt}.\n"
-            "All file reads, writes, and edits MUST use absolute paths within that directory.\n"
-            "WARNING: Do NOT modify any files outside that directory.\n\n"
-            f"{task_section}\n\n"
-            "The previous attempt FAILED validation. Here is the failure output:\n\n"
-            f"```\n{failure_output}\n```\n\n"
-            "INSTRUCTIONS:\n"
-            "- Fix the issues shown in the failure output above.\n"
-            "- Do NOT run git commands. The orchestrator handles git.\n"
-            f"- Do NOT modify these protected files: {protected}\n"
-            "- Focus on fixing the test/lint/build failures.\n"
+        return _shared_build_retry_prompt(
+            tasks,
+            failure_output,
+            self.config.safety.protected_files,
+            working_dir=str(Path(self.worktree_dir).resolve()),
         )
 
     def _build_commit_message(self, tasks: List[Task], is_batch: bool) -> str:
