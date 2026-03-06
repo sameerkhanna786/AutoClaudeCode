@@ -28,8 +28,8 @@ feedback/*.md ─►│  ┌──────────┐  ┌────�
                 │  │   TASK   │─►│  CLAUDE  │─►│ VALIDATE │─►│  COMMIT  │ │
 auto-discover ─►│  │  GATHER  │  │  INVOKE  │  │ test/lint│  │ or RETRY │ │
 (tests, lint,   │  └────┬─────┘  └────┬─────┘  └──────────┘  └────┬─────┘ │
- TODOs, ideas)  │       │             │                             │     │
-                │       ▼             ▼                             ▼     │
+ TODOs, ideas)  │       │             │                           │       │
+                │       ▼             ▼                           ▼       │
                 │  ┌──────────┐  ┌──────────┐                ┌──────────┐ │
                 │  │  DEDUP   │  │   LLM    │                │ HISTORY  │ │
                 │  │  + DAG   │  │  JUDGES  │                │ + LEARN  │ │
