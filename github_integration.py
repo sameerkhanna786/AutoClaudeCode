@@ -7,23 +7,11 @@ import logging
 import subprocess
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from config_schema import GitHubConfig
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class GitHubConfig:
-    """Configuration for GitHub integration."""
-    enabled: bool = False
-    token: str = ""
-    repo_owner: str = ""
-    repo_name: str = ""
-    base_branch: str = "main"
-    create_prs: bool = True
-    auto_merge: bool = False
-    label: str = "auto-claude"
 
 
 class GitHubClient:

@@ -130,16 +130,16 @@ def import_prd(prd_path: str) -> List[Task]:
 
 
 def export_prd(prd: Dict[str, Any], output_path: str,
-               format: str = "yaml") -> None:
+               output_format: str = "yaml") -> None:
     """Write PRD to a file in YAML or JSON format."""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    if format == "json":
+    if output_format == "json":
         content = json.dumps(prd, indent=2)
     else:
         content = yaml.dump(prd, default_flow_style=False, sort_keys=False)
 
     path.write_text(content)
     logger.info("Exported PRD to %s (%s format, %d tasks)",
-                output_path, format, len(prd.get("tasks", [])))
+                output_path, output_format, len(prd.get("tasks", [])))
