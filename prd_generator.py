@@ -105,10 +105,6 @@ def import_prd(prd_path: str) -> List[Task]:
             if isinstance(phase, dict):
                 raw_tasks.extend(phase.get("tasks", []))
 
-    # Simple list format: [{"description": "...", ...}]
-    if not raw_tasks and isinstance(data, list):
-        raw_tasks = data
-
     for i, raw in enumerate(raw_tasks):
         if not isinstance(raw, dict):
             continue

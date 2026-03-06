@@ -272,8 +272,6 @@ def _get_expected_type(dc_class, field_name: str):
         return None
     # Unwrap Optional[X] -> X
     origin = getattr(hint, "__origin__", None)
-    if origin is type(None):
-        return None
     # Handle Union (Optional is Union[X, None])
     import typing
     if origin is getattr(typing, "Union", None):
