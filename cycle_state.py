@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -42,6 +43,7 @@ class CycleStateWriter:
             filename = "current_cycle.json"
         self._path = Path(state_dir) / filename
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
 
     @property
     def path(self) -> str:
@@ -81,13 +83,14 @@ class CycleStateWriter:
 
     def update(self, **kwargs: Any) -> None:
         """Read current state, merge kwargs, and write back."""
-        current = read_cycle_state(str(self._path.parent), filename=self._path.name)
-        if current is None:
-            current = CycleState()
-        for k, v in kwargs.items():
-            if hasattr(current, k):
-                setattr(current, k, v)
-        self.write(current)
+        with self._lock:
+            current = read_cycle_state(str(self._path.parent), filename=self._path.name)
+            if current is None:
+                current = CycleState()
+            for k, v in kwargs.items():
+                if hasattr(current, k):
+                    setattr(current, k, v)
+            self.write(current)
 
 
 def read_cycle_state(state_dir: str, filename: str = "current_cycle.json") -> Optional[CycleState]:

@@ -289,7 +289,7 @@ class FeedbackManager:
             stem = dst.stem
             suffix = dst.suffix
             counter = 1
-            while dst.exists():
+            while dst.exists() and counter < 1000:
                 dst = self.done_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
 
@@ -312,7 +312,7 @@ class FeedbackManager:
             stem = dst.stem
             suffix = dst.suffix
             counter = 1
-            while dst.exists():
+            while dst.exists() and counter < 1000:
                 dst = self.failed_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
 
@@ -364,7 +364,7 @@ class FeedbackManager:
             stem = dst.stem
             suffix = dst.suffix
             counter = 1
-            while dst.exists():
+            while dst.exists() and counter < 1000:
                 dst = self.done_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
         try:
@@ -387,7 +387,7 @@ class FeedbackManager:
             stem = dst.stem
             suffix = dst.suffix
             counter = 1
-            while dst.exists():
+            while dst.exists() and counter < 1000:
                 dst = self.failed_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
         try:
