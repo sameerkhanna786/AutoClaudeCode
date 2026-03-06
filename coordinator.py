@@ -97,6 +97,30 @@ class ParallelCoordinator:
         self.safety.pre_flight_checks()
         self._check_worktree_disk_space()
 
+        # Check for orphaned worktrees from a previous crash
+        if self.config.orchestrator.session_recovery:
+            from session_manager import SessionManager
+            session_mgr = SessionManager(str(Path(self.config.paths.state_dir)))
+            orphaned = session_mgr.recover_orphaned_worktrees(self.config.target_dir)
+            if orphaned:
+                logger.warning(
+                    "Found %d orphaned worktrees from a previous session: %s",
+                    len(orphaned),
+                    [o.get("branch", "?") for o in orphaned],
+                )
+                for wt in orphaned:
+                    wt_path = wt.get("path", "")
+                    branch = wt.get("branch", "")
+                    if wt_path:
+                        try:
+                            self.git.remove_worktree(wt_path, force=True)
+                        except Exception:
+                            import shutil
+                            shutil.rmtree(wt_path, ignore_errors=True)
+                    if branch:
+                        self.git.delete_branch(branch, force=True)
+                self.git.prune_worktrees()
+
         # Check for graceful degradation
         cycles_per_hour = self.state.get_cycle_count_last_hour()
         cost_per_hour = self.state.get_total_cost(lookback_seconds=3600)

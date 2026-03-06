@@ -90,6 +90,10 @@ class Orchestrator:
         self._successful_commits = 0
         self._consecutive_empty_plans = 0  # Track planning failures to skip when futile
         self._cycle_counter = 0  # For periodic summary notifications
+        self._session_manager = None
+        if config.orchestrator.session_recovery:
+            from session_manager import SessionManager
+            self._session_manager = SessionManager(str(Path(config.paths.state_dir)))
 
         # Clean stale agent workspace from previous runs
         workspace_dir = Path(self.config.paths.agent_workspace_dir)
@@ -400,6 +404,9 @@ class Orchestrator:
                     "commit": commit_hash,
                     "cost_usd": total_cost,
                 })
+                # Clear session on success
+                if self._session_manager:
+                    self._session_manager.clear_session()
                 return
             if attempt < max_retries:
                 # Cost guard: check accumulated cost against hourly budget
@@ -634,6 +641,19 @@ class Orchestrator:
             started_at=time.time(),
             batch_size=len(tasks),
         ))
+
+        # Save session state for crash recovery
+        if self._session_manager:
+            from session_manager import SessionState
+            session = SessionState(
+                session_id=self._session_manager.create_session_id(),
+                started_at=time.time(),
+                tasks=[{"task_key": t.task_key, "task_id": t.task_id,
+                        "description": t.description, "source": t.source}
+                       for t in tasks],
+                phase="task_selected",
+            )
+            self._session_manager.save_session(session)
 
         try:
             # Backup orchestrator files if self-improving
@@ -941,6 +961,18 @@ class Orchestrator:
 
         try:
             logger.info("Orchestrator started (once=%s)", once)
+
+            # Check for incomplete session from a previous crash
+            if self._session_manager and self._session_manager.has_incomplete_session():
+                prev_session = self._session_manager.load_session()
+                if prev_session:
+                    logger.info(
+                        "Resuming incomplete session %s (phase=%s, cost=$%.2f)",
+                        prev_session.session_id, prev_session.phase,
+                        prev_session.total_cost_usd,
+                    )
+                    self._session_manager.clear_session()
+
             while self._running:
                 try:
                     self._cycle()

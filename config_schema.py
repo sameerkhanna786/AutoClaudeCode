@@ -60,6 +60,8 @@ class OrchestratorConfig:
     # Smart zone: auto-split tasks when context is exhausted
     smart_split: bool = True
     max_split_depth: int = 3
+    # Session recovery: resume after crashes
+    session_recovery: bool = True
 
 
 @dataclass
