@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from config_schema import Config
@@ -39,8 +39,8 @@ def estimate_task_cost(
     tasks: List["Task"],
     model: str,
     prompt_overhead: int = 500,
-    model_costs: dict | None = None,
-    output_cost_multiplier: float | None = None,
+    model_costs: Optional[dict] = None,
+    output_cost_multiplier: Optional[float] = None,
 ) -> float:
     """Estimate the cost in USD to process a batch of tasks.
 
@@ -93,7 +93,7 @@ def check_cost_budget(
     tasks: List["Task"],
     config: "Config",
     state: "StateManager",
-) -> tuple[bool, float, float]:
+) -> "tuple[bool, float, float]":
     """Check whether executing the given tasks would likely exceed the hourly budget.
 
     Returns:

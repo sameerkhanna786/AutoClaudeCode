@@ -192,7 +192,7 @@ class AgentPipeline:
         self,
         tasks: list,
         rollback_fn: Callable[[str], None],
-        snapshot: str,
+        snapshot,
     ) -> PipelineResult:
         """Execute the full pipeline, returning a PipelineResult."""
         ap = self.config.agent_pipeline

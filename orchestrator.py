@@ -842,7 +842,7 @@ class Orchestrator:
 
     def _cycle_multi_agent(
         self, tasks: List[Task], snapshot: Snapshot,
-        pre_existing_files: dict, is_batch: bool,
+        pre_existing_files: set, is_batch: bool,
     ) -> None:
         """Run a cycle using the multi-agent pipeline."""
         logger.info("Running multi-agent pipeline")
