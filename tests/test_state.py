@@ -831,3 +831,190 @@ class TestRecentTaskSummaries:
         assert summaries[0].endswith("... (succeeded)")
         # 97 chars of description + "..."
         assert "A" * 97 + "..." in summaries[0]
+
+
+class TestSuccessRateByType:
+    def test_empty_history(self, state_mgr):
+        assert state_mgr.get_success_rate_by_type() == {}
+
+    def test_mixed_success_fail(self, state_mgr):
+        now = time.time()
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + i, task_description=f"Test {i}",
+                task_type="test_failure", success=(i < 2),
+            ))
+        for i in range(4):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + 10 + i, task_description=f"Lint {i}",
+                task_type="lint", success=(i == 0),
+            ))
+        rates = state_mgr.get_success_rate_by_type()
+        assert abs(rates["test_failure"] - 2 / 3) < 0.01
+        assert abs(rates["lint"] - 1 / 4) < 0.01
+
+    def test_respects_lookback(self, state_mgr):
+        now = time.time()
+        # Old record outside lookback window
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 200000, task_description="Old",
+            task_type="todo", success=True,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 200001, task_description="Old2",
+            task_type="todo", success=False,
+        ))
+        # Recent records
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Recent A",
+            task_type="feedback", success=True,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="Recent B",
+            task_type="feedback", success=True,
+        ))
+        rates = state_mgr.get_success_rate_by_type(lookback_seconds=3600)
+        # Old "todo" records should be excluded (outside lookback)
+        assert "todo" not in rates
+        assert abs(rates["feedback"] - 1.0) < 0.01
+
+    def test_skips_types_with_fewer_than_two_attempts(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Solo",
+            task_type="rare_type", success=True,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="A",
+            task_type="common_type", success=True,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 2, task_description="B",
+            task_type="common_type", success=False,
+        ))
+        rates = state_mgr.get_success_rate_by_type()
+        assert "rare_type" not in rates
+        assert "common_type" in rates
+
+
+class TestStrategyPerformance:
+    def test_empty_history(self, state_mgr):
+        assert state_mgr.get_strategy_performance() == {}
+
+    def test_computes_avg_cost_duration_success_rate(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="A", task_type="feedback",
+            success=True, cost_usd=1.0, duration_seconds=100.0,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="B", task_type="feedback",
+            success=False, cost_usd=3.0, duration_seconds=200.0,
+        ))
+        perf = state_mgr.get_strategy_performance()
+        fb = perf["feedback"]
+        assert fb["total"] == 2
+        assert fb["successes"] == 1
+        assert abs(fb["success_rate"] - 0.5) < 0.01
+        assert abs(fb["avg_cost"] - 2.0) < 0.01
+        assert abs(fb["avg_duration"] - 150.0) < 0.01
+
+    def test_respects_lookback(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 200000, task_description="Old",
+            task_type="test_failure", success=True, cost_usd=5.0,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Recent",
+            task_type="feedback", success=True, cost_usd=1.0,
+        ))
+        perf = state_mgr.get_strategy_performance(lookback_seconds=3600)
+        assert "test_failure" not in perf
+        assert "feedback" in perf
+
+    def test_multiple_sources(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="A", task_type="feedback",
+            success=True, cost_usd=1.0, duration_seconds=60.0,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="B", task_type="lint",
+            success=False, cost_usd=0.5, duration_seconds=30.0,
+        ))
+        perf = state_mgr.get_strategy_performance()
+        assert "feedback" in perf
+        assert "lint" in perf
+        assert perf["feedback"]["success_rate"] == 1.0
+        assert perf["lint"]["success_rate"] == 0.0
+
+
+class TestProductiveFiles:
+    def test_empty_history(self, state_mgr):
+        assert state_mgr.get_productive_files() == []
+
+    def test_extracts_files_from_descriptions(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug in safety.py and state.py",
+            success=True,
+            task_descriptions=["Fix bug in safety.py and state.py"],
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="Update safety.py error handling",
+            success=True,
+            task_descriptions=["Update safety.py error handling"],
+        ))
+        files = state_mgr.get_productive_files()
+        assert files[0] == "safety.py"  # Most frequent
+        assert "state.py" in files
+
+    def test_ignores_failed_cycles(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug in never_seen.py",
+            success=False,
+            task_descriptions=["Fix bug in never_seen.py"],
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="Fix bug in seen.py",
+            success=True,
+            task_descriptions=["Fix bug in seen.py"],
+        ))
+        files = state_mgr.get_productive_files()
+        assert "never_seen.py" not in files
+        assert "seen.py" in files
+
+    def test_sorted_by_frequency(self, state_mgr):
+        now = time.time()
+        # a.py mentioned 3 times, b.py mentioned 1 time
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + i, task_description="Work on a.py",
+                success=True,
+                task_descriptions=["Work on a.py"],
+            ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 10, task_description="Work on b.py",
+            success=True,
+            task_descriptions=["Work on b.py"],
+        ))
+        files = state_mgr.get_productive_files()
+        assert files.index("a.py") < files.index("b.py")
+
+    def test_respects_lookback(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 200000, task_description="Fix old.py",
+            success=True,
+            task_descriptions=["Fix old.py"],
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix recent.py",
+            success=True,
+            task_descriptions=["Fix recent.py"],
+        ))
+        files = state_mgr.get_productive_files(lookback_seconds=3600)
+        assert "old.py" not in files
+        assert "recent.py" in files

@@ -537,6 +537,7 @@ class SafetyGuard:
         self.check_consecutive_failures()
         self.check_backup_dir_size()
         self.check_git_object_growth()
+        logger.debug("All pre-flight checks passed")
 
     def post_claude_checks(self, changed_files: List[str]) -> None:
         """Run safety checks after Claude has made changes."""

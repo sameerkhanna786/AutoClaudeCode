@@ -582,7 +582,7 @@ def validate_config(config: Config) -> None:
         )
     git_check = subprocess.run(
         ["git", "rev-parse", "--git-dir"],
-        cwd=target, capture_output=True, text=True,
+        cwd=target, capture_output=True, text=True, timeout=10,
     )
     if git_check.returncode != 0:
         raise ValueError(
@@ -614,3 +614,19 @@ def validate_config(config: Config) -> None:
                     "Known types: %s",
                     i, wh.type, ", ".join(sorted(_KNOWN_WEBHOOK_TYPES)),
                 )
+
+    # Validate enum-like config fields (warn, don't raise)
+    _ENUM_VALIDATIONS = [
+        (config.claude.provider, ("claude", "openai", "gemini"), "claude.provider"),
+        (config.parallel.merge_strategy, ("rebase", "merge"), "parallel.merge_strategy"),
+        (config.judges.fail_action, ("retry", "rollback", "warn"), "judges.fail_action"),
+        (config.logging.format, ("text", "json"), "logging.format"),
+        (config.agent_pipeline.review_detail, ("minimal", "standard", "thorough"), "agent_pipeline.review_detail"),
+    ]
+    for value, allowed, field_name in _ENUM_VALIDATIONS:
+        if value not in allowed:
+            logger.warning(
+                "Config field '%s' has unrecognized value '%s'. "
+                "Expected one of: %s",
+                field_name, value, ", ".join(sorted(allowed)),
+            )

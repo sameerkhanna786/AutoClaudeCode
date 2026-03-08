@@ -21,18 +21,24 @@ def _read_cache(model_alias: str, cache_path: str = _CACHE_FILE) -> Optional[str
         return None
     try:
         data = json.loads(path.read_text())
-        if (
-            isinstance(data, dict)
-            and data.get("alias") == model_alias
-            and time.time() - data.get("timestamp", 0) < _CACHE_TTL_SECONDS
-        ):
-            resolved = data.get("resolved")
-            if resolved:
-                logger.info(
-                    "Using cached model resolution: '%s' -> '%s'",
-                    model_alias, resolved,
-                )
-                return resolved
+        if not isinstance(data, dict):
+            return None
+        # New multi-alias format: {"entries": {"opus": {"resolved": ..., "timestamp": ...}}}
+        entries = data.get("entries")
+        if isinstance(entries, dict) and model_alias in entries:
+            entry = entries[model_alias]
+            if (
+                isinstance(entry, dict)
+                and time.time() - entry.get("timestamp", 0) < _CACHE_TTL_SECONDS
+            ):
+                resolved = entry.get("resolved")
+                if resolved:
+                    logger.info(
+                        "Using cached model resolution: '%s' -> '%s'",
+                        model_alias, resolved,
+                    )
+                    return resolved
+        # Old single-alias format is ignored (treated as empty cache)
     except (json.JSONDecodeError, OSError, KeyError):
         pass
     return None
@@ -43,12 +49,20 @@ def _write_cache(model_alias: str, resolved: str, cache_path: str = _CACHE_FILE)
     path = Path(cache_path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "alias": model_alias,
+        # Read existing cache to preserve other aliases
+        entries: dict = {}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                if isinstance(data, dict) and isinstance(data.get("entries"), dict):
+                    entries = data["entries"]
+            except (json.JSONDecodeError, OSError):
+                pass  # Start fresh if unreadable
+        entries[model_alias] = {
             "resolved": resolved,
             "timestamp": time.time(),
         }
-        path.write_text(json.dumps(data))
+        path.write_text(json.dumps({"entries": entries}))
     except OSError as e:
         logger.debug("Failed to write model cache: %s", e)
 

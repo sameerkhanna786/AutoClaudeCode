@@ -207,6 +207,17 @@ class FeedbackManager:
                 logger.warning("Failed to read feedback file %s: %s", fpath, e)
                 continue
 
+            # Warn if file was truncated
+            try:
+                if fpath.stat().st_size > MAX_FEEDBACK_CONTENT_LENGTH:
+                    logger.warning(
+                        "Feedback file %s truncated: %d bytes on disk, "
+                        "read limit is %d bytes",
+                        fpath, fpath.stat().st_size, MAX_FEEDBACK_CONTENT_LENGTH,
+                    )
+            except OSError:
+                pass
+
             content = sanitize_feedback_content(content)
             if not content:
                 logger.warning("Feedback file %s was empty or invalid after sanitization", fpath)

@@ -1,11 +1,14 @@
 """Tests for model_resolver module."""
 
+import json
 import subprocess
+import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from model_resolver import resolve_model_id
+from model_resolver import resolve_model_id, _read_cache, _write_cache, _CACHE_TTL_SECONDS
 
 
 # All tests patch _read_cache to return None (bypassing disk cache) so that

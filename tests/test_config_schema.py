@@ -705,3 +705,107 @@ class TestValidateMemoryConfig:
     def test_default_min_memory(self):
         config = Config()
         assert config.safety.min_memory_mb == 256
+
+
+class TestValidateEnumFields:
+    """Tests for enum-like config field validation."""
+
+    def test_invalid_provider_warns(self, caplog):
+        import logging
+        from config_schema import validate_config
+        config = Config()
+        config.claude.provider = "invalid_provider"
+        with caplog.at_level(logging.WARNING):
+            validate_config(config)
+        assert any(
+            "claude.provider" in r.message and "unrecognized value" in r.message
+            for r in caplog.records
+        )
+
+    def test_valid_providers_no_warning(self, caplog):
+        import logging
+        from config_schema import validate_config
+        for provider in ("claude", "openai", "gemini"):
+            caplog.clear()
+            config = Config()
+            config.claude.provider = provider
+            with caplog.at_level(logging.WARNING):
+                validate_config(config)
+            assert not any("claude.provider" in r.message for r in caplog.records)
+
+    def test_invalid_merge_strategy_warns(self, caplog):
+        import logging
+        from config_schema import validate_config
+        config = Config()
+        config.parallel.merge_strategy = "squash"
+        with caplog.at_level(logging.WARNING):
+            validate_config(config)
+        assert any(
+            "parallel.merge_strategy" in r.message and "unrecognized value" in r.message
+            for r in caplog.records
+        )
+
+    def test_invalid_fail_action_warns(self, caplog):
+        import logging
+        from config_schema import validate_config
+        config = Config()
+        config.judges.fail_action = "panic"
+        with caplog.at_level(logging.WARNING):
+            validate_config(config)
+        assert any(
+            "judges.fail_action" in r.message and "unrecognized value" in r.message
+            for r in caplog.records
+        )
+
+    def test_invalid_logging_format_warns(self, caplog):
+        import logging
+        from config_schema import validate_config
+        config = Config()
+        config.logging.format = "xml"
+        with caplog.at_level(logging.WARNING):
+            validate_config(config)
+        assert any(
+            "logging.format" in r.message and "unrecognized value" in r.message
+            for r in caplog.records
+        )
+
+    def test_invalid_review_detail_warns(self, caplog):
+        import logging
+        from config_schema import validate_config
+        config = Config()
+        config.agent_pipeline.review_detail = "extreme"
+        with caplog.at_level(logging.WARNING):
+            validate_config(config)
+        assert any(
+            "agent_pipeline.review_detail" in r.message and "unrecognized value" in r.message
+            for r in caplog.records
+        )
+
+    def test_valid_enum_values_no_warnings(self, caplog):
+        import logging
+        from config_schema import validate_config
+        config = Config()
+        # All defaults are valid
+        with caplog.at_level(logging.WARNING):
+            validate_config(config)
+        enum_fields = [
+            "claude.provider", "parallel.merge_strategy",
+            "judges.fail_action", "logging.format",
+            "agent_pipeline.review_detail",
+        ]
+        for field in enum_fields:
+            assert not any(
+                field in r.message and "unrecognized value" in r.message
+                for r in caplog.records
+            ), f"Unexpected warning for {field}"
+
+    def test_invalid_enum_does_not_raise(self):
+        from config_schema import validate_config
+        config = Config()
+        config.claude.provider = "invalid"
+        config.parallel.merge_strategy = "invalid"
+        config.judges.fail_action = "invalid"
+        config.logging.format = "invalid"
+        config.agent_pipeline.review_detail = "invalid"
+        # Should NOT raise — only warns
+        validate_config(config)
