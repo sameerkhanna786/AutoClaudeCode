@@ -23,6 +23,7 @@ from task_discovery import Task, TaskDiscovery
 from validator import Validator
 from worker import Worker, WorkerResult
 from shared import gather_tasks as _shared_gather_tasks
+from task_queue import TaskApprovalQueue
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ class ParallelCoordinator:
         self._running = True
         self._workers: List[Worker] = []
         self._consecutive_merge_failures: int = 0
+        self._task_queue = TaskApprovalQueue(str(Path(self.config.paths.state_dir)))
 
     def run(self, once: bool = False) -> None:
         """Main loop: discover tasks, dispatch to workers, merge results."""
@@ -152,6 +154,16 @@ class ParallelCoordinator:
         if not groups:
             return
 
+        # Capture baseline test failures once before dispatching workers
+        validator = Validator(self.config)
+        baseline_failures = validator.capture_baseline(self.config.target_dir)
+        if baseline_failures:
+            logger.warning(
+                "Baseline: %d pre-existing test failure(s)", len(baseline_failures),
+            )
+        else:
+            logger.info("Baseline: all tests pass")
+
         logger.info(
             "Dispatching %d task group(s) to parallel workers",
             len(groups),
@@ -187,6 +199,7 @@ class ParallelCoordinator:
                     state=self.state,
                     worker_id=i,
                     main_repo_dir=self.config.target_dir,
+                    baseline_failures=baseline_failures,
                 )
                 self._workers.append(worker)
                 futures[pool.submit(worker.execute)] = worker
@@ -474,7 +487,12 @@ class ParallelCoordinator:
 
     def _gather_tasks(self) -> List[Task]:
         """Gather all eligible tasks (delegates to shared implementation)."""
-        return _shared_gather_tasks(self.config, self.feedback, self.state, self.discovery)
+        dashboard_active = self._task_queue.is_dashboard_active()
+        return _shared_gather_tasks(
+            self.config, self.feedback, self.state, self.discovery,
+            dashboard_active=dashboard_active,
+            task_approval_queue=self._task_queue,
+        )
 
     def _partition_tasks(self, tasks: List[Task]) -> List[List[Task]]:
         """Assign one task per worker, up to max_workers.

@@ -178,3 +178,109 @@ class TestValidator:
         test_steps = [s for s in result.steps if s.name == "tests"]
         assert "standard output" in test_steps[0].output
         assert "error output" in test_steps[0].output
+
+
+class TestCaptureBaseline:
+    @patch("validator.run_with_group_kill")
+    def test_capture_baseline_all_passing(self, mock_run, default_config):
+        """Returns empty set when all tests pass."""
+        default_config.validation.test_command = "python3 -m pytest"
+        v = Validator(default_config)
+        mock_run.return_value = RunResult(returncode=0, stdout="OK", stderr="", timed_out=False)
+        result = v.capture_baseline("/tmp")
+        assert result == set()
+
+    @patch("validator.run_with_group_kill")
+    def test_capture_baseline_with_failures(self, mock_run, default_config):
+        """Returns set of failing test IDs when tests fail."""
+        default_config.validation.test_command = "python3 -m pytest"
+        v = Validator(default_config)
+        output = (
+            "FAILED tests/test_foo.py::TestBar::test_baz - AssertionError\n"
+            "FAILED tests/test_qux.py::test_quux - ValueError\n"
+            "2 failed, 10 passed\n"
+        )
+        mock_run.return_value = RunResult(returncode=1, stdout=output, stderr="", timed_out=False)
+        result = v.capture_baseline("/tmp")
+        assert result == {
+            "tests/test_foo.py::TestBar::test_baz",
+            "tests/test_qux.py::test_quux",
+        }
+
+    def test_capture_baseline_empty_test_command(self, default_config):
+        """Returns empty set when test command is empty."""
+        default_config.validation.test_command = ""
+        v = Validator(default_config)
+        result = v.capture_baseline("/tmp")
+        assert result == set()
+
+    @patch("validator.run_with_group_kill")
+    def test_capture_baseline_no_failed_lines_parsed(self, mock_run, default_config):
+        """Returns empty set when tests fail but no FAILED lines are parseable."""
+        default_config.validation.test_command = "python3 -m pytest"
+        v = Validator(default_config)
+        mock_run.return_value = RunResult(
+            returncode=1, stdout="some other error output", stderr="", timed_out=False,
+        )
+        result = v.capture_baseline("/tmp")
+        assert result == set()
+
+
+class TestValidateWithBaseline:
+    @patch("validator.run_with_group_kill")
+    def test_validate_with_baseline_ignores_preexisting(self, mock_run, default_config):
+        """Pre-existing failures are ignored and validation passes."""
+        default_config.validation.test_command = "python3 -m pytest"
+        v = Validator(default_config)
+        baseline = {"tests/test_foo.py::test_bar"}
+
+        output = "FAILED tests/test_foo.py::test_bar - AssertionError\n1 failed\n"
+        mock_run.return_value = RunResult(returncode=1, stdout=output, stderr="", timed_out=False)
+        result = v.validate_with_baseline("/tmp", baseline)
+        assert result.passed is True
+
+    @patch("validator.run_with_group_kill")
+    def test_validate_with_baseline_catches_new_failures(self, mock_run, default_config):
+        """New failures still fail validation."""
+        default_config.validation.test_command = "python3 -m pytest"
+        v = Validator(default_config)
+        baseline = {"tests/test_foo.py::test_bar"}
+
+        output = "FAILED tests/test_new.py::test_broken - TypeError\n1 failed\n"
+        mock_run.return_value = RunResult(returncode=1, stdout=output, stderr="", timed_out=False)
+        result = v.validate_with_baseline("/tmp", baseline)
+        assert result.passed is False
+
+    @patch("validator.run_with_group_kill")
+    def test_validate_with_baseline_mixed(self, mock_run, default_config):
+        """Pre-existing + new failures → FAIL (only new reported)."""
+        default_config.validation.test_command = "python3 -m pytest"
+        v = Validator(default_config)
+        baseline = {"tests/test_foo.py::test_bar"}
+
+        output = (
+            "FAILED tests/test_foo.py::test_bar - AssertionError\n"
+            "FAILED tests/test_new.py::test_broken - TypeError\n"
+            "2 failed\n"
+        )
+        mock_run.return_value = RunResult(returncode=1, stdout=output, stderr="", timed_out=False)
+        result = v.validate_with_baseline("/tmp", baseline)
+        assert result.passed is False
+
+    @patch("validator.run_with_group_kill")
+    def test_validate_with_baseline_none_falls_back(self, mock_run, default_config):
+        """When baseline_failures is None, falls back to regular validate()."""
+        default_config.validation.test_command = "python3 -m pytest"
+        v = Validator(default_config)
+        mock_run.return_value = RunResult(returncode=0, stdout="OK", stderr="", timed_out=False)
+        result = v.validate_with_baseline("/tmp", None)
+        assert result.passed is True
+
+    @patch("validator.run_with_group_kill")
+    def test_validate_with_baseline_empty_set_falls_back(self, mock_run, default_config):
+        """When baseline_failures is empty set, falls back to regular validate()."""
+        default_config.validation.test_command = "python3 -m pytest"
+        v = Validator(default_config)
+        mock_run.return_value = RunResult(returncode=0, stdout="OK", stderr="", timed_out=False)
+        result = v.validate_with_baseline("/tmp", set())
+        assert result.passed is True

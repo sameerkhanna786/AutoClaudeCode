@@ -72,7 +72,7 @@ class TestWorkerExecute:
             worker._git = MagicMock()
             worker._git.get_changed_files.return_value = []
 
-            with patch('worker.ClaudeRunner') as mock_cr:
+            with patch('provider_runner.create_runner') as mock_cr:
                 mock_runner = MagicMock()
                 mock_runner.run.return_value = ClaudeResult(success=True, cost_usd=0.5)
                 mock_cr.return_value = mock_runner
@@ -102,7 +102,7 @@ class TestWorkerExecute:
         with patch.object(Worker, '_setup_worktree'):
             worker.worktree_dir = tmp_git_repo
 
-            with patch('worker.ClaudeRunner') as mock_cr:
+            with patch('provider_runner.create_runner') as mock_cr:
                 mock_runner = MagicMock()
                 mock_runner.run.return_value = ClaudeResult(
                     success=False, error="API error", cost_usd=0.1,
@@ -196,7 +196,7 @@ class TestWorkerMainRepoSafetyCheck:
             worker._git = MagicMock()
             worker._git.get_changed_files.return_value = ["fix.py"]
 
-            with patch('worker.ClaudeRunner') as mock_cr:
+            with patch('provider_runner.create_runner') as mock_cr:
                 mock_runner = MagicMock()
                 mock_runner.run.return_value = ClaudeResult(
                     success=True, cost_usd=0.5, result_text="done",
@@ -233,3 +233,55 @@ class TestWorkerMainRepoSafetyCheck:
         # Test batch prompt
         prompt_batch = worker._build_prompt(tasks, is_batch=True)
         assert "Do NOT modify any files outside" in prompt_batch
+
+
+class TestWorkerBaseline:
+    def test_worker_uses_baseline_for_validation(self, worker_config, tmp_git_repo):
+        """Worker passes baseline failures to validator.validate_with_baseline()."""
+        state = MagicMock(spec=LockedStateManager)
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        baseline = {"tests/test_foo.py::test_bar"}
+        worker = Worker(
+            worker_config, tasks, state, worker_id=0,
+            main_repo_dir=tmp_git_repo, baseline_failures=baseline,
+        )
+
+        assert worker.baseline_failures == baseline
+
+        # Create a file so there are "changed files"
+        Path(tmp_git_repo, "fix.py").write_text("# fix\n")
+
+        with patch.object(Worker, '_setup_worktree'):
+            worker.worktree_dir = tmp_git_repo
+
+            with patch('provider_runner.create_runner') as mock_cr:
+                mock_runner = MagicMock()
+                mock_runner.run.return_value = ClaudeResult(
+                    success=True, cost_usd=0.5, result_text="done",
+                )
+                mock_cr.return_value = mock_runner
+
+                with patch('worker.CycleStateWriter'):
+                    with patch('worker.Validator') as MockValidator:
+                        mock_validator = MagicMock()
+                        mock_validation = MagicMock()
+                        mock_validation.passed = True
+                        mock_validator.validate_with_baseline.return_value = mock_validation
+                        MockValidator.return_value = mock_validator
+
+                        result = worker.execute()
+
+                        # Verify validate_with_baseline was called with baseline
+                        mock_validator.validate_with_baseline.assert_called_with(
+                            worker.worktree_dir, baseline,
+                        )
+
+    def test_worker_default_baseline_empty(self, worker_config, tmp_git_repo):
+        """Worker defaults to empty baseline when none provided."""
+        state = MagicMock(spec=LockedStateManager)
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        worker = Worker(
+            worker_config, tasks, state, worker_id=0,
+            main_repo_dir=tmp_git_repo,
+        )
+        assert worker.baseline_failures == set()

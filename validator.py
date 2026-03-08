@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from config_schema import Config
 from process_utils import run_with_group_kill
@@ -112,6 +113,109 @@ class Validator:
             if not step.passed and command.strip():
                 logger.warning("%s failed (rc=%d)", name, step.return_code)
                 return ValidationResult(passed=False, steps=steps)
+
+        return ValidationResult(passed=True, steps=steps)
+
+    # Regex to parse pytest FAILED lines, e.g.:
+    # FAILED tests/test_foo.py::TestBar::test_baz - AssertionError: ...
+    _FAILED_LINE_RE = re.compile(r'^FAILED\s+(\S+)', re.MULTILINE)
+
+    def capture_baseline(self, working_dir: Optional[str] = None) -> Set[str]:
+        """Run the test suite and return the set of already-failing test IDs.
+
+        Returns an empty set if all tests pass or on parse error.
+        """
+        cwd = working_dir or self.config.target_dir
+        vc = self.config.validation
+        test_cmd = vc.test_command.strip()
+        if not test_cmd:
+            return set()
+
+        # Append --tb=line for faster output
+        baseline_cmd = f"{test_cmd} --tb=line"
+        step = self._run_command("baseline", baseline_cmd, vc.test_timeout, cwd)
+
+        if step.passed:
+            logger.info("Baseline: all tests pass")
+            return set()
+
+        failures = set(self._FAILED_LINE_RE.findall(step.output))
+        if failures:
+            logger.info("Baseline: %d pre-existing test failure(s)", len(failures))
+        else:
+            logger.warning(
+                "Baseline: tests failed (rc=%d) but no FAILED lines parsed",
+                step.return_code,
+            )
+        return failures
+
+    def validate_with_baseline(
+        self,
+        working_dir: Optional[str] = None,
+        baseline_failures: Optional[Set[str]] = None,
+    ) -> ValidationResult:
+        """Like validate(), but pre-existing test failures are ignored.
+
+        If baseline_failures is None or empty, behaves identically to validate().
+        """
+        if not baseline_failures:
+            return self.validate(working_dir)
+
+        cwd = working_dir or self.config.target_dir
+        vc = self.config.validation
+        steps: List[ValidationStep] = []
+
+        # Run lint first
+        lint_step = self._run_command("lint", vc.lint_command, vc.lint_timeout, cwd)
+        steps.append(lint_step)
+        if not lint_step.passed and vc.lint_command.strip():
+            logger.warning("lint failed (rc=%d)", lint_step.return_code)
+            return ValidationResult(passed=False, steps=steps)
+
+        # Run tests
+        test_step = self._run_command("tests", vc.test_command, vc.test_timeout, cwd)
+        if test_step.passed:
+            steps.append(test_step)
+        else:
+            # Parse current failures and subtract baseline
+            current_failures = set(self._FAILED_LINE_RE.findall(test_step.output))
+            new_failures = current_failures - baseline_failures
+            ignored = current_failures & baseline_failures
+
+            if ignored:
+                logger.warning(
+                    "Ignoring %d pre-existing test failure(s): %s",
+                    len(ignored), sorted(ignored),
+                )
+
+            if new_failures:
+                # Real new failures — report as FAIL
+                logger.warning(
+                    "New test failures (not in baseline): %s",
+                    sorted(new_failures),
+                )
+                steps.append(test_step)
+                return ValidationResult(passed=False, steps=steps)
+            else:
+                # All failures are pre-existing — treat as PASS
+                logger.info(
+                    "All %d test failure(s) are pre-existing, treating tests as passed",
+                    len(current_failures),
+                )
+                steps.append(ValidationStep(
+                    name="tests",
+                    command=test_step.command,
+                    passed=True,
+                    output=test_step.output,
+                    return_code=test_step.return_code,
+                ))
+
+        # Run build
+        build_step = self._run_command("build", vc.build_command, vc.build_timeout, cwd)
+        steps.append(build_step)
+        if not build_step.passed and vc.build_command.strip():
+            logger.warning("build failed (rc=%d)", build_step.return_code)
+            return ValidationResult(passed=False, steps=steps)
 
         return ValidationResult(passed=True, steps=steps)
 

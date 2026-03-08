@@ -43,7 +43,6 @@ class ConflictResolver:
             (success, cost_usd) tuple. success is True only if all files were
             resolved without remaining conflict markers.
         """
-        self._total_cost = 0.0
         max_cost = self.config.parallel.conflict_resolution_max_cost
 
         for filepath in conflicted_files:

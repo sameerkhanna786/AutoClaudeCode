@@ -7,7 +7,7 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from claude_runner import ClaudeRunner, ClaudeResult
 from config_schema import Config
@@ -60,12 +60,14 @@ class Worker:
         state: LockedStateManager,
         worker_id: int,
         main_repo_dir: str,
+        baseline_failures: Optional[Set[str]] = None,
     ):
         self.config = config
         self.tasks = tasks
         self.worker_id = worker_id
         self.state = state
         self.main_repo_dir = main_repo_dir
+        self.baseline_failures = baseline_failures or set()
         self.branch_name = f"auto-claude/{int(time.time())}-{worker_id}"
 
         worktree_base = config.parallel.worktree_base_dir
@@ -186,11 +188,18 @@ class Worker:
                         self.tasks, is_batch, plan_result.result_text,
                     )
                 else:
-                    logger.warning(
-                        "Worker %d: planning returned empty result, "
-                        "falling back to direct execution",
-                        self.worker_id,
-                    )
+                    if plan_result.error and "max_turns" in plan_result.error:
+                        logger.warning(
+                            "Worker %d: planning exhausted max_turns with no output, "
+                            "skipping planning",
+                            self.worker_id,
+                        )
+                    else:
+                        logger.warning(
+                            "Worker %d: planning returned empty result, "
+                            "falling back to direct execution",
+                            self.worker_id,
+                        )
                     # exec_prompt already set to direct prompt above
 
             # --- Execution phase ---
@@ -281,7 +290,9 @@ class Worker:
             max_retries = self.config.orchestrator.max_validation_retries
             cycle_state.update(phase="validating")
             validator = Validator(self.config)
-            validation = validator.validate(self.worktree_dir)
+            validation = validator.validate_with_baseline(
+                self.worktree_dir, self.baseline_failures,
+            )
 
             retry = 0
             while not validation.passed and retry < max_retries:
@@ -320,7 +331,9 @@ class Worker:
 
                 # Re-validate
                 cycle_state.update(phase="validating")
-                validation = validator.validate(self.worktree_dir)
+                validation = validator.validate_with_baseline(
+                    self.worktree_dir, self.baseline_failures,
+                )
 
             if not validation.passed:
                 logger.warning(
