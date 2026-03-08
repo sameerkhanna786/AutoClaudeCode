@@ -122,16 +122,29 @@ def syntax_check_files(changed_files: List[str], base_dir: str) -> Optional[str]
     return None
 
 
-def gather_tasks(config, feedback_manager, state_manager, discovery) -> List[Task]:
+def gather_tasks(config, feedback_manager, state_manager, discovery,
+                  dashboard_active: bool = False,
+                  task_approval_queue=None) -> List[Task]:
     """Gather all eligible tasks from feedback and auto-discovery.
 
     Shared between Orchestrator and ParallelCoordinator.
     When config.discovery.adaptive_priority is True, task priorities are
     boosted based on historical success rates per task type.
+
+    When dashboard_active is True and task_approval_queue is provided and
+    config.orchestrator.task_approval is True:
+    - Feedback tasks are returned immediately (bypass approval gate)
+    - Auto-discovered tasks are enqueued for approval and excluded from return
+    - Previously approved tasks are included in the return list
     """
     tasks: List[Task] = []
+    approval_active = (
+        dashboard_active
+        and task_approval_queue is not None
+        and getattr(config.orchestrator, 'task_approval', True)
+    )
 
-    # Priority 1: developer feedback
+    # Priority 1: developer feedback (always bypass approval gate)
     max_retries = config.orchestrator.max_feedback_retries
     for task in feedback_manager.get_pending_feedback():
         failure_count = state_manager.get_task_failure_count(
@@ -152,11 +165,40 @@ def gather_tasks(config, feedback_manager, state_manager, discovery) -> List[Tas
 
     # Auto-discovered tasks
     discovered = discovery.discover_all()
+    discovered_eligible = []
     for task in discovered:
         if not state_manager.was_recently_attempted(
             task.description, task_key=task.task_key,
         ):
-            tasks.append(task)
+            discovered_eligible.append(task)
+
+    if approval_active:
+        # Enqueue auto-discovered tasks for approval instead of returning them
+        # Exception: test_failure tasks are always safe to attempt (the test
+        # already exists and is already failing), so auto-approve them.
+        cooldown = config.discovery.idea_cooldown_seconds
+        enqueued_count = 0
+        for task in discovered_eligible:
+            if task.source == "test_failure":
+                tasks.append(task)
+            else:
+                task_approval_queue.enqueue(task, cooldown_seconds=cooldown)
+                enqueued_count += 1
+
+        # Include previously approved tasks
+        approved = task_approval_queue.get_approved()
+        tasks.extend(approved)
+
+        if enqueued_count and not approved:
+            pending_total = task_approval_queue.pending_count() if hasattr(task_approval_queue, 'pending_count') else enqueued_count
+            logger.info(
+                "Task approval gate active: %d task(s) pending approval in dashboard, "
+                "0 approved. Approve tasks at the dashboard to proceed.",
+                pending_total,
+            )
+    else:
+        # No approval gate — include all discovered tasks directly
+        tasks.extend(discovered_eligible)
 
     # Apply adaptive priority: boost tasks of types with high success rates
     if config.discovery.adaptive_priority and tasks:
@@ -443,6 +485,7 @@ def build_task_prompt(
             "- Focus on correctness. Run tests if available.\n"
             "- If a task is unclear or impossible, make your best effort and explain what you did.\n"
             "- Use the CONTEXT provided with each task to understand the code and errors involved.\n"
+            "- Make your changes immediately. Do NOT spend turns exploring the codebase — go directly to editing files.\n"
         )
 
     task = tasks[0]
@@ -461,6 +504,7 @@ def build_task_prompt(
         "- Focus on correctness. Run tests if available.\n"
         "- If the task is unclear or impossible, make your best effort and explain what you did.\n"
         f"{specific_instructions}\n"
+        "- Make your changes immediately. Do NOT spend turns exploring the codebase — go directly to editing files.\n"
     )
 
 
@@ -501,6 +545,7 @@ def build_plan_prompt(
             "- Group related changes together where possible for clarity.\n"
             "- Address the tasks in priority order but look for opportunities to combine related changes.\n"
             "- Use the CONTEXT provided with each task to understand the code and errors involved.\n"
+            "- Output your complete plan within 5 turns. Do NOT spend turns reading files — focus on producing the plan.\n"
         )
 
     task = tasks[0]
@@ -519,6 +564,7 @@ def build_plan_prompt(
         f"- Do NOT modify these protected files: {protected}\n"
         "- Be specific about the changes (function names, line numbers, etc.).\n"
         f"{specific_instructions}\n"
+        "- Output your complete plan within 5 turns. Do NOT spend turns reading files — focus on producing the plan.\n"
     )
 
 
@@ -554,6 +600,7 @@ def build_execute_prompt(
             "- Stick to the plan. Do not deviate unless the plan has an obvious error.\n"
             "- Make ALL changes in this single session. This is a comprehensive revamp, not incremental.\n"
             "- Use the CONTEXT provided with each task to understand the code and errors involved.\n"
+            "- Make your changes immediately. Do NOT spend turns exploring the codebase — go directly to editing files.\n"
         )
 
     task = tasks[0]
@@ -573,6 +620,7 @@ def build_execute_prompt(
         "- Focus on correctness. Run tests if available.\n"
         "- Stick to the plan. Do not deviate unless the plan has an obvious error.\n"
         f"{specific_instructions}\n"
+        "- Make your changes immediately. Do NOT spend turns exploring the codebase — go directly to editing files.\n"
     )
 
 

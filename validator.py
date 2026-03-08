@@ -172,13 +172,30 @@ class Validator:
             logger.warning("lint failed (rc=%d)", lint_step.return_code)
             return ValidationResult(passed=False, steps=steps)
 
-        # Run tests
-        test_step = self._run_command("tests", vc.test_command, vc.test_timeout, cwd)
+        # Run tests — strip -x when baseline is active so all failures are visible
+        test_cmd = vc.test_command
+        if baseline_failures and " -x " in f" {test_cmd} ":
+            test_cmd = test_cmd.replace(" -x ", " ").replace(" -x", "").strip()
+            logger.debug("Removed -x from test command for baseline comparison")
+        test_step = self._run_command("tests", test_cmd, vc.test_timeout, cwd)
         if test_step.passed:
             steps.append(test_step)
         else:
             # Parse current failures and subtract baseline
             current_failures = set(self._FAILED_LINE_RE.findall(test_step.output))
+
+            if not current_failures:
+                # Tests failed but we couldn't parse any FAILED lines —
+                # could be a collection error, import error, segfault, etc.
+                # Treat as a genuine failure rather than silently passing.
+                logger.warning(
+                    "Tests failed (rc=%d) but no FAILED lines parsed, "
+                    "treating as genuine failure",
+                    test_step.return_code,
+                )
+                steps.append(test_step)
+                return ValidationResult(passed=False, steps=steps)
+
             new_failures = current_failures - baseline_failures
             ignored = current_failures & baseline_failures
 

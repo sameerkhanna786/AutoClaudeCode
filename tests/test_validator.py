@@ -284,3 +284,38 @@ class TestValidateWithBaseline:
         mock_run.return_value = RunResult(returncode=0, stdout="OK", stderr="", timed_out=False)
         result = v.validate_with_baseline("/tmp", set())
         assert result.passed is True
+
+    @patch("validator.run_with_group_kill")
+    def test_validate_with_baseline_unparseable_failure(self, mock_run, default_config):
+        """Tests fail with rc=1 but no FAILED lines → should be treated as genuine failure."""
+        default_config.validation.test_command = "python3 -m pytest"
+        v = Validator(default_config)
+        baseline = {"tests/test_foo.py::test_bar"}
+
+        # Simulate a collection error / import error — non-zero exit but no FAILED lines
+        mock_run.return_value = RunResult(
+            returncode=1, stdout="ImportError: cannot import name 'foo'", stderr="", timed_out=False,
+        )
+        result = v.validate_with_baseline("/tmp", baseline)
+        assert result.passed is False
+
+    @patch("validator.run_with_group_kill")
+    def test_validate_with_baseline_strips_dash_x(self, mock_run, default_config):
+        """-x is removed from test command when baseline is active."""
+        default_config.validation.test_command = "python3 -m pytest tests/ -x -q"
+        v = Validator(default_config)
+        baseline = {"tests/test_foo.py::test_bar"}
+
+        output = "FAILED tests/test_foo.py::test_bar - AssertionError\n1 failed\n"
+        mock_run.return_value = RunResult(returncode=1, stdout=output, stderr="", timed_out=False)
+        v.validate_with_baseline("/tmp", baseline)
+
+        # Find the tests call (skip lint which is empty)
+        test_calls = [
+            c for c in mock_run.call_args_list
+            if isinstance(c[0][0], str) and "pytest" in c[0][0]
+        ]
+        assert len(test_calls) >= 1
+        test_cmd = test_calls[0][0][0]
+        assert " -x " not in f" {test_cmd} "
+        assert "-q" in test_cmd  # other flags preserved

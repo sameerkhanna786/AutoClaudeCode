@@ -37,7 +37,7 @@ class OrchestratorConfig:
     self_improve: bool = False
     push_after_commit: bool = False
     plan_changes: bool = False
-    planning_max_turns: int = 15
+    planning_max_turns: int = 8
     max_feedback_retries: int = 3
     max_tasks_per_cycle: int = 10
     batch_mode: bool = True
@@ -97,7 +97,7 @@ class DiscoveryConfig:
     discovery_timeout: int = 7200
     discovery_max_turns: int = 15
     discovery_prompt: str = ""  # Custom prompt for claude_ideas; empty = use default
-    idea_cooldown_seconds: int = 0  # Minimum seconds between claude_ideas runs; 0 = no limit
+    idea_cooldown_seconds: int = 600  # Minimum seconds between claude_ideas runs; 0 = no limit
     adaptive_priority: bool = False  # Boost priority of high-success-rate task types
 
 

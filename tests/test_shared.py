@@ -169,6 +169,119 @@ class TestGatherTasks(unittest.TestCase):
         self.assertEqual(len(result), 0)
         feedback.mark_failed.assert_called_once_with("broken.md")
 
+    def test_dashboard_active_enqueues_discovered_tasks(self):
+        """When dashboard is active, auto-discovered tasks go to approval queue."""
+        disc_task = Task(description="Fix lint in foo.py", priority=2, source="lint")
+        config, feedback, state, discovery = self._make_mocks(discovered_tasks=[disc_task])
+        config.orchestrator.task_approval = True
+
+        mock_queue = MagicMock()
+        mock_queue.get_approved.return_value = []
+        mock_queue.enqueue.return_value = "lint_foo.py"
+
+        result = gather_tasks(config, feedback, state, discovery,
+                              dashboard_active=True, task_approval_queue=mock_queue)
+        # Discovered task should NOT be in result (enqueued instead)
+        self.assertEqual(len(result), 0)
+        mock_queue.enqueue.assert_called_once()
+
+    def test_dashboard_active_feedback_bypasses_approval(self):
+        """Feedback tasks should bypass approval gate even when dashboard is active."""
+        fb_task = Task(description="Fix login", priority=1, source="feedback",
+                       source_file="login.md")
+        config, feedback, state, discovery = self._make_mocks(feedback_tasks=[fb_task])
+        config.orchestrator.task_approval = True
+
+        mock_queue = MagicMock()
+        mock_queue.get_approved.return_value = []
+
+        result = gather_tasks(config, feedback, state, discovery,
+                              dashboard_active=True, task_approval_queue=mock_queue)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].source, "feedback")
+
+    def test_dashboard_active_returns_approved_tasks(self):
+        """Approved tasks should be included in the result."""
+        config, feedback, state, discovery = self._make_mocks()
+        config.orchestrator.task_approval = True
+
+        approved_task = Task(description="Approved task", priority=3, source="lint")
+        mock_queue = MagicMock()
+        mock_queue.get_approved.return_value = [approved_task]
+
+        result = gather_tasks(config, feedback, state, discovery,
+                              dashboard_active=True, task_approval_queue=mock_queue)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].description, "Approved task")
+
+    def test_dashboard_inactive_no_approval_gate(self):
+        """When dashboard is not active, discovered tasks return directly."""
+        disc_task = Task(description="Fix lint in foo.py", priority=2, source="lint")
+        config, feedback, state, discovery = self._make_mocks(discovered_tasks=[disc_task])
+        config.orchestrator.task_approval = True
+
+        mock_queue = MagicMock()
+        result = gather_tasks(config, feedback, state, discovery,
+                              dashboard_active=False, task_approval_queue=mock_queue)
+        self.assertEqual(len(result), 1)
+        mock_queue.enqueue.assert_not_called()
+
+    def test_task_approval_disabled(self):
+        """When task_approval is False, discovered tasks return directly."""
+        disc_task = Task(description="Fix lint in foo.py", priority=2, source="lint")
+        config, feedback, state, discovery = self._make_mocks(discovered_tasks=[disc_task])
+        config.orchestrator.task_approval = False
+
+        mock_queue = MagicMock()
+        result = gather_tasks(config, feedback, state, discovery,
+                              dashboard_active=True, task_approval_queue=mock_queue)
+        self.assertEqual(len(result), 1)
+        mock_queue.enqueue.assert_not_called()
+
+    def test_gather_tasks_logs_approval_gate_blocking(self):
+        """Log message when tasks pending approval but none approved."""
+        disc_task = Task(description="Fix lint in foo.py", priority=2, source="lint")
+        config, feedback, state, discovery = self._make_mocks(discovered_tasks=[disc_task])
+        config.orchestrator.task_approval = True
+        config.discovery.idea_cooldown_seconds = 600
+
+        mock_queue = MagicMock()
+        mock_queue.get_approved.return_value = []
+        mock_queue.enqueue.return_value = "lint_foo.py"
+        mock_queue.pending_count.return_value = 1
+
+        with patch("shared.logger") as mock_logger:
+            result = gather_tasks(config, feedback, state, discovery,
+                                  dashboard_active=True, task_approval_queue=mock_queue)
+            self.assertEqual(len(result), 0)
+            # Check that the approval gate message was logged
+            mock_logger.info.assert_any_call(
+                "Task approval gate active: %d task(s) pending approval in dashboard, "
+                "0 approved. Approve tasks at the dashboard to proceed.",
+                1,
+            )
+
+    def test_gather_tasks_auto_approves_test_failures(self):
+        """test_failure tasks bypass approval gate automatically."""
+        test_task = Task(description="Fix test_foo.py::test_bar", priority=1, source="test_failure")
+        lint_task = Task(description="Fix lint in foo.py", priority=2, source="lint")
+        config, feedback, state, discovery = self._make_mocks(
+            discovered_tasks=[test_task, lint_task],
+        )
+        config.orchestrator.task_approval = True
+        config.discovery.idea_cooldown_seconds = 600
+
+        mock_queue = MagicMock()
+        mock_queue.get_approved.return_value = []
+
+        result = gather_tasks(config, feedback, state, discovery,
+                              dashboard_active=True, task_approval_queue=mock_queue)
+        # test_failure task should be auto-approved (in result)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].source, "test_failure")
+        # lint task should be enqueued, not returned
+        mock_queue.enqueue.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # clean_description
