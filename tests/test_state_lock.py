@@ -126,3 +126,67 @@ class TestLockedStateManager:
         )
         locked_state.record_cycle(record)
         assert locked_state._lock_path.exists()
+
+
+class TestReentrantLock:
+    """Tests that nested lock acquisitions don't deadlock."""
+
+    def test_should_auto_reset_failures_no_deadlock(self, locked_state):
+        """should_auto_reset_failures calls get_consecutive_failures internally.
+
+        This previously deadlocked because both methods acquire _file_lock,
+        and fcntl.flock is not re-entrant across different file descriptors.
+        """
+        # Set up: create enough failures to trigger the auto-reset path
+        old_time = time.time() - 7200  # 2 hours ago
+        for i in range(5):
+            locked_state.record_cycle(CycleRecord(
+                timestamp=old_time + i,
+                task_description=f"Fail {i}",
+                task_type="test_failure",
+                success=False,
+            ))
+        # This must not deadlock — should_auto_reset_failures internally
+        # calls get_consecutive_failures which also acquires the lock
+        result = locked_state.should_auto_reset_failures(min_idle_seconds=3600)
+        assert result is True
+
+    def test_reset_consecutive_failures_no_deadlock(self, locked_state):
+        """reset_consecutive_failures calls record_cycle internally.
+
+        Both methods acquire _file_lock; without re-entrancy this deadlocks.
+        """
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Fail",
+            task_type="test_failure",
+            success=False,
+        ))
+        # This must not deadlock — reset_consecutive_failures internally
+        # calls record_cycle which also acquires the lock
+        locked_state.reset_consecutive_failures("test reset")
+        assert locked_state.get_consecutive_failures() == 0
+
+    def test_reentrant_lock_is_per_thread(self, locked_state):
+        """Lock re-entrancy is thread-local; different threads still serialize."""
+        order = []
+
+        def thread_fn(thread_id):
+            with locked_state._file_lock():
+                order.append(f"{thread_id}-start")
+                time.sleep(0.2)  # Hold the lock
+                order.append(f"{thread_id}-end")
+
+        t1 = threading.Thread(target=thread_fn, args=(1,))
+        t2 = threading.Thread(target=thread_fn, args=(2,))
+        t1.start()
+        time.sleep(0.05)  # Let t1 acquire first
+        t2.start()
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+        # Both threads completed and were serialized (no interleaving)
+        assert len(order) == 4
+        # First thread completes before second starts
+        assert order[0].endswith("-start")
+        assert order[1].endswith("-end")
+        assert order[0][0] == order[1][0]  # Same thread ID

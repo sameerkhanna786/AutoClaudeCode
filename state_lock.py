@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import logging
 import os
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List
@@ -21,20 +22,40 @@ class LockedStateManager(StateManager):
     Wraps read-modify-write operations (record_cycle, was_recently_attempted)
     with an exclusive file lock so multiple worker threads can safely share
     a single history.json file.
+
+    The lock is re-entrant: if the current thread already holds the lock,
+    nested acquisitions are no-ops. This prevents deadlocks when locked
+    methods call other locked methods internally (e.g.,
+    should_auto_reset_failures -> get_consecutive_failures,
+    reset_consecutive_failures -> record_cycle).
     """
 
     def __init__(self, config: Config):
         super().__init__(config)
         self._lock_path = Path(config.paths.state_dir) / "history.lock"
+        self._local = threading.local()
 
     @contextmanager
     def _file_lock(self):
-        """Acquire exclusive lock on history.lock for read-modify-write safety."""
+        """Acquire exclusive lock on history.lock for read-modify-write safety.
+
+        Re-entrant: if the current thread already holds the lock, yields
+        immediately without re-acquiring (avoiding deadlock on the same inode).
+        """
+        # Check if current thread already holds the lock
+        if getattr(self._local, 'held', False):
+            yield
+            return
+
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
+            self._local.held = True
+            try:
+                yield
+            finally:
+                self._local.held = False
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
