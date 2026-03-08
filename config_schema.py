@@ -64,6 +64,9 @@ class OrchestratorConfig:
     max_split_depth: int = 3
     # Session recovery: resume after crashes
     session_recovery: bool = True
+    # Task approval gate: when True and dashboard is connected, auto-discovered
+    # tasks are queued for user approval before execution
+    task_approval: bool = True
 
 
 @dataclass
@@ -126,6 +129,8 @@ class AgentPipelineConfig:
     enabled: bool = False
     max_revisions: int = 2
     max_pipeline_cost_usd: float = 0.0  # 0 = use safety.max_cost_usd_per_hour * 0.5
+    review_detail: str = "standard"  # "minimal" | "standard" | "thorough"
+    review_confidence_threshold: float = 0.70  # min confidence for findings to surface
     planner: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
         model="opus", max_turns=10, timeout_seconds=7200))
     coder: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
@@ -474,9 +479,9 @@ def validate_config(config: Config) -> None:
         )
 
     # Cross-field: Claude timeout must exceed test timeout
-    if config.claude.timeout_seconds < config.validation.test_timeout:
+    if config.claude.timeout_seconds <= config.validation.test_timeout:
         raise ValueError(
-            f"claude.timeout_seconds ({config.claude.timeout_seconds}) must be >= "
+            f"claude.timeout_seconds ({config.claude.timeout_seconds}) must be greater than "
             f"validation.test_timeout ({config.validation.test_timeout}) to ensure tests "
             f"can complete before Claude times out"
         )

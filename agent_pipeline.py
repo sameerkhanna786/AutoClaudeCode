@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import re
 import threading
@@ -47,6 +48,27 @@ class AgentCostSummary:
     total_cost_usd: float = 0.0
     total_duration_seconds: float = 0.0
     invocation_count: int = 0
+
+
+@dataclass
+class ReviewFinding:
+    """A single structured finding from the reviewer."""
+    filepath: str
+    line_number: int = 0
+    severity: str = "warning"       # "error" | "warning" | "information"
+    category: str = ""              # "quality" | "security" | "testing" | "architecture"
+    description: str = ""
+    suggestion: str = ""
+    confidence: float = 0.8
+
+
+@dataclass
+class ReviewReport:
+    """Structured review output with categorized findings."""
+    approved: bool
+    findings: List[ReviewFinding] = field(default_factory=list)
+    summary: str = ""
+    test_suggestions: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -166,6 +188,158 @@ class AgentPipeline:
                 return match.group(1).upper() == "APPROVED"
         return False
 
+    @staticmethod
+    def _parse_structured_review(review_text: str) -> Optional[ReviewReport]:
+        """Parse structured review JSON from reviewer output.
+
+        Looks for a ```json ... ``` block containing a review report with
+        findings. Returns None if no structured review is found (caller
+        should fall back to _parse_review_verdict).
+        """
+        if not review_text:
+            return None
+
+        # Extract JSON block from markdown code fence
+        json_match = re.search(
+            r"```json\s*\n(.*?)\n\s*```", review_text, re.DOTALL
+        )
+        if not json_match:
+            return None
+
+        try:
+            data = json.loads(json_match.group(1))
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        # Must have "findings" key to be considered structured
+        if "findings" not in data:
+            return None
+
+        findings = []
+        for f in data.get("findings", []):
+            if not isinstance(f, dict):
+                continue
+            findings.append(ReviewFinding(
+                filepath=str(f.get("filepath", "")),
+                line_number=int(f.get("line_number", 0)),
+                severity=str(f.get("severity", "warning")).lower(),
+                category=str(f.get("category", "")),
+                description=str(f.get("description", "")),
+                suggestion=str(f.get("suggestion", "")),
+                confidence=float(f.get("confidence", 0.8)),
+            ))
+
+        # Parse verdict from the JSON or fall back to text
+        approved = bool(data.get("approved", False))
+        if "approved" not in data:
+            approved = AgentPipeline._parse_review_verdict(review_text)
+
+        return ReviewReport(
+            approved=approved,
+            findings=findings,
+            summary=str(data.get("summary", "")),
+            test_suggestions=[
+                str(s) for s in data.get("test_suggestions", [])
+                if isinstance(s, str)
+            ],
+        )
+
+    @staticmethod
+    def _filter_findings(
+        findings: List[ReviewFinding],
+        confidence_threshold: float = 0.70,
+    ) -> List[ReviewFinding]:
+        """Filter findings by severity-dependent confidence thresholds.
+
+        - error: keep if confidence >= max(0.85, threshold)
+        - warning: keep if confidence >= threshold
+        - information: keep if confidence >= 0.25
+        Deduplicates by (filepath, line_number).
+        """
+        severity_thresholds = {
+            "error": max(0.85, confidence_threshold),
+            "warning": confidence_threshold,
+            "information": 0.25,
+        }
+
+        seen = set()
+        filtered = []
+        for f in findings:
+            threshold = severity_thresholds.get(f.severity, confidence_threshold)
+            if f.confidence < threshold:
+                continue
+            key = (f.filepath, f.line_number)
+            if key in seen and f.line_number != 0:
+                continue
+            if f.line_number != 0:
+                seen.add(key)
+            filtered.append(f)
+        return filtered
+
+    @staticmethod
+    def _format_structured_feedback(report: ReviewReport) -> str:
+        """Format a ReviewReport into structured text for the Coder revision prompt.
+
+        Groups findings by file, includes severity and line numbers,
+        and only surfaces error/warning items.
+        """
+        lines = ["## Review Findings (address in priority order)\n"]
+
+        # Group by file
+        by_file: Dict[str, List[ReviewFinding]] = {}
+        for f in report.findings:
+            if f.severity not in ("error", "warning"):
+                continue
+            by_file.setdefault(f.filepath or "(general)", []).append(f)
+
+        if not by_file:
+            return report.summary or "No actionable findings."
+
+        # Sort: errors first within each file
+        severity_order = {"error": 0, "warning": 1}
+        for filepath in sorted(by_file.keys()):
+            lines.append(f"### {filepath}")
+            file_findings = sorted(
+                by_file[filepath],
+                key=lambda x: (severity_order.get(x.severity, 2), x.line_number),
+            )
+            for f in file_findings:
+                loc = f"line {f.line_number}" if f.line_number else "general"
+                lines.append(
+                    f"- [{f.severity.upper()}] ({loc}) {f.description}"
+                )
+                if f.suggestion:
+                    lines.append(f"  Suggestion: {f.suggestion}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_test_suggestions(report: ReviewReport) -> str:
+        """Format test suggestions from a ReviewReport for the Tester agent."""
+        parts = []
+        if report.test_suggestions:
+            parts.append("## Reviewer Test Suggestions\n")
+            for i, s in enumerate(report.test_suggestions, 1):
+                parts.append(f"{i}. {s}")
+            parts.append("")
+
+        # Also include testing-category findings
+        test_findings = [
+            f for f in report.findings if f.category == "testing"
+        ]
+        if test_findings:
+            parts.append("## Testing Gaps Identified by Reviewer\n")
+            for f in test_findings:
+                loc = f"{f.filepath}:{f.line_number}" if f.line_number else f.filepath
+                parts.append(f"- {loc}: {f.description}")
+            parts.append("")
+
+        return "\n".join(parts) if parts else ""
+
     def _build_task_description(self, tasks: list) -> str:
         """Combine task descriptions into a single prompt block."""
         if len(tasks) == 1:
@@ -283,16 +457,38 @@ class AgentPipeline:
 
             # Read review feedback before cleaning workspace (reviewer wrote it last iteration)
             review_text = workspace.read("review.md") or ""
+            last_review_report: Optional[ReviewReport] = None
+            if revision > 0 and review_text:
+                last_review_report = self._parse_structured_review(review_text)
+                if last_review_report is not None:
+                    confidence_threshold = getattr(
+                        ap, "review_confidence_threshold", 0.70
+                    )
+                    last_review_report.findings = self._filter_findings(
+                        last_review_report.findings, confidence_threshold
+                    )
             workspace.clean()
 
             # --- Coder ---
 
             revision_context = ""
             if revision > 0 and review_text:
-                revision_context = (
-                    f"\n\nPREVIOUS REVIEW FEEDBACK (revision {revision}):\n{review_text}\n"
-                    f"Address the reviewer's feedback in your implementation."
-                )
+                if last_review_report is not None and last_review_report.findings:
+                    structured_feedback = self._format_structured_feedback(
+                        last_review_report
+                    )
+                    revision_context = (
+                        f"\n\nPREVIOUS REVIEW FEEDBACK (revision {revision}):\n"
+                        f"{structured_feedback}\n"
+                        f"Address the reviewer's findings above, prioritizing "
+                        f"errors first, then warnings."
+                    )
+                else:
+                    revision_context = (
+                        f"\n\nPREVIOUS REVIEW FEEDBACK (revision {revision}):\n"
+                        f"{review_text}\n"
+                        f"Address the reviewer's feedback in your implementation."
+                    )
 
             coder_prompt = (
                 f"You are the CODER agent.\n\n"
@@ -313,10 +509,19 @@ class AgentPipeline:
                 return result
 
             # --- Tester ---
+            test_suggestion_context = ""
+            if last_review_report is not None:
+                test_suggestions_text = self._format_test_suggestions(
+                    last_review_report
+                )
+                if test_suggestions_text:
+                    test_suggestion_context = f"\n\n{test_suggestions_text}"
+
             tester_prompt = (
                 f"You are the TESTER agent.\n\n"
                 f"TASK:\n{task_desc}\n\n"
                 f"Run the test suite and report any failures."
+                f"{test_suggestion_context}"
             )
             tester_result = _run_agent(AgentRole.TESTER, tester_prompt)
             result.agent_results.append(tester_result)
@@ -344,15 +549,74 @@ class AgentPipeline:
                     return result
 
             # --- Reviewer ---
+            review_detail = getattr(ap, "review_detail", "standard")
+
+            if review_detail == "minimal":
+                reviewer_instructions = (
+                    f"Review the code changes. Write your review to "
+                    f"{self._ws_dir}/review.md.\n"
+                    f"End your review with either:\n"
+                    f"VERDICT: APPROVED\n"
+                    f"or:\n"
+                    f"VERDICT: REVISE"
+                )
+            else:
+                detail_guidance = ""
+                if review_detail == "thorough":
+                    detail_guidance = (
+                        "Be thorough: examine every changed file, check edge "
+                        "cases, and verify error handling.\n\n"
+                    )
+
+                reviewer_instructions = (
+                    f"Review the code changes across these categories:\n"
+                    f"1. **Code Quality & Performance** — unnecessary code, "
+                    f"resource leaks, N+1 patterns, missing error handling\n"
+                    f"2. **Best Practices** — anti-patterns, deprecated usage, "
+                    f"naming conventions, framework compliance\n"
+                    f"3. **Test Coverage** — untested code paths, missing edge "
+                    f"cases, suggest specific test cases\n"
+                    f"4. **Architectural Concerns** — circular deps, tight "
+                    f"coupling, layer violations\n\n"
+                    f"{detail_guidance}"
+                    f"Write your review to {self._ws_dir}/review.md.\n\n"
+                    f"Include a structured JSON block in your review with this format:\n"
+                    f"```json\n"
+                    f'{{\n'
+                    f'  "approved": false,\n'
+                    f'  "summary": "Brief overall assessment",\n'
+                    f'  "findings": [\n'
+                    f'    {{\n'
+                    f'      "filepath": "path/to/file.py",\n'
+                    f'      "line_number": 42,\n'
+                    f'      "severity": "error",\n'
+                    f'      "category": "quality",\n'
+                    f'      "description": "What is wrong",\n'
+                    f'      "suggestion": "How to fix it",\n'
+                    f'      "confidence": 0.95\n'
+                    f'    }}\n'
+                    f'  ],\n'
+                    f'  "test_suggestions": [\n'
+                    f'    "Test that X handles empty input"\n'
+                    f'  ]\n'
+                    f'}}\n'
+                    f"```\n\n"
+                    f"Severity levels: \"error\" (must fix), \"warning\" "
+                    f"(should fix), \"information\" (nice to have).\n"
+                    f"Categories: \"quality\", \"security\", \"testing\", "
+                    f"\"architecture\".\n"
+                    f"Confidence: 0.0 to 1.0 — how certain you are this is a "
+                    f"real issue.\n\n"
+                    f"After the JSON block, end your review with:\n"
+                    f"VERDICT: APPROVED\n"
+                    f"or:\n"
+                    f"VERDICT: REVISE"
+                )
+
             reviewer_prompt = (
                 f"You are the REVIEWER agent.\n\n"
                 f"TASK:\n{task_desc}\n\n"
-                f"Review the code changes. Write your review to "
-                f"{self._ws_dir}/review.md.\n"
-                f"End your review with either:\n"
-                f"VERDICT: APPROVED\n"
-                f"or:\n"
-                f"VERDICT: REVISE"
+                f"{reviewer_instructions}"
             )
             reviewer_result = _run_agent(AgentRole.REVIEWER, reviewer_prompt)
             result.agent_results.append(reviewer_result)
@@ -388,7 +652,12 @@ class AgentPipeline:
                 logger.info(result.format_cost_report())
                 return result
 
-            approved = self._parse_review_verdict(review_content)
+            # Try structured review parsing first, fall back to simple verdict
+            structured_report = self._parse_structured_review(review_content)
+            if structured_report is not None:
+                approved = structured_report.approved
+            else:
+                approved = self._parse_review_verdict(review_content)
 
             if approved:
                 result.success = True
