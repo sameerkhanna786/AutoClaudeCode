@@ -8,7 +8,7 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from config_schema import Config
 from state import CycleRecord, StateManager
@@ -107,6 +107,27 @@ class LockedStateManager(StateManager):
     def get_success_rate_by_type(self, lookback_seconds: int = 86400) -> Dict[str, float]:
         with self._file_lock():
             return super().get_success_rate_by_type(lookback_seconds)
+
+    def get_strategy_performance(self, lookback_seconds: int = 86400) -> Dict[str, Dict[str, Any]]:
+        with self._file_lock():
+            return super().get_strategy_performance(lookback_seconds)
+
+    def get_productive_files(self, lookback_seconds: int = 86400) -> List[str]:
+        with self._file_lock():
+            return super().get_productive_files(lookback_seconds)
+
+    def get_task_success_history(
+        self,
+        task_description: str,
+        task_key: str = "",
+        max_attempts: int = 5,
+    ) -> List[Dict[str, str]]:
+        with self._file_lock():
+            return super().get_task_success_history(task_description, task_key, max_attempts)
+
+    def get_strategy_performance_report(self, lookback_seconds: int = 86400) -> str:
+        with self._file_lock():
+            return super().get_strategy_performance_report(lookback_seconds)
 
     def load_history(self) -> List[Dict[str, Any]]:
         with self._file_lock():

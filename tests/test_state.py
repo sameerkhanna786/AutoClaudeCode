@@ -1133,3 +1133,60 @@ class TestStrategyPerformanceReport:
         ))
         report = state_mgr.get_strategy_performance_report()
         assert report == "No task history in the last 24 hours."
+
+
+class TestTryRestoreFromBackupsTOCTOU:
+    """Tests for TOCTOU race condition fix in _try_restore_from_backups."""
+
+    def test_backup_deleted_during_sort(self, state_mgr):
+        """If a .corrupt file is deleted between glob() and stat(), sorting should not crash."""
+        parent = Path(state_mgr.history_file).parent
+        parent.mkdir(parents=True, exist_ok=True)
+
+        # Create two backup files
+        backup1 = parent / "history.json.corrupt"
+        backup2 = parent / "history.json.corrupt.1"
+        backup1.write_text(json.dumps([{"task_description": "backup1", "timestamp": 1.0}]))
+        backup2.write_text(json.dumps([{"task_description": "backup2", "timestamp": 2.0}]))
+
+        # Patch stat to simulate deletion of backup2 during sorting
+        original_stat = Path.stat
+
+        call_count = 0
+
+        def flaky_stat(self_path):
+            nonlocal call_count
+            if "corrupt.1" in str(self_path):
+                call_count += 1
+                if call_count == 1:
+                    raise OSError("No such file or directory")
+            return original_stat(self_path)
+
+        with patch.object(Path, 'stat', flaky_stat):
+            result = state_mgr._try_restore_from_backups()
+
+        # Should succeed with backup1 (the one that didn't fail stat)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["task_description"] == "backup1"
+
+    def test_all_backups_deleted_during_sort(self, state_mgr):
+        """If all .corrupt files are deleted during sort, should return None gracefully."""
+        parent = Path(state_mgr.history_file).parent
+        parent.mkdir(parents=True, exist_ok=True)
+
+        backup1 = parent / "history.json.corrupt"
+        backup1.write_text(json.dumps([{"task_description": "backup1"}]))
+
+        original_stat = Path.stat
+
+        def always_fail_stat(self_path):
+            if "corrupt" in str(self_path):
+                raise OSError("No such file or directory")
+            return original_stat(self_path)
+
+        with patch.object(Path, 'stat', always_fail_stat):
+            result = state_mgr._try_restore_from_backups()
+
+        # No backups survived stat, so should return None
+        assert result is None

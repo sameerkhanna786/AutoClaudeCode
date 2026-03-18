@@ -63,11 +63,14 @@ class StateManager:
         """
         parent = self.history_file.parent
         base_name = self.history_file.name
-        backups = sorted(
-            parent.glob(f"{base_name}.corrupt*"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
+        backups_with_mtime = []
+        for p in parent.glob(f"{base_name}.corrupt*"):
+            try:
+                backups_with_mtime.append((p, p.stat().st_mtime))
+            except OSError:
+                continue  # file deleted between glob and stat
+        backups_with_mtime.sort(key=lambda x: x[1], reverse=True)
+        backups = [p for p, _ in backups_with_mtime]
         for backup in backups:
             try:
                 text = backup.read_text().strip()

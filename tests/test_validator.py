@@ -321,6 +321,46 @@ class TestValidateWithBaseline:
         assert " -x " not in f" {test_cmd} "
         assert "-q" in test_cmd  # other flags preserved
 
+    @patch("validator.run_with_group_kill")
+    def test_validate_with_baseline_strips_dash_x_at_end(self, mock_run, default_config):
+        """-x at end of command is removed when baseline is active."""
+        default_config.validation.test_command = "python3 -m pytest tests/ -x"
+        v = Validator(default_config)
+        baseline = {"tests/test_foo.py::test_bar"}
+
+        output = "FAILED tests/test_foo.py::test_bar - AssertionError\n1 failed\n"
+        mock_run.return_value = RunResult(returncode=1, stdout=output, stderr="", timed_out=False)
+        v.validate_with_baseline("/tmp", baseline)
+
+        test_calls = [
+            c for c in mock_run.call_args_list
+            if isinstance(c[0][0], str) and "pytest" in c[0][0]
+        ]
+        assert len(test_calls) >= 1
+        test_cmd = test_calls[0][0][0]
+        assert " -x " not in f" {test_cmd} "
+        assert "-x" not in test_cmd.split()
+
+    @patch("validator.run_with_group_kill")
+    def test_validate_with_baseline_no_double_spaces_after_x_removal(self, mock_run, default_config):
+        """Removing -x should not leave double spaces in the command."""
+        default_config.validation.test_command = "pytest -x tests/"
+        v = Validator(default_config)
+        baseline = {"tests/test_foo.py::test_bar"}
+
+        output = "FAILED tests/test_foo.py::test_bar - AssertionError\n1 failed\n"
+        mock_run.return_value = RunResult(returncode=1, stdout=output, stderr="", timed_out=False)
+        v.validate_with_baseline("/tmp", baseline)
+
+        test_calls = [
+            c for c in mock_run.call_args_list
+            if isinstance(c[0][0], str) and "pytest" in c[0][0]
+        ]
+        assert len(test_calls) >= 1
+        test_cmd = test_calls[0][0][0]
+        assert "  " not in test_cmd  # no double spaces
+        assert "-x" not in test_cmd.split()
+
 
 class TestValidateSyntaxOnly:
     def test_valid_python_files(self, validator, tmp_path):

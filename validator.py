@@ -236,7 +236,10 @@ class Validator:
         # Run tests — strip -x when baseline is active so all failures are visible
         test_cmd = vc.test_command
         if baseline_failures and " -x " in f" {test_cmd} ":
-            test_cmd = test_cmd.replace(" -x ", " ").replace(" -x", "").strip()
+            # Use regex to reliably remove standalone -x flag in any position
+            test_cmd = re.sub(r'(?:^|\s)-x(?=\s|$)', '', test_cmd).strip()
+            # Collapse any double spaces left behind
+            test_cmd = re.sub(r'\s{2,}', ' ', test_cmd)
             logger.debug("Removed -x from test command for baseline comparison")
         test_step = self._run_command("tests", test_cmd, vc.test_timeout, cwd)
         if test_step.passed:

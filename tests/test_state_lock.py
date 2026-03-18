@@ -190,3 +190,84 @@ class TestReentrantLock:
         assert order[0].endswith("-start")
         assert order[1].endswith("-end")
         assert order[0][0] == order[1][0]  # Same thread ID
+
+
+class TestMissingLockedWrappers:
+    """Tests for methods that were missing locked wrappers."""
+
+    def test_get_strategy_performance_locked(self, locked_state):
+        """get_strategy_performance works through the lock."""
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Task A",
+            task_type="lint",
+            success=True,
+            cost_usd=0.10,
+            duration_seconds=5.0,
+        ))
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Task B",
+            task_type="lint",
+            success=False,
+            cost_usd=0.05,
+            duration_seconds=3.0,
+        ))
+        perf = locked_state.get_strategy_performance()
+        assert "lint" in perf
+        assert perf["lint"]["total"] == 2
+        assert perf["lint"]["successes"] == 1
+
+    def test_get_productive_files_locked(self, locked_state):
+        """get_productive_files works through the lock."""
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Fix bug in validator.py",
+            task_type="test_failure",
+            success=True,
+            task_descriptions=["Fix bug in validator.py"],
+        ))
+        files = locked_state.get_productive_files()
+        assert "validator.py" in files
+
+    def test_get_task_success_history_locked(self, locked_state):
+        """get_task_success_history works through the lock."""
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Fix bug",
+            task_type="test_failure",
+            success=False,
+            error="Test failed",
+        ))
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Fix bug",
+            task_type="test_failure",
+            success=True,
+        ))
+        history = locked_state.get_task_success_history("Fix bug")
+        assert len(history) == 2
+        assert history[0]["success"] is False
+        assert history[1]["success"] is True
+
+    def test_get_strategy_performance_report_locked(self, locked_state):
+        """get_strategy_performance_report works through the lock."""
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Task A",
+            task_type="lint",
+            success=True,
+            cost_usd=0.10,
+            duration_seconds=5.0,
+        ))
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Task B",
+            task_type="lint",
+            success=True,
+            cost_usd=0.05,
+            duration_seconds=3.0,
+        ))
+        report = locked_state.get_strategy_performance_report()
+        assert "lint" in report
+        assert "2/2 succeeded" in report
