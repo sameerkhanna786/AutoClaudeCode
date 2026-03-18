@@ -17,6 +17,75 @@ from process_utils import run_with_group_kill
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_json_text(raw_output: str) -> str:
+    """Extract text content from Claude CLI JSON output.
+
+    Parses JSON objects from the raw output using multiple strategies
+    (line-by-line, multi-line, raw_decode) and extracts the 'result' or
+    'result_text' field.  Returns the extracted text, or the original
+    raw_output if extraction fails.
+
+    This is a shared utility that reduces duplication between
+    task_discovery._discover_claude_ideas() and
+    claude_runner._parse_json_response().
+    """
+    def _text_from_dict(d: dict) -> str:
+        for key in ("result", "result_text"):
+            val = d.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+        return ""
+
+    try:
+        lines = raw_output.strip().splitlines()
+
+        # Strategy 1: Try each line individually as a complete JSON object
+        for line in lines:
+            stripped = line.strip()
+            if not stripped.startswith("{"):
+                continue
+            try:
+                data = json.loads(stripped)
+                if isinstance(data, dict):
+                    text = _text_from_dict(data)
+                    if text:
+                        return text
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        # Strategy 2: Try multi-line JSON joining from each '{'-starting line
+        for i, line in enumerate(lines):
+            if not line.strip().startswith("{"):
+                continue
+            try:
+                data = json.loads("\n".join(lines[i:]))
+                if isinstance(data, dict):
+                    text = _text_from_dict(data)
+                    if text:
+                        return text
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        # Strategy 3: Use raw_decode to find JSON anywhere in the output
+        decoder = json.JSONDecoder()
+        for i, ch in enumerate(raw_output):
+            if ch != "{":
+                continue
+            try:
+                obj, _ = decoder.raw_decode(raw_output, i)
+                if isinstance(obj, dict):
+                    text = _text_from_dict(obj)
+                    if text:
+                        return text
+            except (json.JSONDecodeError, TypeError):
+                continue
+    except Exception:
+        pass
+
+    return raw_output
+
+
 # Map file extensions to their comment prefix styles
 _COMMENT_PREFIXES = {
     ".py": ("#",), ".rb": ("#",),
@@ -627,87 +696,32 @@ class TaskDiscovery:
 
         # Parse JSON response to get result text
         result_text = result.stdout
-        try:
-            # Helper: extract text content from a parsed JSON dict.
-            # The Claude CLI uses "result" for successful runs and may use
-            # "result_text" in some versions.
-            def _extract_text(d: dict) -> str:
-                for key in ("result", "result_text"):
-                    val = d.get(key)
-                    if isinstance(val, str) and val.strip():
-                        return val
-                return ""
 
-            # Strategy 1: Try each line individually as a complete JSON object
-            for line in result_text.strip().split("\n"):
-                line = line.strip()
-                if not line.startswith("{"):
+        # Check for error_max_turns in any JSON line
+        try:
+            for line in result_text.strip().splitlines():
+                stripped = line.strip()
+                if not stripped.startswith("{"):
                     continue
                 try:
-                    data = json.loads(line)
-                    if isinstance(data, dict):
-                        # Check for error_max_turns — Claude ran out of turns
-                        if data.get("subtype") == "error_max_turns":
-                            logger.warning(
-                                "Claude idea discovery hit max turns (%d); "
-                                "increase discovery.discovery_max_turns",
-                                self.config.discovery.discovery_max_turns,
-                            )
-                            text = _extract_text(data)
-                            if text:
-                                result_text = text
-                            break
-                        text = _extract_text(data)
-                        if text:
-                            result_text = text
-                            break
+                    data = json.loads(stripped)
+                    if isinstance(data, dict) and data.get("subtype") == "error_max_turns":
+                        logger.warning(
+                            "Claude idea discovery hit max turns (%d); "
+                            "increase discovery.discovery_max_turns",
+                            self.config.discovery.discovery_max_turns,
+                        )
+                        break
                 except (json.JSONDecodeError, TypeError):
                     continue
-            else:
-                # Strategy 2: Try multi-line JSON joining from each '{'-starting line
-                lines = result_text.strip().split("\n")
-                for i, line in enumerate(lines):
-                    if not line.strip().startswith("{"):
-                        continue
-                    try:
-                        data = json.loads("\n".join(lines[i:]))
-                        if isinstance(data, dict):
-                            if data.get("subtype") == "error_max_turns":
-                                logger.warning(
-                                    "Claude idea discovery hit max turns (%d); "
-                                    "increase discovery.discovery_max_turns",
-                                    self.config.discovery.discovery_max_turns,
-                                )
-                                text = _extract_text(data)
-                                if text:
-                                    result_text = text
-                                break
-                            text = _extract_text(data)
-                            if text:
-                                result_text = text
-                                break
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-                else:
-                    # Strategy 3: Use raw_decode to find JSON anywhere in the output
-                    decoder = json.JSONDecoder()
-                    for i, ch in enumerate(result_text):
-                        if ch != "{":
-                            continue
-                        try:
-                            obj, end = decoder.raw_decode(result_text, i)
-                            if isinstance(obj, dict):
-                                text = _extract_text(obj)
-                                if text:
-                                    result_text = text
-                                    break
-                        except (json.JSONDecodeError, TypeError):
-                            continue
         except Exception:
             pass
 
+        # Extract text content from JSON response
+        result_text = _extract_json_text(result_text)
+
         # Warn if we couldn't extract text from a JSON response
-        if result_text is result.stdout and result.stdout.strip()[:1] in ("{", "["):
+        if result_text == result.stdout and result.stdout.strip()[:1] in ("{", "["):
             logger.warning(
                 "Claude idea response contained JSON but no text content "
                 "could be extracted — falling back to raw text extraction"
