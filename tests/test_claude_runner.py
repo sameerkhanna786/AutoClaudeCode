@@ -637,6 +637,142 @@ class TestCircuitBreaker:
         assert cb.half_open_max_calls == 3
 
 
+class TestCircuitBreakerExponentialBackoff:
+    """Test circuit breaker exponential backoff behavior."""
+
+    def test_recovery_timeout_doubles_after_each_reopen(self):
+        """(a) Recovery timeout doubles after each re-open."""
+        base = 100
+        cb = CircuitBreaker(
+            failure_threshold=2,
+            recovery_timeout=base,
+            jitter_factor=0,  # no jitter so we can test exact values
+            max_recovery_timeout=10000,  # high cap so it doesn't interfere
+        )
+        # First open: open_count=1, exponent=0, backoff = base * 2^0 = base
+        cb.record_failure()
+        cb.record_failure()
+        assert cb._open_count == 1
+        assert cb.recovery_timeout == base
+
+        # Transition to half-open, then fail again to re-open
+        cb._state = CircuitBreaker.STATE_HALF_OPEN
+        cb._half_open_calls = 0
+        cb.record_failure()
+        # Second open: open_count=2, exponent=1, backoff = base * 2^1 = 2*base
+        assert cb._open_count == 2
+        assert cb.recovery_timeout == base * 2
+
+        # Third re-open
+        cb._state = CircuitBreaker.STATE_HALF_OPEN
+        cb._half_open_calls = 0
+        cb.record_failure()
+        # open_count=3, exponent=2, backoff = base * 2^2 = 4*base
+        assert cb._open_count == 3
+        assert cb.recovery_timeout == base * 4
+
+    def test_recovery_timeout_capped_at_max(self):
+        """(b) Timeout is capped at max_recovery_timeout."""
+        base = 100
+        max_timeout = 250
+        cb = CircuitBreaker(
+            failure_threshold=2,
+            recovery_timeout=base,
+            jitter_factor=0,
+            max_recovery_timeout=max_timeout,
+        )
+        # First open: base * 2^0 = 100
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.recovery_timeout == base
+
+        # Second open: min(base * 2^1, 250) = min(200, 250) = 200
+        cb._state = CircuitBreaker.STATE_HALF_OPEN
+        cb._half_open_calls = 0
+        cb.record_failure()
+        assert cb.recovery_timeout == 200
+
+        # Third open: min(base * 2^2, 250) = min(400, 250) = 250
+        cb._state = CircuitBreaker.STATE_HALF_OPEN
+        cb._half_open_calls = 0
+        cb.record_failure()
+        assert cb.recovery_timeout == max_timeout
+
+        # Fourth open: still capped at 250
+        cb._state = CircuitBreaker.STATE_HALF_OPEN
+        cb._half_open_calls = 0
+        cb.record_failure()
+        assert cb.recovery_timeout == max_timeout
+
+    @patch("random.random")
+    def test_jitter_applied_within_expected_range(self, mock_random):
+        """(c) Jitter is applied within the expected range."""
+        base = 100
+        jitter_factor = 0.25
+        cb = CircuitBreaker(
+            failure_threshold=2,
+            recovery_timeout=base,
+            jitter_factor=jitter_factor,
+            max_recovery_timeout=10000,
+        )
+
+        # Test with random.random() returning 0 -> jitter = backoff * 0.25 * (0 - 1) = -25
+        # Result: max(100, 100 + (-25)) = max(100, 75) = 100 (floored at base)
+        mock_random.return_value = 0.0
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.recovery_timeout == base  # floored at base
+
+        # Reset and test with random.random() returning 1.0 -> jitter = backoff * 0.25 * (2-1) = +25
+        # Result: max(100, 100 + 25) = 125
+        cb.reset()
+        mock_random.return_value = 1.0
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.recovery_timeout == base * (1 + jitter_factor)  # 125
+
+        # Test with random.random() returning 0.5 -> jitter = backoff * 0.25 * (1-1) = 0
+        # Result: max(100, 100 + 0) = 100
+        cb.reset()
+        mock_random.return_value = 0.5
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.recovery_timeout == base  # no jitter at midpoint
+
+    def test_successful_call_resets_backoff(self):
+        """(d) Successful call resets backoff state completely."""
+        base = 100
+        cb = CircuitBreaker(
+            failure_threshold=2,
+            recovery_timeout=base,
+            jitter_factor=0,
+            max_recovery_timeout=10000,
+        )
+        # Open the circuit breaker multiple times to escalate backoff
+        cb.record_failure()
+        cb.record_failure()
+        assert cb._open_count == 1
+
+        cb._state = CircuitBreaker.STATE_HALF_OPEN
+        cb._half_open_calls = 0
+        cb.record_failure()
+        assert cb._open_count == 2
+        assert cb.recovery_timeout == base * 2
+
+        # Now record success — should reset everything
+        cb.record_success()
+        assert cb.state == CircuitBreaker.STATE_CLOSED
+        assert cb._open_count == 0
+        assert cb.recovery_timeout == base
+        assert cb._consecutive_failures == 0
+
+        # Next open should start from base again (not continue escalation)
+        cb.record_failure()
+        cb.record_failure()
+        assert cb._open_count == 1
+        assert cb.recovery_timeout == base
+
+
 class TestCircuitBreakerIntegration:
     """Test circuit breaker integration with ClaudeRunner."""
 

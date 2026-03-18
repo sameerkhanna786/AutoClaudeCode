@@ -26,7 +26,7 @@
 
 12. DONE: In `coordinator.py:_merge_worker_branch()`, after a failed rebase (line 365), the method doesn't attempt the merge strategy as a fallback. Add fallback logic: if rebase fails and strategy is "rebase", try a regular merge before giving up.
 
-13. PENDING: Add tests for the circuit breaker exponential backoff in `claude_runner.py`. Create test cases in `tests/test_claude_runner.py` that verify: (a) recovery timeout doubles after each re-open, (b) timeout is capped at max_recovery_timeout, (c) jitter is applied within the expected range, (d) successful call resets backoff.
+13. DONE: Add tests for the circuit breaker exponential backoff in `claude_runner.py`. Create test cases in `tests/test_claude_runner.py` that verify: (a) recovery timeout doubles after each re-open, (b) timeout is capped at max_recovery_timeout, (c) jitter is applied within the expected range, (d) successful call resets backoff.
 
 14. PENDING: In `safety.py:check_memory()`, the macOS implementation only counts "Pages free" + "Pages speculative" + "Pages purgeable". Add "Pages inactive" to the count since macOS treats inactive pages as available memory, which currently causes false low-memory warnings.
 
@@ -73,6 +73,8 @@
 35. PENDING: In `state.py`, add a `get_strategy_performance_report()` method that returns a formatted string showing success rate, average cost, and average duration per task type over the last 24 hours. Call this from the orchestrator/coordinator at startup to log which strategies are working best.
 
 ## Completed
+
+13. DONE: Add tests for the circuit breaker exponential backoff in `claude_runner.py`. Create test cases in `tests/test_claude_runner.py` that verify: (a) recovery timeout doubles after each re-open, (b) timeout is capped at max_recovery_timeout, (c) jitter is applied within the expected range, (d) successful call resets backoff.
 
 1. DONE: In `shared.py`, the `build_retry_prompt()` function only passes `validation.summary` (a one-line string like "tests: FAIL") to the retry prompt. Change the worker retry flow in `worker.py:316` to pass the full `validation.steps` output (including test failure tracebacks) instead of just the summary, so Claude has enough information to actually fix the failure. Cap the output at 8000 chars to avoid prompt overflow.
 
