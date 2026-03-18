@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -163,6 +164,9 @@ class TaskDiscovery:
 
         if dc.enable_quality_review:
             tasks.extend(self._discover_quality_issues())
+
+        if dc.enable_complexity_check:
+            tasks.extend(self._discover_complexity_issues())
 
         # Group related tasks to avoid duplicate work
         tasks = self._group_related_tasks(tasks)
@@ -832,5 +836,53 @@ class TaskDiscovery:
                         source="quality",
                         source_file=rel_path,
                     ))
+
+        return tasks[:5]
+
+    def _discover_complexity_issues(self) -> List[Task]:
+        """Scan Python files for functions longer than 50 lines using ast.parse."""
+        tasks: List[Task] = []
+        target = Path(self.target_dir)
+        exclude_dirs = set(self.config.discovery.exclude_dirs)
+
+        for root, dirs, files in os.walk(target):
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+
+                fpath = Path(root) / fname
+                rel_path = str(fpath.relative_to(target))
+
+                try:
+                    source = fpath.read_text(errors="ignore")
+                    tree = ast.parse(source, filename=rel_path)
+                except (OSError, SyntaxError):
+                    continue
+
+                for node in ast.walk(tree):
+                    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    start = node.lineno
+                    end = node.end_lineno
+                    if end is None:
+                        continue
+                    line_count = end - start + 1
+                    if line_count > 50:
+                        desc = (
+                            f"Refactor long function `{node.name}` in "
+                            f"`{rel_path}:{start}` ({line_count} lines)"
+                        )
+                        tasks.append(Task(
+                            description=desc,
+                            priority=5,
+                            source="quality",
+                            source_file=rel_path,
+                            line_number=start,
+                        ))
+
+                if len(tasks) >= 5:
+                    return tasks[:5]
 
         return tasks[:5]

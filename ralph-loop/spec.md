@@ -8,7 +8,7 @@
 
 3. DONE: In `task_discovery.py:_discover_claude_ideas()`, the generated tasks have empty `context` fields. After extracting IDEA lines, use `_FILE_REF_RE` to find any file references in the idea description, then call `_read_file_snippet()` to populate the task's `context` with the relevant code snippet. This gives Claude concrete code to work with instead of just a vague description.
 
-4. PENDING: Add a new discovery method `_discover_complexity_issues()` in `task_discovery.py` that scans Python files for functions longer than 50 lines (using `ast.parse` to walk `FunctionDef` nodes) and creates `quality` tasks with priority 5. Include the function name, file path, line number, and line count in the task description. Cap at 5 tasks.
+4. DONE: Add a new discovery method `_discover_complexity_issues()` in `task_discovery.py` that scans Python files for functions longer than 50 lines (using `ast.parse` to walk `FunctionDef` nodes) and creates `quality` tasks with priority 5. Include the function name, file path, line number, and line count in the task description. Cap at 5 tasks.
 
 5. PENDING: In `validator.py:validate_with_baseline()`, when test failures are all pre-existing, the method returns `passed=True` but the `output` in the step still contains all the failure text. Add a note to the output like "NOTE: All N failure(s) are pre-existing baseline failures" so that downstream consumers (retry prompts, logs) don't confuse baseline failures with new issues.
 
@@ -79,3 +79,5 @@
 2. DONE: In `task_discovery.py:_discover_test_failures()`, the `context` field for test failure tasks contains either the per-test traceback or the full pytest output. Improve `_extract_test_traceback()` to also include the assertion details and the last 5 lines of the traceback, and append the file path + line number of the failing assertion as `source_file` and `line_number` on the Task so that Claude can jump directly to the relevant code.
 
 3. DONE: In `task_discovery.py:_discover_claude_ideas()`, the generated tasks have empty `context` fields. After extracting IDEA lines, use `_FILE_REF_RE` to find any file references in the idea description, then call `_read_file_snippet()` to populate the task's `context` with the relevant code snippet. This gives Claude concrete code to work with instead of just a vague description.
+
+4. DONE: Add a new discovery method `_discover_complexity_issues()` in `task_discovery.py` that scans Python files for functions longer than 50 lines (using `ast.parse` to walk `FunctionDef` nodes) and creates `quality` tasks with priority 5. Include the function name, file path, line number, and line count in the task description. Cap at 5 tasks.
