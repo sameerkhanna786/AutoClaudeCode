@@ -447,15 +447,24 @@ class TaskDiscovery:
             return last_match.group(1), int(last_match.group(2))
         return None, None
 
-    def _read_file_snippet(self, filepath: str, line_num: int, context_lines: int = 5) -> str:
-        """Read a snippet of a file around the given line number."""
+    def _read_file_snippet(self, filepath: str, line_num: int,
+                           context_lines: int = 5,
+                           preloaded_content: str = None) -> str:
+        """Read a snippet of a file around the given line number.
+
+        If preloaded_content is provided, uses it instead of reading from disk,
+        avoiding redundant file I/O when the caller already has the content.
+        """
         try:
-            fpath = Path(filepath)
-            if not fpath.is_absolute():
-                fpath = Path(self.target_dir) / filepath
-            if not fpath.exists():
-                return ""
-            content = fpath.read_text(errors="ignore")
+            if preloaded_content is not None:
+                content = preloaded_content
+            else:
+                fpath = Path(filepath)
+                if not fpath.is_absolute():
+                    fpath = Path(self.target_dir) / filepath
+                if not fpath.exists():
+                    return ""
+                content = fpath.read_text(errors="ignore")
             lines = content.split("\n")
             start = max(0, line_num - context_lines - 1)
             end = min(len(lines), line_num + context_lines)
@@ -667,7 +676,10 @@ class TaskDiscovery:
                         if len(comment) > 120:
                             comment = comment[:120] + "..."
                         desc = f"Address {match.group(1)} in {rel_path}:{i}: {comment}"
-                        context = self._read_file_snippet(str(fpath), i, context_lines=5)
+                        context = self._read_file_snippet(
+                            str(fpath), i, context_lines=5,
+                            preloaded_content=content,
+                        )
                         tasks.append(Task(
                             description=desc,
                             priority=3,

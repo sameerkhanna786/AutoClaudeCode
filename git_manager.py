@@ -192,6 +192,15 @@ class GitManager:
             if files_to_revert:
                 # Checkout tracked files
                 self._run("checkout", "--", *sorted(files_to_revert), check=False)
+                # Identify untracked files in one batch call instead of per-file
+                untracked = set()
+                ls_result = self._run(
+                    "ls-files", "--others", "--exclude-standard", check=False
+                )
+                if ls_result.returncode == 0:
+                    for line in ls_result.stdout.strip().split("\n"):
+                        if line.strip():
+                            untracked.add(line.strip())
                 # Clean untracked files in the allowed set
                 reverted_count = 0
                 total_count = len(files_to_revert)
@@ -206,19 +215,15 @@ class GitManager:
                             f"Rollback exceeded {timeout}s deadline: "
                             f"reverted {reverted_count}/{total_count} files"
                         )
-                    fpath = Path(self.repo_dir) / f
-                    if fpath.exists():
-                        # Check if it's untracked
-                        status = self._run("ls-files", "--error-unmatch", f, check=False)
-                        if status.returncode != 0:
-                            # Untracked — remove it
-                            try:
-                                if fpath.is_dir():
-                                    shutil.rmtree(fpath, ignore_errors=True)
-                                else:
-                                    fpath.unlink()
-                            except OSError:
-                                pass
+                    if f in untracked:
+                        fpath = Path(self.repo_dir) / f
+                        try:
+                            if fpath.is_dir():
+                                shutil.rmtree(fpath, ignore_errors=True)
+                            else:
+                                fpath.unlink()
+                        except OSError:
+                            pass
                     reverted_count += 1
             logger.info("Targeted rollback: reverted %d files", len(files_to_revert))
             return
@@ -293,36 +298,31 @@ class GitManager:
         return False
 
     def get_changed_files(self) -> List[str]:
-        """Return list of changed/untracked files relative to repo root."""
-        commands = [
-            ("diff", "--cached", "--name-only"),
-            ("diff", "--name-only"),
-            ("ls-files", "--others", "--exclude-standard"),
-        ]
-        results = []
-        any_succeeded = False
-        for cmd_args in commands:
-            result = self._run(*cmd_args, check=False)
-            if result.returncode != 0:
-                logger.warning(
-                    "git %s failed (exit %d): %s",
-                    cmd_args[0], result.returncode, result.stderr.strip(),
-                )
-            else:
-                any_succeeded = True
-                results.append(result.stdout)
+        """Return list of changed/untracked files relative to repo root.
 
-        if not any_succeeded:
+        Uses a single `git status --porcelain` call instead of three
+        separate git commands, reducing subprocess overhead by ~67%.
+        """
+        result = self._run("status", "--porcelain", check=False)
+        if result.returncode != 0:
             raise RuntimeError(
-                "All git commands failed in get_changed_files; "
-                "cannot determine working tree state"
+                f"git status --porcelain failed (exit {result.returncode}): "
+                f"{result.stderr.strip()}"
             )
 
         files = set()
-        for output in results:
-            for line in output.strip().split("\n"):
-                if line.strip():
-                    files.add(line.strip())
+        for line in result.stdout.split("\n"):
+            if not line.strip():
+                continue
+            # Porcelain format: XY filename (or XY orig -> renamed)
+            # The filename starts at column 3
+            entry = line[3:] if len(line) > 3 else ""
+            if not entry:
+                continue
+            # Handle renames: "old -> new"
+            if " -> " in entry:
+                entry = entry.split(" -> ", 1)[1]
+            files.add(entry)
 
         return sorted(files)
 

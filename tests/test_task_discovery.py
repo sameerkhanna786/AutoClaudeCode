@@ -858,3 +858,29 @@ class TestDiscoverImportIssues:
         assert len(tasks) == 1
         assert tasks[0].source_file == "loc.py"
         assert tasks[0].line_number == 1  # 'import os' is on line 1
+
+
+class TestReadFileSnippetPreloaded:
+    """Tests for _read_file_snippet with preloaded_content parameter."""
+
+    def test_preloaded_content_avoids_disk_read(self, discovery, tmp_path):
+        """When preloaded_content is passed, file is not read from disk."""
+        content = "line1\nline2\nline3\nline4\nline5\n"
+        # Pass a non-existent file path — should still work with preloaded content
+        snippet = discovery._read_file_snippet(
+            "/nonexistent/file.py", 3, context_lines=1,
+            preloaded_content=content,
+        )
+        assert "line3" in snippet
+        assert " >> " in snippet  # marker for target line
+
+    def test_preloaded_matches_disk_read(self, discovery, tmp_path):
+        """Preloaded content produces same result as disk read."""
+        content = "def foo():\n    pass\n\ndef bar():\n    return 1\n"
+        fpath = tmp_path / "test.py"
+        fpath.write_text(content)
+        from_disk = discovery._read_file_snippet(str(fpath), 2, context_lines=1)
+        from_mem = discovery._read_file_snippet(
+            str(fpath), 2, context_lines=1, preloaded_content=content,
+        )
+        assert from_disk == from_mem

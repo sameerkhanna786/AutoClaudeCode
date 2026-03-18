@@ -100,8 +100,8 @@ class TestGitManager:
 @pytest.mark.requires_subprocess
 class TestGetChangedFilesErrorHandling:
     def test_get_changed_files_raises_on_git_failure(self, tmp_git_repo):
-        """When all git commands fail, get_changed_files should raise RuntimeError."""
-        from unittest.mock import patch, MagicMock
+        """When git status --porcelain fails, get_changed_files should raise RuntimeError."""
+        from unittest.mock import patch
         import subprocess
 
         gm = GitManager(tmp_git_repo)
@@ -109,40 +109,8 @@ class TestGetChangedFilesErrorHandling:
             args=["git"], returncode=128, stdout="", stderr="fatal: not a git repository"
         )
         with patch.object(gm, "_run", return_value=failed):
-            with pytest.raises(RuntimeError, match="All git commands failed"):
+            with pytest.raises(RuntimeError, match="git status --porcelain failed"):
                 gm.get_changed_files()
-
-    def test_get_changed_files_warns_on_partial_failure(self, tmp_git_repo, caplog):
-        """When one git command fails but others succeed, result is still returned with a warning."""
-        import logging
-        from unittest.mock import patch, MagicMock
-        import subprocess
-
-        gm = GitManager(tmp_git_repo)
-        # Create a file so there's something to detect
-        Path(tmp_git_repo, "test_file.txt").write_text("content")
-
-        call_count = 0
-        original_run = gm._run
-
-        def partial_fail(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                # First command (diff --cached) fails
-                return subprocess.CompletedProcess(
-                    args=["git"], returncode=128, stdout="", stderr="simulated failure"
-                )
-            return original_run(*args, **kwargs)
-
-        with patch.object(gm, "_run", side_effect=partial_fail):
-            with caplog.at_level(logging.WARNING):
-                result = gm.get_changed_files()
-
-        # Should still return files from the successful commands
-        assert "test_file.txt" in result
-        # Should have logged a warning about the failed command
-        assert any("failed" in r.message for r in caplog.records)
 
 
 @pytest.mark.requires_subprocess
@@ -484,3 +452,46 @@ class TestRollbackTimeout:
 
         gm.rollback(snap, allowed_dirty=allowed)
         assert gm.is_clean() is True
+
+
+@pytest.mark.requires_subprocess
+class TestGetChangedFilesPortcelain:
+    """Tests for the single git-status --porcelain implementation."""
+
+    def test_detects_new_untracked_file(self, tmp_git_repo):
+        gm = GitManager(tmp_git_repo)
+        Path(tmp_git_repo, "new_file.txt").write_text("hello")
+        changed = gm.get_changed_files()
+        assert "new_file.txt" in changed
+
+    def test_detects_modified_tracked_file(self, tmp_git_repo):
+        gm = GitManager(tmp_git_repo)
+        Path(tmp_git_repo, "README.md").write_text("modified")
+        changed = gm.get_changed_files()
+        assert "README.md" in changed
+
+    def test_detects_staged_file(self, tmp_git_repo):
+        gm = GitManager(tmp_git_repo)
+        Path(tmp_git_repo, "staged.txt").write_text("staged")
+        subprocess.run(["git", "add", "staged.txt"], cwd=tmp_git_repo, check=True)
+        changed = gm.get_changed_files()
+        assert "staged.txt" in changed
+
+    def test_clean_repo_returns_empty(self, tmp_git_repo):
+        gm = GitManager(tmp_git_repo)
+        changed = gm.get_changed_files()
+        assert changed == []
+
+
+@pytest.mark.requires_subprocess
+class TestRollbackBatchUntracked:
+    """Tests for the batch untracked detection in targeted rollback."""
+
+    def test_rollback_removes_untracked_files(self, tmp_git_repo):
+        gm = GitManager(tmp_git_repo)
+        snap = gm.create_snapshot()
+        # Create an untracked file (not in allowed_dirty, so it should be reverted)
+        Path(tmp_git_repo, "untracked.txt").write_text("should be removed")
+        allowed = set()  # empty = nothing preserved, everything reverted
+        gm.rollback(snap, allowed_dirty=allowed)
+        assert not Path(tmp_git_repo, "untracked.txt").exists()
