@@ -516,5 +516,104 @@ class TestPendingTasksAPI(unittest.TestCase):
             self.assertTrue(queue.is_dashboard_active())
 
 
+class TestDashboardSecurityFixes(unittest.TestCase):
+    """Test security hardening: input validation, CORS, error sanitization."""
+
+    def _make_handler(self, method="GET", path="/", body=None, headers=None):
+        handler = DashboardHandler.__new__(DashboardHandler)
+        handler.wfile = BytesIO()
+        handler.rfile = BytesIO(body.encode() if body else b"")
+        handler.path = path
+        handler.command = method
+        handler.request_version = "HTTP/1.1"
+        handler.headers = MagicMock()
+        handler.headers.get = lambda key, default="0": (
+            headers.get(key, default) if headers else default
+        )
+        handler.dashboard_cfg = {
+            "target_dir": ".",
+            "history_file": "/nonexistent/history.json",
+            "state_dir": "/nonexistent",
+            "lock_file": "/nonexistent/lock.pid",
+            "log_file": "/nonexistent/log.txt",
+            "feedback_dir": "/nonexistent/feedback",
+            "feedback_done_dir": "/nonexistent/feedback/done",
+            "feedback_failed_dir": "/nonexistent/feedback/failed",
+            "max_consecutive_failures": 5,
+            "max_cycles_per_hour": 30,
+            "max_cost_usd_per_hour": 10.0,
+            "min_disk_space_mb": 500,
+        }
+        handler.loc_cache = {}
+        handler.loc_lock = threading.Lock()
+        handler._headers_buffer = []
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+        return handler
+
+    def test_history_invalid_limit_returns_400(self):
+        handler = self._make_handler(path="/api/history")
+        handler._api_history({"limit": ["not_a_number"], "offset": ["0"]})
+        handler.send_response.assert_called_with(400)
+
+    def test_history_invalid_offset_returns_400(self):
+        handler = self._make_handler(path="/api/history")
+        handler._api_history({"limit": ["10"], "offset": ["abc"]})
+        handler.send_response.assert_called_with(400)
+
+    def test_log_invalid_lines_returns_400(self):
+        handler = self._make_handler(path="/api/log")
+        handler._api_log({"lines": ["not_int"]})
+        handler.send_response.assert_called_with(400)
+
+    def test_metrics_invalid_lookback_returns_400(self):
+        handler = self._make_handler(path="/api/metrics")
+        handler._api_metrics({"lookback": ["xyz"]})
+        handler.send_response.assert_called_with(400)
+
+    def test_cors_localhost_origin_allowed(self):
+        handler = self._make_handler()
+        handler.headers = MagicMock()
+        handler.headers.get = lambda key, default="": {
+            "Origin": "http://localhost:8505",
+        }.get(key, default)
+        origin = handler._get_cors_origin()
+        self.assertEqual(origin, "http://localhost:8505")
+
+    def test_cors_external_origin_blocked(self):
+        handler = self._make_handler()
+        handler.headers = MagicMock()
+        handler.headers.get = lambda key, default="": {
+            "Origin": "https://evil.example.com",
+        }.get(key, default)
+        origin = handler._get_cors_origin()
+        self.assertEqual(origin, "")
+
+    def test_cors_127_origin_allowed(self):
+        handler = self._make_handler()
+        handler.headers = MagicMock()
+        handler.headers.get = lambda key, default="": {
+            "Origin": "http://127.0.0.1:3000",
+        }.get(key, default)
+        origin = handler._get_cors_origin()
+        self.assertEqual(origin, "http://127.0.0.1:3000")
+
+    def test_error_response_no_os_details(self):
+        """Error messages should not leak OS error details."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            handler = self._make_handler(
+                method="DELETE",
+                path="/api/feedback/nonexistent.md",
+            )
+            handler.dashboard_cfg["feedback_dir"] = tmpdir
+            handler._api_feedback_delete("nonexistent.md")
+            output = handler.wfile.getvalue().decode()
+            data = json.loads(output)
+            # Should not contain OS error paths or errno details
+            self.assertNotIn("Errno", data.get("error", ""))
+            self.assertNotIn("/", data.get("error", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

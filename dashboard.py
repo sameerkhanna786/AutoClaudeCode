@@ -1108,8 +1108,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json(status)
 
     def _api_history(self, query: Dict) -> None:
-        limit = min(int(query.get("limit", ["500"])[0]), 5000)
-        offset = int(query.get("offset", ["0"])[0])
+        try:
+            limit = min(int(query.get("limit", ["500"])[0]), 5000)
+            offset = int(query.get("offset", ["0"])[0])
+        except (ValueError, TypeError):
+            self._send_error(400, "Invalid limit or offset parameter")
+            return
 
         records = load_history(self.dashboard_cfg["history_file"])
         # Return newest first by default
@@ -1199,7 +1203,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             target.write_text(content)
         except OSError as e:
-            self._send_error(500, f"Failed to write file: {e}")
+            logger.warning("Failed to write feedback file %s: %s", target, e)
+            self._send_error(500, "Failed to write file")
             return
 
         self._send_json({"ok": True, "filename": filename})
@@ -1226,7 +1231,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             target.unlink()
         except OSError as e:
-            self._send_error(500, f"Failed to delete: {e}")
+            logger.warning("Failed to delete feedback file %s: %s", target, e)
+            self._send_error(500, "Failed to delete file")
             return
 
         self._send_json({"ok": True, "deleted": name})
@@ -1277,24 +1283,48 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "declined_count": count})
 
     def _api_log(self, query: Dict) -> None:
-        num_lines = min(int(query.get("lines", ["100"])[0]), MAX_LOG_LINES)
+        try:
+            num_lines = min(int(query.get("lines", ["100"])[0]), MAX_LOG_LINES)
+        except (ValueError, TypeError):
+            self._send_error(400, "Invalid lines parameter")
+            return
         lines = read_log_tail(self.dashboard_cfg["log_file"], num_lines)
         self._send_json({"lines": lines})
 
     def _api_metrics(self, query: Dict) -> None:
-        lookback = min(int(query.get("lookback", ["86400"])[0]), 604800)  # max 7 days
+        try:
+            lookback = min(int(query.get("lookback", ["86400"])[0]), 604800)  # max 7 days
+        except (ValueError, TypeError):
+            self._send_error(400, "Invalid lookback parameter")
+            return
         records = load_history(self.dashboard_cfg["history_file"])
         metrics = compute_metrics(records, lookback_seconds=lookback)
         self._send_json(metrics)
 
     # ---- Helpers ----
 
+    def _get_cors_origin(self) -> str:
+        """Return the CORS origin header, restricted to localhost."""
+        origin = self.headers.get("Origin", "")
+        # Only allow localhost origins to prevent cross-site task injection
+        if origin and any(
+            origin.startswith(prefix) for prefix in (
+                "http://localhost", "http://127.0.0.1",
+                "http://[::1]", "https://localhost",
+                "https://127.0.0.1", "https://[::1]",
+            )
+        ):
+            return origin
+        return ""
+
     def _send_json(self, data: Any) -> None:
         content = json.dumps(data).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(content)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        cors_origin = self._get_cors_origin()
+        if cors_origin:
+            self.send_header("Access-Control-Allow-Origin", cors_origin)
         self.end_headers()
         self.wfile.write(content)
 
@@ -1303,7 +1333,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(content)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        cors_origin = self._get_cors_origin()
+        if cors_origin:
+            self.send_header("Access-Control-Allow-Origin", cors_origin)
         self.end_headers()
         self.wfile.write(content)
 
@@ -1320,13 +1352,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             return self.rfile.read(length).decode("utf-8")
         except (OSError, UnicodeDecodeError) as e:
-            self._send_error(400, f"Failed to read body: {e}")
+            logger.warning("Failed to read request body: %s", e)
+            self._send_error(400, "Failed to read request body")
             return None
 
     def do_OPTIONS(self) -> None:
         """Handle CORS preflight requests."""
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        cors_origin = self._get_cors_origin()
+        if cors_origin:
+            self.send_header("Access-Control-Allow-Origin", cors_origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
