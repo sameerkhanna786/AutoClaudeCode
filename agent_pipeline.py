@@ -412,27 +412,43 @@ class AgentPipeline:
         revision = 0
 
         # --- Planner (runs once, not on revisions) ---
-        planner_prompt = (
-            f"You are the PLANNER agent.\n\n"
-            f"TASK:\n{task_desc}\n\n"
-            f"Create a detailed plan for implementing the above task. "
-            f"Write the plan to {self._ws_dir}/plan.md"
+        # Skip planning for simple task types configured in skip_planning_for
+        skip_planning_for = getattr(ap, "skip_planning_for", [])
+        task_sources = {getattr(t, "source", "") for t in tasks}
+        skip_planner = (
+            bool(skip_planning_for)
+            and bool(task_sources)
+            and all(s in skip_planning_for for s in task_sources)
         )
-        planner_result = _run_agent(AgentRole.PLANNER, planner_prompt)
-        result.agent_results.append(planner_result)
-        result.total_cost_usd += planner_result.cost_usd
-        result.total_duration_seconds += planner_result.duration_seconds
-        self._update_cost_summary(result, planner_result)
 
-        if not planner_result.success:
-            result.error = f"Planner failed: {planner_result.error}"
-            logger.info(result.format_cost_report())
-            return result
+        if skip_planner:
+            logger.info(
+                "Skipping planner for simple task type(s): %s",
+                ", ".join(sorted(task_sources)),
+            )
+            plan_text = task_desc
+        else:
+            planner_prompt = (
+                f"You are the PLANNER agent.\n\n"
+                f"TASK:\n{task_desc}\n\n"
+                f"Create a detailed plan for implementing the above task. "
+                f"Write the plan to {self._ws_dir}/plan.md"
+            )
+            planner_result = _run_agent(AgentRole.PLANNER, planner_prompt)
+            result.agent_results.append(planner_result)
+            result.total_cost_usd += planner_result.cost_usd
+            result.total_duration_seconds += planner_result.duration_seconds
+            self._update_cost_summary(result, planner_result)
 
-        # Rollback any file changes from planner
-        rollback_fn(snapshot)
+            if not planner_result.success:
+                result.error = f"Planner failed: {planner_result.error}"
+                logger.info(result.format_cost_report())
+                return result
 
-        plan_text = workspace.read("plan.md") or planner_result.output_text
+            # Rollback any file changes from planner
+            rollback_fn(snapshot)
+
+            plan_text = workspace.read("plan.md") or planner_result.output_text
 
         while True:
             # Cost guard: abort if accumulated cost exceeds pipeline budget

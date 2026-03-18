@@ -134,6 +134,7 @@ class AgentPipelineConfig:
     max_pipeline_cost_usd: float = 0.0  # 0 = use safety.max_cost_usd_per_hour * 0.5
     review_detail: str = "standard"  # "minimal" | "standard" | "thorough"
     review_confidence_threshold: float = 0.70  # min confidence for findings to surface
+    skip_planning_for: List[str] = field(default_factory=lambda: ["lint", "todo"])
     planner: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(
         model="opus", max_turns=10, timeout_seconds=7200))
     coder: AgentRoleConfig = field(default_factory=lambda: AgentRoleConfig(

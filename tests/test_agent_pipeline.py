@@ -923,3 +923,136 @@ class TestStructuredReviewInPipeline:
         # Second tester prompt should include test suggestions
         assert "Test with empty list" in tester_prompts[1]
         assert "Untested edge case" in tester_prompts[1]
+
+
+class TestSkipPlanningFor:
+    def setup_method(self):
+        self.config = Config()
+        self.config.agent_pipeline.enabled = True
+
+    @patch("provider_runner.create_runner")
+    def test_skip_planner_for_lint_task(self, mock_create_runner, tmp_path):
+        """Planner is skipped when all tasks have source in skip_planning_for."""
+        self.config.target_dir = str(tmp_path)
+        self.config.agent_pipeline.skip_planning_for = ["lint", "todo"]
+        pipeline = AgentPipeline(self.config)
+        rollback_fn = MagicMock()
+        ws_dir = Path(str(tmp_path)) / self.config.paths.agent_workspace_dir
+
+        runner_instance = mock_create_runner.return_value
+        prompts_seen = []
+
+        def side_effect_fn(prompt):
+            prompts_seen.append(prompt)
+            if "REVIEWER" in prompt:
+                ws_dir.mkdir(parents=True, exist_ok=True)
+                (ws_dir / "review.md").write_text("VERDICT: APPROVED\nOK")
+                return _make_success_result("review output")
+            return _make_success_result("output")
+
+        runner_instance.run.side_effect = side_effect_fn
+
+        lint_task = MockTask(description="Fix unused import", source="lint")
+        result = pipeline.run([lint_task], rollback_fn, "snap")
+
+        assert result.success is True
+        # No planner prompt should have been sent
+        planner_prompts = [p for p in prompts_seen if "PLANNER" in p]
+        assert len(planner_prompts) == 0
+        # Coder + Tester + Reviewer = 3 agent calls
+        assert len(prompts_seen) == 3
+        # Rollback should NOT be called for planner (no planner ran)
+        assert rollback_fn.call_count == 0
+
+    @patch("provider_runner.create_runner")
+    def test_planner_runs_for_non_skip_task(self, mock_create_runner, tmp_path):
+        """Planner runs normally when task source is not in skip_planning_for."""
+        self.config.target_dir = str(tmp_path)
+        self.config.agent_pipeline.skip_planning_for = ["lint", "todo"]
+        pipeline = AgentPipeline(self.config)
+        rollback_fn = MagicMock()
+        ws_dir = Path(str(tmp_path)) / self.config.paths.agent_workspace_dir
+
+        runner_instance = mock_create_runner.return_value
+        prompts_seen = []
+
+        def side_effect_fn(prompt):
+            prompts_seen.append(prompt)
+            if "REVIEWER" in prompt:
+                ws_dir.mkdir(parents=True, exist_ok=True)
+                (ws_dir / "review.md").write_text("VERDICT: APPROVED\nOK")
+                return _make_success_result("review output")
+            return _make_success_result("output")
+
+        runner_instance.run.side_effect = side_effect_fn
+
+        test_task = MockTask(description="Fix test failure", source="test_failure")
+        result = pipeline.run([test_task], rollback_fn, "snap")
+
+        assert result.success is True
+        # Planner prompt should have been sent
+        planner_prompts = [p for p in prompts_seen if "PLANNER" in p]
+        assert len(planner_prompts) == 1
+        # Planner + Coder + Tester + Reviewer = 4 agent calls
+        assert len(prompts_seen) == 4
+
+    @patch("provider_runner.create_runner")
+    def test_mixed_sources_runs_planner(self, mock_create_runner, tmp_path):
+        """Planner runs when tasks have mixed sources (not all skippable)."""
+        self.config.target_dir = str(tmp_path)
+        self.config.agent_pipeline.skip_planning_for = ["lint", "todo"]
+        pipeline = AgentPipeline(self.config)
+        rollback_fn = MagicMock()
+        ws_dir = Path(str(tmp_path)) / self.config.paths.agent_workspace_dir
+
+        runner_instance = mock_create_runner.return_value
+        prompts_seen = []
+
+        def side_effect_fn(prompt):
+            prompts_seen.append(prompt)
+            if "REVIEWER" in prompt:
+                ws_dir.mkdir(parents=True, exist_ok=True)
+                (ws_dir / "review.md").write_text("VERDICT: APPROVED\nOK")
+                return _make_success_result("review output")
+            return _make_success_result("output")
+
+        runner_instance.run.side_effect = side_effect_fn
+
+        tasks = [
+            MockTask(description="Fix lint", source="lint"),
+            MockTask(description="Fix test", source="test_failure"),
+        ]
+        result = pipeline.run(tasks, rollback_fn, "snap")
+
+        assert result.success is True
+        planner_prompts = [p for p in prompts_seen if "PLANNER" in p]
+        assert len(planner_prompts) == 1
+
+    @patch("provider_runner.create_runner")
+    def test_empty_skip_list_runs_planner(self, mock_create_runner, tmp_path):
+        """Planner runs when skip_planning_for is empty."""
+        self.config.target_dir = str(tmp_path)
+        self.config.agent_pipeline.skip_planning_for = []
+        pipeline = AgentPipeline(self.config)
+        rollback_fn = MagicMock()
+        ws_dir = Path(str(tmp_path)) / self.config.paths.agent_workspace_dir
+
+        runner_instance = mock_create_runner.return_value
+        prompts_seen = []
+
+        def side_effect_fn(prompt):
+            prompts_seen.append(prompt)
+            if "REVIEWER" in prompt:
+                ws_dir.mkdir(parents=True, exist_ok=True)
+                (ws_dir / "review.md").write_text("VERDICT: APPROVED\nOK")
+                return _make_success_result("review output")
+            return _make_success_result("output")
+
+        runner_instance.run.side_effect = side_effect_fn
+
+        lint_task = MockTask(description="Fix lint", source="lint")
+        result = pipeline.run([lint_task], rollback_fn, "snap")
+
+        assert result.success is True
+        planner_prompts = [p for p in prompts_seen if "PLANNER" in p]
+        assert len(planner_prompts) == 1

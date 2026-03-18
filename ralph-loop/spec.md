@@ -32,7 +32,7 @@
 
 15. DONE: Add a `validate_task_feasibility()` method to `task_discovery.py:TaskDiscovery` that estimates task complexity by checking: (a) number of files referenced, (b) whether referenced files exist, (c) whether the task description is specific enough (>20 chars, contains a file reference). Return a feasibility score 0-1. Use this in `discover_all()` to filter out low-feasibility tasks (score < 0.3).
 
-16. PENDING: In `agent_pipeline.py`, the planner agent always runs even for simple tasks like lint fixes. Add a `skip_planning_for` config list (default: `["lint", "todo"]`) that skips the planner for simple task types and goes straight to the coder, saving one Claude invocation per simple task.
+16. DONE: In `agent_pipeline.py`, the planner agent always runs even for simple tasks like lint fixes. Added a `skip_planning_for` config list (default: `["lint", "todo"]`) that skips the planner for simple task types and goes straight to the coder, saving one Claude invocation per simple task.
 
 17. PENDING: Add tests for `session_manager.py` in `tests/test_session_manager.py`. Test: session file creation/loading, orphaned worktree detection, cleanup of stale sessions, and recovery flow.
 
@@ -103,3 +103,5 @@
 14. DONE: In `safety.py:check_memory()`, the macOS implementation only counts "Pages free" + "Pages speculative" + "Pages purgeable". Add "Pages inactive" to the count since macOS treats inactive pages as available memory, which currently causes false low-memory warnings.
 
 15. DONE: Add a `validate_task_feasibility()` method to `task_discovery.py:TaskDiscovery` that estimates task complexity by checking: (a) number of files referenced, (b) whether referenced files exist, (c) whether the task description is specific enough (>20 chars, contains a file reference). Return a feasibility score 0-1. Use this in `discover_all()` to filter out low-feasibility tasks (score < 0.3).
+
+16. DONE: In `agent_pipeline.py`, the planner agent always runs even for simple tasks like lint fixes. Added a `skip_planning_for` config list (default: `["lint", "todo"]`) that skips the planner for simple task types and goes straight to the coder, saving one Claude invocation per simple task.
