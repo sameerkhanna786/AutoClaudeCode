@@ -376,6 +376,15 @@ class GitManager:
         """Abort an in-progress merge."""
         self._run("merge", "--abort", check=False)
 
+    def merge_no_commit(self, branch: str) -> bool:
+        """Start a merge without committing, leaving conflicts in the working tree.
+
+        Returns True if the merge applied cleanly (no conflicts),
+        False if there are conflicts to resolve.
+        """
+        result = self._run("merge", "--no-commit", "--no-ff", branch, check=False)
+        return result.returncode == 0
+
     def get_conflicted_files(self) -> List[str]:
         """List files with unresolved merge conflicts."""
         result = self._run("diff", "--name-only", "--diff-filter=U", check=False)

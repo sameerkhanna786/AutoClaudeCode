@@ -108,7 +108,7 @@ class StateManager:
         except json.JSONDecodeError as e:
             logger.error("History file is corrupt: %s", e)
             # Back up corrupted file so record_cycle won't overwrite it
-            backup = str(self.history_file) + ".corrupt"
+            backup = str(self.history_file) + f".corrupt.{int(time.time())}"
             try:
                 shutil.copy2(str(self.history_file), backup)
                 logger.warning("Backed up corrupted history to %s", backup)
@@ -183,11 +183,11 @@ class StateManager:
                     )
             except OSError:
                 pass  # File may have been deleted; proceed with write
-        # Pre-check: verify records are JSON-serializable before writing.
-        # This catches circular references, non-serializable types (e.g.,
-        # unconverted dataclass instances with self-references), etc.
+        # Pre-serialize to validate JSON-serializability and avoid writing
+        # a partial/corrupt file. This single serialization replaces both the
+        # old validation-only json.dumps() and the file-writing json.dump().
         try:
-            json.dumps(records)
+            serialized = json.dumps(records, indent=2)
         except (TypeError, ValueError) as e:
             logger.error(
                 "Refusing to save history: records are not JSON-serializable: %s", e,
@@ -203,7 +203,7 @@ class StateManager:
                 os.close(tmp_fd)
                 raise
             with f:
-                json.dump(records, f, indent=2)
+                f.write(serialized)
             # os.replace can fail on Windows if target is open; retry with
             # exponential backoff and jitter for persistent filesystem contention
             _REPLACE_BASE_DELAY = 0.1

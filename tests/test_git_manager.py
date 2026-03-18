@@ -403,6 +403,33 @@ class TestWorktreeManagement:
 
         gm.delete_branch("merge-branch", force=True)
 
+    def test_merge_no_commit(self, tmp_git_repo):
+        """merge_no_commit stages changes without creating a merge commit."""
+        gm = GitManager(tmp_git_repo)
+
+        # Create branch with commit on a different file
+        wt_path = str(Path(tmp_git_repo) / ".worktrees" / "nc-test")
+        Path(wt_path).parent.mkdir(parents=True, exist_ok=True)
+        gm.create_worktree(wt_path, "nc-branch")
+
+        wt_gm = GitManager(wt_path)
+        Path(wt_path, "nc_file.txt").write_text("no commit merge")
+        wt_gm.commit("NC file", files=["nc_file.txt"])
+        gm.remove_worktree(wt_path, force=True)
+
+        # Commit different file on main to force a real merge
+        Path(tmp_git_repo, "main_nc.txt").write_text("main side")
+        gm.commit("Main NC file", files=["main_nc.txt"])
+
+        # merge_no_commit should succeed (no conflicts)
+        assert gm.merge_no_commit("nc-branch") is True
+        # File should exist but we should NOT have an automatic merge commit
+        assert Path(tmp_git_repo, "nc_file.txt").exists()
+
+        # Abort the pending merge to clean up
+        gm.abort_merge()
+        gm.delete_branch("nc-branch", force=True)
+
     def test_prune_worktrees(self, tmp_git_repo):
         """prune_worktrees doesn't error on a clean repo."""
         gm = GitManager(tmp_git_repo)

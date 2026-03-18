@@ -565,6 +565,14 @@ class TestFailureRecovery:
 
 
 class TestCorruptHistoryBackup:
+    @staticmethod
+    def _find_corrupt_backup(history_file):
+        """Find the timestamped .corrupt.* backup file next to history_file."""
+        parent = Path(history_file).parent
+        base_name = Path(history_file).name
+        backups = list(parent.glob(f"{base_name}.corrupt.*"))
+        return backups[0] if backups else None
+
     def test_corrupt_history_backed_up(self, state_mgr):
         """Corrupted JSON history file is backed up before returning empty."""
         corrupted_content = "{this is not valid json!!"
@@ -574,8 +582,8 @@ class TestCorruptHistoryBackup:
 
         assert result == []
         assert state_mgr.get_consecutive_failures() == 0
-        backup_path = Path(str(state_mgr.history_file) + ".corrupt")
-        assert backup_path.exists()
+        backup_path = self._find_corrupt_backup(state_mgr.history_file)
+        assert backup_path is not None
         assert backup_path.read_text() == corrupted_content
 
     def test_corrupt_history_not_destroyed_by_record_cycle(self, state_mgr):
@@ -589,8 +597,8 @@ class TestCorruptHistoryBackup:
             success=True,
         ))
 
-        backup_path = Path(str(state_mgr.history_file) + ".corrupt")
-        assert backup_path.exists()
+        backup_path = self._find_corrupt_backup(state_mgr.history_file)
+        assert backup_path is not None
         assert backup_path.read_text() == corrupted_content
 
         data = json.loads(Path(state_mgr.history_file).read_text())
@@ -604,8 +612,8 @@ class TestCorruptHistoryBackup:
 
         # First call: triggers backup
         state_mgr._load_history()
-        backup_path = Path(str(state_mgr.history_file) + ".corrupt")
-        assert backup_path.exists()
+        backup_path = self._find_corrupt_backup(state_mgr.history_file)
+        assert backup_path is not None
 
         # Remove backup to verify second call doesn't recreate it
         backup_path.unlink()
@@ -613,7 +621,30 @@ class TestCorruptHistoryBackup:
         # Second call: should use cache, not re-read file
         result = state_mgr._load_history()
         assert result == []
-        assert not backup_path.exists()  # backup was NOT recreated
+        # No new backup should be created
+        assert self._find_corrupt_backup(state_mgr.history_file) is None
+
+    def test_corrupt_backups_have_unique_timestamps(self, state_mgr):
+        """Multiple corruptions create separate timestamped backup files."""
+        corrupted1 = "{corrupt1!!"
+        Path(state_mgr.history_file).write_text(corrupted1)
+        state_mgr._cache = None  # force re-read
+        state_mgr._cache_mtime = 0.0
+        state_mgr._load_history()
+
+        # Simulate a second corruption with a different timestamp
+        corrupted2 = "{corrupt2!!"
+        Path(state_mgr.history_file).write_text(corrupted2)
+        state_mgr._cache = None
+        state_mgr._cache_mtime = 0.0
+        # Patch time.time to get a different timestamp
+        with patch("state.time.time", return_value=time.time() + 1):
+            state_mgr._load_history()
+
+        parent = Path(state_mgr.history_file).parent
+        base_name = Path(state_mgr.history_file).name
+        backups = list(parent.glob(f"{base_name}.corrupt.*"))
+        assert len(backups) >= 2
 
 
 class TestSaveHistoryFdLeak:
@@ -638,12 +669,17 @@ class TestSaveHistoryFdLeak:
                     # os.close should have been called with the raw fd
                     mock_close.assert_called_once_with(allocated_fd)
 
-    def test_save_history_json_dump_failure_cleans_up(self, state_mgr):
-        """If json.dump raises, temp file is cleaned up and exception propagates."""
-        with patch("state.json.dump", side_effect=TypeError("not serializable")):
-            with pytest.raises(TypeError, match="not serializable"):
-                state_mgr._save_history([{"test": True}])
+    def test_save_history_json_dumps_failure_returns_early(self, state_mgr, caplog):
+        """If json.dumps raises (non-serializable data), save returns early with a log."""
+        import logging
 
+        class NotSerializable:
+            pass
+
+        with caplog.at_level(logging.ERROR):
+            state_mgr._save_history([{"obj": NotSerializable()}])
+
+        assert any("not JSON-serializable" in r.message for r in caplog.records)
         # Verify no leftover .tmp files in the history directory
         tmp_files = list(Path(state_mgr.history_file).parent.glob("*.tmp"))
         assert tmp_files == []
@@ -651,12 +687,12 @@ class TestSaveHistoryFdLeak:
 
 class TestSaveHistoryENOSPC:
     def test_save_history_enospc_logs_warning(self, state_mgr, caplog):
-        """ENOSPC during save should log a warning and not raise."""
+        """ENOSPC during os.replace should log a warning and not raise."""
         import logging
 
         enospc_err = OSError(errno.ENOSPC, "No space left on device")
 
-        with patch("state.json.dump", side_effect=enospc_err):
+        with patch("state.os.replace", side_effect=enospc_err):
             with caplog.at_level(logging.WARNING):
                 # Should NOT raise
                 state_mgr._save_history([{"test": True}])
@@ -667,7 +703,7 @@ class TestSaveHistoryENOSPC:
         """ENOSPC should clean up the temp file."""
         enospc_err = OSError(errno.ENOSPC, "No space left on device")
 
-        with patch("state.json.dump", side_effect=enospc_err):
+        with patch("state.os.replace", side_effect=enospc_err):
             state_mgr._save_history([{"test": True}])
 
         # No temp files should remain
@@ -678,7 +714,7 @@ class TestSaveHistoryENOSPC:
         """Non-ENOSPC OSError should still propagate."""
         perm_err = OSError(errno.EACCES, "Permission denied")
 
-        with patch("state.json.dump", side_effect=perm_err):
+        with patch("state.os.replace", side_effect=perm_err):
             with pytest.raises(OSError, match="Permission denied"):
                 state_mgr._save_history([{"test": True}])
 

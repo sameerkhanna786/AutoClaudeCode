@@ -437,7 +437,7 @@ class ParallelCoordinator:
             ai_snapshot = self.git.create_snapshot()
 
             # Attempt merge leaving conflicts in working tree
-            self.git._run("merge", "--no-commit", "--no-ff", worker.branch_name, check=False)
+            self.git.merge_no_commit(worker.branch_name)
 
             conflicted = self.git.get_conflicted_files()
             if conflicted:
