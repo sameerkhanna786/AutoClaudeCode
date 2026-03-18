@@ -68,28 +68,38 @@ def _extract_relevant_files(tasks: List[Task], max_files: int = 5) -> List[str]:
 def topological_sort_tasks(tasks: List[Task]) -> List[Task]:
     """Topological sort using Kahn's algorithm with priority tie-breaking.
 
+    Uses a pre-built reverse adjacency map and a min-heap for O(E + V log V)
+    complexity instead of the previous O(V²) inner loop per node extraction.
+
     Raises ValueError if a dependency cycle is detected.
     """
+    import heapq
+
     task_map = {t.task_id: t for t in tasks}
     in_degree = {t.task_id: 0 for t in tasks}
+    # Build reverse adjacency: dep_id -> list of dependent task_ids
+    dependents: Dict[str, List[str]] = {t.task_id: [] for t in tasks}
     for t in tasks:
         for dep in t.depends_on:
             if dep in task_map:
                 in_degree[t.task_id] += 1
-    queue = sorted(
-        [t for t in tasks if in_degree[t.task_id] == 0],
-        key=lambda t: t.priority,
-    )
+                dependents[dep].append(t.task_id)
+    # Use a heap for O(log n) priority extraction instead of repeated sorting
+    counter = 0  # tie-breaker for stable ordering
+    heap: List[tuple] = []
+    for t in tasks:
+        if in_degree[t.task_id] == 0:
+            heapq.heappush(heap, (t.priority, counter, t))
+            counter += 1
     result: List[Task] = []
-    while queue:
-        task = queue.pop(0)
+    while heap:
+        _, _, task = heapq.heappop(heap)
         result.append(task)
-        for t in tasks:
-            if task.task_id in t.depends_on:
-                in_degree[t.task_id] -= 1
-                if in_degree[t.task_id] == 0:
-                    queue.append(t)
-                    queue.sort(key=lambda x: x.priority)
+        for dep_id in dependents[task.task_id]:
+            in_degree[dep_id] -= 1
+            if in_degree[dep_id] == 0:
+                heapq.heappush(heap, (task_map[dep_id].priority, counter, task_map[dep_id]))
+                counter += 1
     if len(result) != len(tasks):
         raise ValueError("Cycle detected in task dependencies")
     return result

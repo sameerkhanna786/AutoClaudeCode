@@ -280,3 +280,15 @@ class TestFeedbackCleanup:
         fb_mgr.get_pending_feedback()
 
         assert gitkeep.exists()
+
+    def test_cleanup_handles_iterdir_oserror(self, fb_mgr):
+        """_cleanup_old_files should not crash if iterdir() raises OSError."""
+        done_dir = Path(fb_mgr.done_dir)
+        # Put a file so the directory is non-empty
+        (done_dir / "task.md").write_text("content")
+        old_mtime = time.time() - (10 * 86400)
+        os.utime(done_dir / "task.md", (old_mtime, old_mtime))
+
+        with patch.object(Path, "iterdir", side_effect=OSError("Permission denied")):
+            # Should not raise
+            fb_mgr._cleanup_old_files(done_dir)

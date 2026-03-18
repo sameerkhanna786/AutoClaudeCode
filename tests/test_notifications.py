@@ -163,5 +163,55 @@ class TestWebhookConfigValidation(unittest.TestCase):
         self.assertEqual(mock_urlopen.call_count, 1)
 
 
+from notifications import NaturalLanguageSummarizer
+
+
+class TestNaturalLanguageSummarizerFailure(unittest.TestCase):
+    """Tests that failure summaries don't produce broken grammar like double 'I'."""
+
+    def test_single_task_failure_no_double_i(self):
+        summarizer = NaturalLanguageSummarizer()
+        tasks = [{"source": "test_failure", "description": "test_foo fails"}]
+        result = summarizer.summarize(tasks, success=False)
+        # Should NOT contain "I ... I" (double I from template nesting)
+        self.assertNotIn("I but encountered issues I", result)
+        self.assertIn("encountered issues", result)
+        self.assertIn("test_foo fails", result)
+
+    def test_single_task_success_uses_template(self):
+        summarizer = NaturalLanguageSummarizer()
+        tasks = [{"source": "lint", "description": "unused import"}]
+        result = summarizer.summarize(tasks, success=True)
+        self.assertEqual(result, "I resolved a lint issue: unused import")
+
+    def test_batch_failure_no_double_i(self):
+        summarizer = NaturalLanguageSummarizer()
+        tasks = [
+            {"source": "test_failure", "description": "t1"},
+            {"source": "lint", "description": "t2"},
+        ]
+        result = summarizer.summarize(tasks, success=False)
+        self.assertNotIn("I but encountered issues", result)
+        self.assertIn("attempted a batch but encountered issues", result)
+
+    def test_batch_success_message(self):
+        summarizer = NaturalLanguageSummarizer()
+        tasks = [
+            {"source": "test_failure", "description": "t1"},
+            {"source": "lint", "description": "t2"},
+        ]
+        result = summarizer.summarize(tasks, success=True)
+        self.assertIn("I completed a batch", result)
+        self.assertNotIn("encountered issues", result)
+
+    def test_single_task_failure_unknown_source(self):
+        summarizer = NaturalLanguageSummarizer()
+        tasks = [{"source": "unknown_type", "description": "some work"}]
+        result = summarizer.summarize(tasks, success=False)
+        self.assertNotIn("I but", result)
+        self.assertIn("some work", result)
+        self.assertIn("encountered issues", result)
+
+
 if __name__ == "__main__":
     unittest.main()

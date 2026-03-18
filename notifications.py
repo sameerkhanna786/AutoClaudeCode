@@ -38,17 +38,31 @@ class NaturalLanguageSummarizer:
         "claude_idea": "I implemented an improvement: {desc}",
     }
 
+    _FAILURE_TEMPLATES = {
+        "test_failure": "I tried to fix a failing test but encountered issues: {desc}",
+        "lint": "I tried to resolve a lint issue but encountered issues: {desc}",
+        "todo": "I tried to address a TODO but encountered issues: {desc}",
+        "coverage": "I tried to add test coverage but encountered issues: {desc}",
+        "quality": "I tried to improve code quality but encountered issues: {desc}",
+        "feedback": "I tried to complete a developer request but encountered issues: {desc}",
+        "claude_idea": "I tried to implement an improvement but encountered issues: {desc}",
+    }
+
     def summarize(self, tasks, success: bool, cost_usd: float = 0.0) -> str:
         """Generate a natural language summary. Uses templates for single tasks, batch summary for multi."""
         if not tasks:
             return "No tasks were processed."
-        status = "successfully" if success else "but encountered issues"
         if len(tasks) == 1:
             task = tasks[0]
             source = task.get("source", "") if isinstance(task, dict) else getattr(task, "source", "unknown")
             desc = task.get("description", "") if isinstance(task, dict) else getattr(task, "description", "")
-            template = self._TEMPLATES.get(source, "I worked on: {desc}")
-            return f"I {status} {template.format(desc=desc)}" if not success else template.format(desc=desc)
+            if success:
+                template = self._TEMPLATES.get(source, "I worked on: {desc}")
+            else:
+                template = self._FAILURE_TEMPLATES.get(
+                    source, "I worked on {desc} but encountered issues",
+                )
+            return template.format(desc=desc)
 
         source_counts: Dict[str, int] = {}
         for t in tasks:
@@ -63,7 +77,10 @@ class NaturalLanguageSummarizer:
             label = _LABELS.get(source, "made {n} improvement(s)")
             parts.append(label.format(n=count))
 
-        summary = f"I {status} completed a batch: " + ", ".join(parts)
+        if success:
+            summary = "I completed a batch: " + ", ".join(parts)
+        else:
+            summary = "I attempted a batch but encountered issues: " + ", ".join(parts)
         if cost_usd > 0:
             summary += f" (cost: ${cost_usd:.4f})"
         return summary

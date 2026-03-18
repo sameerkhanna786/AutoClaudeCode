@@ -273,7 +273,11 @@ class FeedbackManager:
         cutoff = time.time() - (max_age_days * 86400)
         if not directory.exists():
             return
-        for fpath in directory.iterdir():
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            return
+        for fpath in entries:
             if fpath.is_file() and fpath.name != ".gitkeep":
                 try:
                     if fpath.stat().st_mtime < cutoff:

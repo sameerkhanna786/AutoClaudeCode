@@ -641,6 +641,39 @@ class TestTopologicalSortTasks(unittest.TestCase):
         result = topological_sort_tasks([a])
         self.assertEqual(len(result), 1)
 
+    def test_many_tasks_performance(self):
+        """Verify heap-based sort handles larger DAGs correctly."""
+        # Create a chain of 50 tasks: 0 -> 1 -> 2 -> ... -> 49
+        tasks = []
+        for i in range(50):
+            deps = [str(i - 1)] if i > 0 else []
+            tasks.append(Task(
+                description=f"Task {i}", priority=1, source="feedback",
+                task_id=str(i), depends_on=deps,
+            ))
+        # Shuffle input order
+        import random
+        shuffled = list(tasks)
+        random.shuffle(shuffled)
+        result = topological_sort_tasks(shuffled)
+        ids = [t.task_id for t in result]
+        # Should produce 0, 1, 2, ..., 49
+        self.assertEqual(ids, [str(i) for i in range(50)])
+
+    def test_wide_fan_out_priority_ordering(self):
+        """Root with many children — children should be ordered by priority."""
+        root = Task(description="Root", priority=1, source="feedback", task_id="root")
+        children = [
+            Task(description=f"C{i}", priority=10 - i, source="feedback",
+                 task_id=f"c{i}", depends_on=["root"])
+            for i in range(5)
+        ]
+        result = topological_sort_tasks([root] + children)
+        self.assertEqual(result[0].task_id, "root")
+        # Remaining should be sorted by priority (ascending)
+        child_priorities = [t.priority for t in result[1:]]
+        self.assertEqual(child_priorities, sorted(child_priorities))
+
 
 if __name__ == "__main__":
     unittest.main()
