@@ -165,19 +165,21 @@ class FeedbackManager:
         if not self.feedback_dir.exists():
             return tasks
 
-        files = sorted(
-            f for f in self.feedback_dir.iterdir()
-            if f.is_file() and f.suffix in (".md", ".txt") and f.name != ".gitkeep"
-        )
-
-        # Auto-import PRD files
-        prd_files = sorted(
-            f for f in self.feedback_dir.iterdir()
-            if f.is_file() and (
-                f.name.endswith(".prd.yaml") or f.name.endswith(".prd.json")
-                or f.name.endswith(".prd.yml")
-            )
-        )
+        # Single pass over the directory to partition into feedback and PRD files
+        files = []
+        prd_files = []
+        try:
+            all_entries = sorted(self.feedback_dir.iterdir(), key=lambda f: f.name)
+        except OSError:
+            return tasks
+        for f in all_entries:
+            if not f.is_file() or f.name == ".gitkeep":
+                continue
+            if (f.name.endswith(".prd.yaml") or f.name.endswith(".prd.json")
+                    or f.name.endswith(".prd.yml")):
+                prd_files.append(f)
+            elif f.suffix in (".md", ".txt"):
+                files.append(f)
         for prd_file in prd_files:
             try:
                 from prd_generator import import_prd

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -155,7 +157,19 @@ def write_split_tasks_as_feedback(tasks: List[Task], feedback_dir: str) -> int:
         filename = f"split-{task.task_id.replace('/', '-')}.md"
         filepath = feedback_path / filename
         try:
-            filepath.write_text(content)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(feedback_path), suffix=".tmp"
+            )
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(content)
+                os.replace(tmp_path, str(filepath))
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
             count += 1
         except OSError as e:
             logger.warning("Failed to write split task %s: %s", filepath, e)

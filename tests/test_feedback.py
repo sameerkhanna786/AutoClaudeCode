@@ -292,3 +292,19 @@ class TestFeedbackCleanup:
         with patch.object(Path, "iterdir", side_effect=OSError("Permission denied")):
             # Should not raise
             fb_mgr._cleanup_old_files(done_dir)
+
+    def test_single_pass_iterdir_finds_both_md_and_prd(self, fb_mgr):
+        """get_pending_feedback reads both .md and .prd.yaml in a single directory pass."""
+        feedback_dir = Path(fb_mgr.feedback_dir)
+        (feedback_dir / "task1.md").write_text("Fix a bug")
+        (feedback_dir / "task2.txt").write_text("Add a feature")
+        tasks = fb_mgr.get_pending_feedback()
+        descs = [t.description for t in tasks]
+        assert "Fix a bug" in descs
+        assert "Add a feature" in descs
+
+    def test_iterdir_oserror_returns_empty(self, fb_mgr):
+        """get_pending_feedback returns empty list if iterdir raises OSError."""
+        with patch.object(Path, "iterdir", side_effect=OSError("Permission denied")):
+            tasks = fb_mgr.get_pending_feedback()
+        assert tasks == []

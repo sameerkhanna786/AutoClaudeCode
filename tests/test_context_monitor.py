@@ -177,5 +177,47 @@ class TestWriteSplitTasks(unittest.TestCase):
             self.assertEqual(count, 0)
 
 
+class TestWriteSplitTasksAtomicWrites(unittest.TestCase):
+    """Tests that split task writes are atomic (tempfile + os.replace)."""
+
+    def test_write_creates_file_atomically(self):
+        """Verify no .tmp files remain after successful write."""
+        task = Task(
+            description="Atomic test task",
+            priority=1,
+            source="test",
+            task_id="atomic-1",
+            depends_on=["parent-1"],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            count = write_split_tasks_as_feedback([task], tmpdir)
+            self.assertEqual(count, 1)
+            # No .tmp files should remain
+            tmp_files = list(Path(tmpdir).glob("*.tmp"))
+            self.assertEqual(len(tmp_files), 0)
+            # The actual file should exist
+            md_files = list(Path(tmpdir).glob("split-*.md"))
+            self.assertEqual(len(md_files), 1)
+
+    def test_write_failure_cleans_up_tmp(self):
+        """On write failure, tmp files should be cleaned up."""
+        task = Task(
+            description="Fail task",
+            priority=1,
+            source="test",
+            task_id="fail-1",
+            depends_on=[],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Make directory read-only to force write failure
+            import os, stat
+            os.chmod(tmpdir, stat.S_IRUSR | stat.S_IXUSR)
+            try:
+                count = write_split_tasks_as_feedback([task], tmpdir)
+                self.assertEqual(count, 0)
+            finally:
+                os.chmod(tmpdir, stat.S_IRWXU)
+
+
 if __name__ == "__main__":
     unittest.main()

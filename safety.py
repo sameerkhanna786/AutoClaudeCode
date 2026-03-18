@@ -210,7 +210,12 @@ class SafetyGuard:
     def check_disk_space(self) -> None:
         """Ensure sufficient disk space is available."""
         target = self.config.target_dir
-        usage = shutil.disk_usage(target)
+        try:
+            usage = shutil.disk_usage(target)
+        except OSError as e:
+            raise SafetyError(
+                f"Cannot check disk space for {target}: {e}"
+            ) from e
         free_mb = usage.free / (1024 * 1024)
         if free_mb < self.config.safety.min_disk_space_mb:
             raise SafetyError(

@@ -480,3 +480,17 @@ class TestActiveGuardsThreadSafety:
         # All guards should have been removed after release
         for g in guards:
             assert g not in _active_guards
+
+
+class TestDiskSpaceOSError:
+    """Tests for OSError handling in check_disk_space."""
+
+    def test_oserror_raises_safety_error(self, guard):
+        """OSError from shutil.disk_usage should become SafetyError."""
+        with patch("safety.shutil.disk_usage", side_effect=OSError("mount not found")):
+            with pytest.raises(SafetyError, match="Cannot check disk space"):
+                guard.check_disk_space()
+
+    def test_normal_disk_check_passes(self, guard):
+        """Normal disk check with enough space should not raise."""
+        guard.check_disk_space()  # should not raise on real filesystem
