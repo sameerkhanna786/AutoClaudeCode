@@ -147,6 +147,12 @@ class GeminiRunner:
             f"{self._model}:generateContent?key={self._api_key}"
         )
 
+    def _sanitize_error(self, message: str) -> str:
+        """Strip API key from error messages to prevent leakage in logs."""
+        if self._api_key:
+            return message.replace(self._api_key, "***")
+        return message
+
     def run(self, prompt: str, add_dirs: Optional[List[str]] = None) -> ClaudeResult:
         """Run Gemini generateContent."""
         if not self._api_key:
@@ -178,19 +184,19 @@ class GeminiRunner:
                 pass
             return ClaudeResult(
                 success=False,
-                error=f"Gemini API error {e.code}: {body}",
+                error=self._sanitize_error(f"Gemini API error {e.code}: {body}"),
                 duration_seconds=time.time() - start,
             )
         except urllib.error.URLError as e:
             return ClaudeResult(
                 success=False,
-                error=f"Gemini connection error: {e.reason}",
+                error=self._sanitize_error(f"Gemini connection error: {e.reason}"),
                 duration_seconds=time.time() - start,
             )
         except Exception as e:
             return ClaudeResult(
                 success=False,
-                error=f"Gemini request failed: {e}",
+                error=self._sanitize_error(f"Gemini request failed: {e}"),
                 duration_seconds=time.time() - start,
             )
 

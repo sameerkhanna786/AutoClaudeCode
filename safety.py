@@ -7,6 +7,7 @@ import fcntl
 import logging
 import os
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -18,11 +19,14 @@ logger = logging.getLogger(__name__)
 
 # Module-level list of SafetyGuard instances that hold locks, for atexit cleanup.
 _active_guards: List[SafetyGuard] = []
+_active_guards_lock = threading.Lock()
 
 
 def _atexit_release_locks() -> None:
     """Release all held locks on normal interpreter exit."""
-    for guard in list(_active_guards):
+    with _active_guards_lock:
+        guards = list(_active_guards)
+    for guard in guards:
         try:
             guard.release_lock()
         except Exception:
@@ -179,7 +183,8 @@ class SafetyGuard:
 
         # Lock acquired — store the fd and write our PID
         self._lock_fd = fd
-        _active_guards.append(self)
+        with _active_guards_lock:
+            _active_guards.append(self)
         os.ftruncate(self._lock_fd, 0)
         os.lseek(self._lock_fd, 0, os.SEEK_SET)
         os.write(self._lock_fd, str(os.getpid()).encode())
@@ -196,10 +201,11 @@ class SafetyGuard:
             except OSError:
                 pass
             self._lock_fd = None
-            try:
-                _active_guards.remove(self)
-            except ValueError:
-                pass
+            with _active_guards_lock:
+                try:
+                    _active_guards.remove(self)
+                except ValueError:
+                    pass
 
     def check_disk_space(self) -> None:
         """Ensure sufficient disk space is available."""

@@ -159,5 +159,45 @@ class TestImportPrd(unittest.TestCase):
             self.assertEqual(tasks, [])
 
 
+class TestImportPrdInvalidPriority(unittest.TestCase):
+    """Tests for robust priority parsing in PRD import."""
+
+    def test_non_integer_priority_defaults_to_3(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path = str(Path(tmpdir) / "prd.yaml")
+            data = {"tasks": [{"description": "task1", "priority": "high"}]}
+            Path(prd_path).write_text(yaml.dump(data))
+            tasks = import_prd(prd_path)
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0].priority, 3)
+
+    def test_null_priority_defaults_to_3(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path = str(Path(tmpdir) / "prd.yaml")
+            data = {"tasks": [{"description": "task1", "priority": None}]}
+            Path(prd_path).write_text(yaml.dump(data))
+            tasks = import_prd(prd_path)
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0].priority, 3)
+
+    def test_float_priority_converts_to_int(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path = str(Path(tmpdir) / "prd.yaml")
+            data = {"tasks": [{"description": "task1", "priority": 2.7}]}
+            Path(prd_path).write_text(yaml.dump(data))
+            tasks = import_prd(prd_path)
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0].priority, 2)
+
+    def test_missing_priority_defaults_to_3(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path = str(Path(tmpdir) / "prd.yaml")
+            data = {"tasks": [{"description": "task1"}]}
+            Path(prd_path).write_text(yaml.dump(data))
+            tasks = import_prd(prd_path)
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0].priority, 3)
+
+
 if __name__ == "__main__":
     unittest.main()

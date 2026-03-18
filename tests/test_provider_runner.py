@@ -179,5 +179,58 @@ class TestProviderProtocol(unittest.TestCase):
         self.assertTrue(issubclass(ClaudeRunner, ProviderRunner))
 
 
+class TestGeminiApiKeySanitization(unittest.TestCase):
+    """Tests for API key sanitization in Gemini error messages."""
+
+    def test_sanitize_error_strips_api_key(self):
+        config = _make_config(provider="gemini")
+        runner = GeminiRunner(config)
+        runner._api_key = "sk-secret-key-12345"
+        msg = runner._sanitize_error(
+            "Gemini connection error: https://example.com?key=sk-secret-key-12345"
+        )
+        self.assertNotIn("sk-secret-key-12345", msg)
+        self.assertIn("***", msg)
+
+    def test_sanitize_error_no_key_returns_unchanged(self):
+        config = _make_config(provider="gemini")
+        runner = GeminiRunner(config)
+        runner._api_key = ""
+        msg = runner._sanitize_error("Some error message")
+        self.assertEqual(msg, "Some error message")
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_http_error_does_not_leak_api_key(self, mock_urlopen):
+        import urllib.error
+        config = _make_config(provider="gemini")
+        runner = GeminiRunner(config)
+        runner._api_key = "my-secret-gemini-key"
+        err = urllib.error.HTTPError(
+            url=runner._build_url(),
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=None,
+        )
+        err.read = lambda: b"bad request body"
+        mock_urlopen.side_effect = err
+        result = runner.run("test prompt")
+        self.assertFalse(result.success)
+        self.assertNotIn("my-secret-gemini-key", result.error)
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_url_error_does_not_leak_api_key(self, mock_urlopen):
+        import urllib.error
+        config = _make_config(provider="gemini")
+        runner = GeminiRunner(config)
+        runner._api_key = "another-secret-key"
+        mock_urlopen.side_effect = urllib.error.URLError(
+            reason=f"Failed to connect to url with key=another-secret-key"
+        )
+        result = runner.run("test prompt")
+        self.assertFalse(result.success)
+        self.assertNotIn("another-secret-key", result.error)
+
+
 if __name__ == "__main__":
     unittest.main()

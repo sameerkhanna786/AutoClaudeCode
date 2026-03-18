@@ -113,9 +113,14 @@ def import_prd(prd_path: str) -> List[Task]:
         if not desc:
             continue
 
+        try:
+            priority = int(raw.get("priority", 3))
+        except (ValueError, TypeError):
+            priority = 3
+
         task = Task(
             description=str(desc),
-            priority=int(raw.get("priority", 3)),
+            priority=priority,
             source=raw.get("source", "feedback"),
             source_file=raw.get("source_file"),
             line_number=raw.get("line_number"),

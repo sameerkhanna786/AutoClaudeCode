@@ -430,3 +430,53 @@ class TestGracefulDegradation:
         result = degradation.check_and_adjust(50, 0.0)
         assert result["level"] == 0
         assert degradation.is_degraded is False
+
+
+class TestActiveGuardsThreadSafety:
+    """Tests for thread-safe _active_guards list management."""
+
+    def test_active_guards_protected_by_lock(self):
+        """Verify _active_guards_lock exists and is a threading.Lock."""
+        from safety import _active_guards_lock
+        import threading
+        assert isinstance(_active_guards_lock, type(threading.Lock()))
+
+    def test_acquire_release_updates_active_guards(self, guard):
+        """Guard appears in _active_guards after acquire and is removed after release."""
+        from safety import _active_guards
+        guard.acquire_lock()
+        assert guard in _active_guards
+        guard.release_lock()
+        assert guard not in _active_guards
+
+    def test_concurrent_acquire_release(self, tmp_path, default_config, state_mgr):
+        """Multiple guards from different threads don't corrupt _active_guards."""
+        import threading
+        from safety import _active_guards
+
+        guards = []
+        errors = []
+
+        def worker(i):
+            try:
+                cfg = default_config
+                cfg.paths.lock_file = str(tmp_path / f"lock_{i}.pid")
+                g = SafetyGuard(cfg, state_mgr)
+                g.acquire_lock()
+                guards.append(g)
+                import time
+                time.sleep(0.01)
+                g.release_lock()
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Errors in threads: {errors}"
+        # All guards should have been removed after release
+        for g in guards:
+            assert g not in _active_guards
