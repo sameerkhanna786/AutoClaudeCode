@@ -626,7 +626,8 @@ class ParallelCoordinator:
             logger.info("Received signal %d, shutting down workers...", signum)
             self._running = False
             # Terminate any running Claude subprocesses in workers
-            for worker in self._workers:
+            # Snapshot the list to avoid iterating while main thread mutates it
+            for worker in list(self._workers):
                 if worker._claude is not None:
                     try:
                         worker._claude.terminate()

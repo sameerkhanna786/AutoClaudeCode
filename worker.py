@@ -68,7 +68,7 @@ class Worker:
         self.state = state
         self.main_repo_dir = main_repo_dir
         self.baseline_failures = baseline_failures or set()
-        self.branch_name = f"auto-claude/{int(time.time())}-{worker_id}"
+        self.branch_name = f"auto-claude/{int(time.time_ns())}-{worker_id}"
 
         worktree_base = config.parallel.worktree_base_dir
         # Resolve relative to the main repo

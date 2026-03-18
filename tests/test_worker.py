@@ -337,3 +337,24 @@ class TestCostLimitExceeded:
             mock_logger.warning.assert_called_once()
             warning_msg = mock_logger.warning.call_args[0][0]
             assert "cost guard triggered" in warning_msg
+
+
+class TestWorkerBranchNamePrecision:
+    """Tests for nanosecond-precision branch names to avoid collisions."""
+
+    def test_branch_name_uses_nanoseconds(self, worker_config, tmp_git_repo):
+        """Branch name should use time_ns() for nanosecond precision."""
+        state = MagicMock(spec=LockedStateManager)
+        tasks = [Task(description="Fix", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+        # Nanosecond timestamps are > 10^18, second timestamps are ~10^9
+        ts_part = worker.branch_name.split("/")[1].split("-")[0]
+        assert len(ts_part) > 15, f"Timestamp {ts_part} looks like seconds, not nanoseconds"
+
+    def test_concurrent_workers_get_unique_branches(self, worker_config, tmp_git_repo):
+        """Two workers created in quick succession should get different branch names."""
+        state = MagicMock(spec=LockedStateManager)
+        tasks = [Task(description="Fix", priority=1, source="lint")]
+        w1 = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+        w2 = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+        assert w1.branch_name != w2.branch_name

@@ -177,7 +177,7 @@ class TestSessionManager(unittest.TestCase):
 
 class TestOrphanedWorktrees(unittest.TestCase):
 
-    @patch("subprocess.run")
+    @patch("session_manager.run_with_group_kill")
     def test_detect_orphaned(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -196,7 +196,7 @@ class TestOrphanedWorktrees(unittest.TestCase):
             self.assertEqual(len(orphaned), 1)
             self.assertEqual(orphaned[0]["branch"], "auto-claude/123-0")
 
-    @patch("subprocess.run")
+    @patch("session_manager.run_with_group_kill")
     def test_no_orphaned(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -211,7 +211,7 @@ class TestOrphanedWorktrees(unittest.TestCase):
             orphaned = mgr.recover_orphaned_worktrees("/tmp/main")
             self.assertEqual(len(orphaned), 0)
 
-    @patch("subprocess.run")
+    @patch("session_manager.run_with_group_kill")
     def test_git_failure(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stdout="")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -219,7 +219,7 @@ class TestOrphanedWorktrees(unittest.TestCase):
             orphaned = mgr.recover_orphaned_worktrees("/tmp/main")
             self.assertEqual(len(orphaned), 0)
 
-    @patch("subprocess.run")
+    @patch("session_manager.run_with_group_kill")
     def test_timeout_returns_empty(self, mock_run):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=30)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -227,7 +227,7 @@ class TestOrphanedWorktrees(unittest.TestCase):
             orphaned = mgr.recover_orphaned_worktrees("/tmp/main")
             self.assertEqual(len(orphaned), 0)
 
-    @patch("subprocess.run")
+    @patch("session_manager.run_with_group_kill")
     def test_os_error_returns_empty(self, mock_run):
         mock_run.side_effect = OSError("git not found")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -235,7 +235,7 @@ class TestOrphanedWorktrees(unittest.TestCase):
             orphaned = mgr.recover_orphaned_worktrees("/tmp/main")
             self.assertEqual(len(orphaned), 0)
 
-    @patch("subprocess.run")
+    @patch("session_manager.run_with_group_kill")
     def test_last_entry_no_trailing_newline(self, mock_run):
         """The last worktree entry may not have a trailing blank line."""
         mock_run.return_value = MagicMock(
@@ -284,6 +284,18 @@ class TestRecoveryFlow(unittest.TestCase):
             mgr.clear_session()
             self.assertFalse(mgr.has_incomplete_session())
             self.assertIsNone(mgr.load_session())
+
+
+class TestRecoverOrphanedWorktreesUsesGroupKill(unittest.TestCase):
+    """Verify session_manager uses run_with_group_kill for git commands."""
+
+    def test_recover_uses_run_with_group_kill(self):
+        """recover_orphaned_worktrees should use run_with_group_kill, not subprocess.run."""
+        import inspect
+        from session_manager import SessionManager
+        source = inspect.getsource(SessionManager.recover_orphaned_worktrees)
+        self.assertIn("run_with_group_kill", source)
+        self.assertNotIn("subprocess.run", source)
 
 
 if __name__ == "__main__":

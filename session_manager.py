@@ -12,6 +12,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from process_utils import run_with_group_kill
+
 logger = logging.getLogger(__name__)
 
 SESSION_FILE = "session.json"
@@ -117,11 +119,9 @@ class SessionManager:
         """
         orphaned = []
         try:
-            result = subprocess.run(
+            result = run_with_group_kill(
                 ["git", "worktree", "list", "--porcelain"],
                 cwd=repo_dir,
-                capture_output=True,
-                text=True,
                 timeout=30,
             )
             if result.returncode != 0:

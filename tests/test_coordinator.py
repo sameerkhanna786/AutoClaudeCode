@@ -1,5 +1,7 @@
 """Tests for coordinator module."""
 
+import logging
+import signal
 import threading
 import time
 from collections import defaultdict
@@ -359,3 +361,16 @@ class TestCleanupWorkerWithTimeout:
                 coord._cleanup_worker_with_timeout(worker, timeout=1)
 
         assert any("cleanup timed out" in r.message and "42" in r.message for r in caplog.records)
+
+
+class TestSignalHandlerWorkersCopy:
+    """Test that the signal handler snapshots _workers to avoid mutation races."""
+
+    def test_signal_handler_snapshots_workers(self, parallel_config):
+        """Signal handler should use list() copy so mutating _workers is safe."""
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator)
+        assert "list(self._workers)" in source, (
+            "Signal handler should snapshot _workers with list() to avoid race"
+        )
