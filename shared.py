@@ -603,6 +603,11 @@ def build_plan_prompt(
             "- Address the tasks in priority order but look for opportunities to combine related changes.\n"
             "- Use the CONTEXT provided with each task to understand the code and errors involved.\n"
             "- Output your complete plan within 5 turns. Do NOT spend turns reading files — focus on producing the plan.\n"
+            "\nOUTPUT FORMAT:\n"
+            "Output your plan as a numbered list where each item specifies:\n"
+            "  FILE: <path/to/file>\n"
+            "  CHANGE_TYPE: add | modify | delete\n"
+            "  DESCRIPTION: <what you will change and why>\n"
         )
 
     task = tasks[0]
@@ -622,6 +627,11 @@ def build_plan_prompt(
         "- Be specific about the changes (function names, line numbers, etc.).\n"
         f"{specific_instructions}\n"
         "- Output your complete plan within 5 turns. Do NOT spend turns reading files — focus on producing the plan.\n"
+        "\nOUTPUT FORMAT:\n"
+        "Output your plan as a numbered list where each item specifies:\n"
+        "  FILE: <path/to/file>\n"
+        "  CHANGE_TYPE: add | modify | delete\n"
+        "  DESCRIPTION: <what you will change and why>\n"
     )
 
 
