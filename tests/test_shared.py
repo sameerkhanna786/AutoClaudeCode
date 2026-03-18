@@ -526,6 +526,36 @@ class TestBuildRetryPrompt(unittest.TestCase):
         result = build_retry_prompt(tasks, "error output", ["main.py"])
         self.assertIn("TASKS:", result)
 
+    def test_with_task_history(self):
+        task = Task(description="Fix bug", priority=1, source="test_failure")
+        history = [
+            {"success": False, "error": "SyntaxError in foo.py", "validation_summary": "tests: FAIL"},
+            {"success": False, "error": "AssertionError: expected 5 got 3", "validation_summary": "tests: FAIL"},
+        ]
+        result = build_retry_prompt(
+            [task], "new error", ["main.py"], task_history=history,
+        )
+        self.assertIn("PREVIOUS FAILED ATTEMPTS", result)
+        self.assertIn("SyntaxError in foo.py", result)
+        self.assertIn("AssertionError: expected 5 got 3", result)
+
+    def test_task_history_skips_successes(self):
+        task = Task(description="Fix bug", priority=1, source="test_failure")
+        history = [
+            {"success": True, "error": "", "validation_summary": "tests: PASS"},
+        ]
+        result = build_retry_prompt(
+            [task], "new error", ["main.py"], task_history=history,
+        )
+        self.assertNotIn("PREVIOUS FAILED ATTEMPTS", result)
+
+    def test_task_history_empty(self):
+        task = Task(description="Fix bug", priority=1, source="test_failure")
+        result = build_retry_prompt(
+            [task], "new error", ["main.py"], task_history=[],
+        )
+        self.assertNotIn("PREVIOUS FAILED ATTEMPTS", result)
+
 
 # ---------------------------------------------------------------------------
 # _derive_todo_subject

@@ -950,6 +950,79 @@ class TestStrategyPerformance:
         assert perf["lint"]["success_rate"] == 0.0
 
 
+class TestTaskSuccessHistory:
+    def test_empty_history(self, state_mgr):
+        result = state_mgr.get_task_success_history("Fix bug")
+        assert result == []
+
+    def test_returns_matching_attempts(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug",
+            success=False, error="SyntaxError in foo.py",
+            validation_summary="tests: FAIL",
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="Fix bug",
+            success=True, validation_summary="tests: PASS",
+        ))
+        result = state_mgr.get_task_success_history("Fix bug")
+        assert len(result) == 2
+        assert result[0]["success"] is False
+        assert result[0]["error"] == "SyntaxError in foo.py"
+        assert result[1]["success"] is True
+
+    def test_matches_by_task_key(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix bug v1",
+            success=False, error="assertion failed",
+            task_keys=["test:foo.py"],
+        ))
+        result = state_mgr.get_task_success_history(
+            "Fix bug v2", task_key="test:foo.py",
+        )
+        assert len(result) == 1
+        assert result[0]["error"] == "assertion failed"
+
+    def test_matches_batch_descriptions(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Batch task",
+            success=False, error="lint failed",
+            task_descriptions=["Fix A", "Fix B"],
+        ))
+        result = state_mgr.get_task_success_history("Fix A")
+        assert len(result) == 1
+
+    def test_respects_max_attempts(self, state_mgr):
+        now = time.time()
+        for i in range(10):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now + i, task_description="Fix bug",
+                success=False, error=f"error {i}",
+            ))
+        result = state_mgr.get_task_success_history("Fix bug", max_attempts=3)
+        assert len(result) == 3
+        # Should return the most recent 3
+        assert result[0]["error"] == "error 7"
+        assert result[2]["error"] == "error 9"
+
+    def test_ignores_unrelated_tasks(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Other task",
+            success=False, error="other error",
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="Fix bug",
+            success=False, error="relevant error",
+        ))
+        result = state_mgr.get_task_success_history("Fix bug")
+        assert len(result) == 1
+        assert result[0]["error"] == "relevant error"
+
+
 class TestProductiveFiles:
     def test_empty_history(self, state_mgr):
         assert state_mgr.get_productive_files() == []

@@ -523,11 +523,16 @@ class Worker:
         self, tasks: List[Task], is_batch: bool, failure_output: str,
     ) -> str:
         """Build a retry prompt with validation failure output."""
+        task_history = self.state.get_task_success_history(
+            tasks[0].description,
+            task_key=tasks[0].task_key,
+        )
         return _shared_build_retry_prompt(
             tasks,
             failure_output,
             self.config.safety.protected_files,
             working_dir=str(Path(self.worktree_dir).resolve()),
+            task_history=task_history,
         )
 
     def _build_commit_message(self, tasks: List[Task], is_batch: bool) -> str:

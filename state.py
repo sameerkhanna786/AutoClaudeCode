@@ -461,6 +461,35 @@ class StateManager:
                     file_counts[m] = file_counts.get(m, 0) + 1
         return sorted(file_counts.keys(), key=lambda f: file_counts[f], reverse=True)
 
+    def get_task_success_history(
+        self,
+        task_description: str,
+        task_key: str = "",
+        max_attempts: int = 5,
+    ) -> List[Dict[str, str]]:
+        """Return the last N attempts for a given task, including errors.
+
+        Each entry contains: {"attempt": int, "success": bool, "error": str,
+        "validation_summary": str, "timestamp": float}.
+        Matches by task_description or task_key (if provided).
+        """
+        records = self._load_history()
+        matches: List[Dict[str, str]] = []
+        for r in records:
+            match = r.get("task_description") == task_description
+            if not match:
+                match = task_description in r.get("task_descriptions", [])
+            if not match and task_key:
+                match = task_key in r.get("task_keys", [])
+            if match:
+                matches.append({
+                    "success": r.get("success", False),
+                    "error": r.get("error", ""),
+                    "validation_summary": r.get("validation_summary", ""),
+                    "timestamp": r.get("timestamp", 0),
+                })
+        return matches[-max_attempts:]
+
     def load_history(self) -> List[Dict[str, Any]]:
         """Public API for loading history (safe for external callers)."""
         return self._load_history()

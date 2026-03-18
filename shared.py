@@ -732,6 +732,25 @@ def _common_failure_patterns(tasks: List[Task]) -> str:
     return "COMMON FAILURE PATTERNS:\n" + "\n".join(tips) + "\n"
 
 
+def _format_task_history(task_history: List[Dict]) -> str:
+    """Format previous attempt history for inclusion in retry prompts."""
+    if not task_history:
+        return ""
+    failed = [h for h in task_history if not h.get("success", False)]
+    if not failed:
+        return ""
+    lines = ["PREVIOUS FAILED ATTEMPTS (do NOT repeat the same mistakes):"]
+    for i, attempt in enumerate(failed, 1):
+        error = attempt.get("error", "").strip()
+        summary = attempt.get("validation_summary", "").strip()
+        reason = error or summary or "unknown error"
+        if len(reason) > 300:
+            reason = reason[:297] + "..."
+        lines.append(f"  Attempt {i}: {reason}")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def build_retry_prompt(
     tasks: List[Task],
     failure_output: str,
@@ -739,6 +758,7 @@ def build_retry_prompt(
     working_dir: Optional[str] = None,
     attempt: int = 0,
     max_attempts: int = 0,
+    task_history: Optional[List[Dict]] = None,
 ) -> str:
     """Build a retry prompt with validation failure output.
 
@@ -749,6 +769,7 @@ def build_retry_prompt(
         working_dir: If set, absolute path used in worktree preamble.
         attempt: Current attempt number (for orchestrator-style formatting).
         max_attempts: Total max attempts (for orchestrator-style formatting).
+        task_history: Previous attempt history from StateManager.get_task_success_history().
     """
     protected = ", ".join(protected_files)
     preamble = _working_dir_preamble(working_dir)
@@ -784,5 +805,6 @@ def build_retry_prompt(
         f"- Do NOT modify these protected files: {protected}\n"
         "- Your previous changes are still in the working tree. Build on them, do not start over.\n"
         "- Focus on making ALL validations pass.\n\n"
+        f"{_format_task_history(task_history or [])}"
         f"{_common_failure_patterns(tasks)}"
     )

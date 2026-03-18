@@ -231,9 +231,14 @@ class Orchestrator:
                             attempt: int, max_attempts: int) -> str:
         """Build a prompt for retrying after validation failure."""
         errors = self._format_validation_errors(validation)
+        task_history = self.state.get_task_success_history(
+            tasks[0].description,
+            task_key=tasks[0].task_key,
+        )
         return shared_build_retry_prompt(
             tasks, errors, self.config.safety.protected_files,
             attempt=attempt, max_attempts=max_attempts,
+            task_history=task_history,
         )
 
     def _validate_with_retries(

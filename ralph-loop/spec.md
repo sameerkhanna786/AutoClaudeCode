@@ -40,7 +40,7 @@
 
 19. DONE: In `shared.py:build_retry_prompt()`, added a "COMMON FAILURE PATTERNS" section with tips based on the task type. Added `_COMMON_FAILURE_PATTERNS` dict and `_common_failure_patterns()` helper.
 
-20. PENDING: Add a `get_task_success_history()` method to `state.py:StateManager` that returns the last N attempts for a given task_key, including what error occurred each time. Use this in `shared.py:build_retry_prompt()` to include previous failure reasons so Claude doesn't repeat the same mistake.
+20. DONE: Add a `get_task_success_history()` method to `state.py:StateManager` that returns the last N attempts for a given task_key, including what error occurred each time. Use this in `shared.py:build_retry_prompt()` to include previous failure reasons so Claude doesn't repeat the same mistake.
 
 21. PENDING: In `validator.py`, add a `validate_syntax_only()` method that just runs `ast.parse()` on all changed `.py` files. This can be used as a fast pre-check before running the full test suite, catching obvious syntax errors in <1 second instead of waiting for pytest to fail.
 
@@ -111,3 +111,5 @@
 18. DONE: In `coordinator.py:_partition_tasks()`, tasks are assigned one-per-worker but there's no consideration of task independence. Added a check that avoids assigning two tasks that reference the same `source_file` to different workers (they'd create merge conflicts). Same-file tasks are now grouped together.
 
 19. DONE: In `shared.py:build_retry_prompt()`, added a "COMMON FAILURE PATTERNS" section with a `_COMMON_FAILURE_PATTERNS` dict mapping task sources (test_failure, lint, todo, quality, coverage, claude_idea) to common failure causes, and a `_common_failure_patterns()` helper that appends relevant tips to the retry prompt based on task type.
+
+20. DONE: Added `get_task_success_history()` method to `state.py:StateManager` that returns the last N attempts for a given task_key/description, including error and validation_summary. Added `_format_task_history()` helper and optional `task_history` parameter to `shared.py:build_retry_prompt()`. Updated `orchestrator.py` and `worker.py` to pass task history to retry prompts. Added tests in both `test_state.py` and `test_shared.py`.
