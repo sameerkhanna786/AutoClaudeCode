@@ -240,6 +240,9 @@ class TaskDiscovery:
         if dc.enable_import_check:
             tasks.extend(self._discover_import_issues())
 
+        if dc.enable_dead_code_check:
+            tasks.extend(self._discover_dead_code())
+
         if dc.enable_test_coverage_gaps:
             tasks.extend(self._discover_test_coverage_gaps())
 
@@ -1156,6 +1159,85 @@ class TaskDiscovery:
                             source="quality",
                             source_file=rel_path,
                             line_number=start,
+                        ))
+
+                if len(tasks) >= 5:
+                    return tasks[:5]
+
+        return tasks[:5]
+
+    def _discover_dead_code(self) -> List[Task]:
+        """Find functions/methods defined but never called within the same module.
+
+        Simple intra-module dead code detection using ast.parse. Only flags
+        functions that are public (not starting with '_') and not test functions
+        (not starting with 'test_'). Creates quality tasks with priority 5.
+        Caps at 5 tasks.
+        """
+        tasks: List[Task] = []
+        target = Path(self.target_dir)
+        exclude_dirs = set(self.config.discovery.exclude_dirs)
+
+        for root, dirs, files in os.walk(target):
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+
+                fpath = Path(root) / fname
+                rel_path = str(fpath.relative_to(target))
+
+                try:
+                    source = fpath.read_text(errors="ignore")
+                    tree = ast.parse(source, filename=rel_path)
+                except (OSError, SyntaxError):
+                    continue
+
+                # Collect all defined function/method names
+                defined: dict = {}  # name -> node
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        name = node.name
+                        # Skip private functions and test functions
+                        if name.startswith("_") or name.startswith("test_"):
+                            continue
+                        defined[name] = node
+
+                if not defined:
+                    continue
+
+                # Collect all names that are called or referenced in the module
+                called: set = set()
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call):
+                        # Direct call: func_name(...)
+                        if isinstance(node.func, ast.Name):
+                            called.add(node.func.id)
+                        # Method call: self.func_name(...) or obj.func_name(...)
+                        elif isinstance(node.func, ast.Attribute):
+                            called.add(node.func.attr)
+                    elif isinstance(node, ast.Attribute):
+                        # Attribute reference without call (e.g., passed as callback)
+                        called.add(node.attr)
+                    elif isinstance(node, ast.Name):
+                        # Name reference (e.g., passed as argument)
+                        called.add(node.id)
+
+                # Find defined functions never referenced
+                for name, node in defined.items():
+                    if name not in called:
+                        desc = (
+                            f"Remove or refactor potentially dead function "
+                            f"`{name}` in `{rel_path}:{node.lineno}` "
+                            f"(defined but never called within the module)"
+                        )
+                        tasks.append(Task(
+                            description=desc,
+                            priority=5,
+                            source="quality",
+                            source_file=rel_path,
+                            line_number=node.lineno,
                         ))
 
                 if len(tasks) >= 5:

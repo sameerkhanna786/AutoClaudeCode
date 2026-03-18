@@ -66,7 +66,7 @@
 
 32. DONE: In `agent_pipeline.py:AgentPipeline.run()`, the planner prompt (line 416) is generic. Enhance it to include task-type-specific planning instructions from `TASK_TYPE_INSTRUCTIONS` in `shared.py`, so the planner knows the conventions for the specific task type.
 
-33. PENDING: Add a `_discover_dead_code()` method to `task_discovery.py` that uses `ast.parse` to find functions/methods that are defined but never called within the same module (simple intra-module dead code detection). Create `quality` tasks with priority 5. Only flag functions not starting with `_` (public API) or starting with `test_`.
+33. DONE: Add a `_discover_dead_code()` method to `task_discovery.py` that uses `ast.parse` to find functions/methods that are defined but never called within the same module (simple intra-module dead code detection). Create `quality` tasks with priority 5. Only flag functions not starting with `_` (public API) or starting with `test_`.
 
 34. PENDING: In `safety.py:pre_flight_checks()`, the checks run sequentially. The `check_memory()` and `check_disk_space()` checks are independent and could provide better error messages if both fail simultaneously. Collect all check failures and raise a single SafetyError with all issues listed.
 
@@ -137,3 +137,5 @@
 31. DONE: Added 5 tests for `worker._cost_limit_exceeded()` in `tests/test_worker.py` in a new `TestCostLimitExceeded` class: (a) returns False when well under budget, (b) returns True at exact 90% threshold, (c) returns True when over threshold, (d) returns False and handles exceptions gracefully when `state.get_total_cost()` raises, (e) logs appropriate warning message when cost guard is triggered.
 
 32. DONE: In `agent_pipeline.py:AgentPipeline.run()`, enhanced the planner prompt to include task-type-specific planning instructions from `TASK_TYPE_INSTRUCTIONS` in `shared.py`. Added import of `TASK_TYPE_INSTRUCTIONS` and logic to gather guidelines for each task source type, appending them as a "TASK-TYPE-SPECIFIC GUIDELINES" section in the planner prompt.
+
+33. DONE: Added `_discover_dead_code()` method to `task_discovery.py` that uses `ast.parse` to find functions/methods defined but never called within the same module (intra-module dead code detection). Collects all defined public functions (not starting with `_` or `test_`), then scans for all name references (calls, attributes, name nodes) and flags unreferenced functions as `quality` tasks with priority 5. Capped at 5 tasks. Added `enable_dead_code_check` config flag to `config_schema.py` and registered in `discover_all()`.

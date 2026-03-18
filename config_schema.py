@@ -90,6 +90,7 @@ class DiscoveryConfig:
     enable_complexity_check: bool = False
     enable_import_check: bool = False
     enable_test_coverage_gaps: bool = False
+    enable_dead_code_check: bool = False
     enable_claude_ideas: bool = False
     todo_patterns: List[str] = field(default_factory=lambda: ["TODO", "FIXME", "HACK"])
     exclude_dirs: List[str] = field(default_factory=lambda: [
