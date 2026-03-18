@@ -52,7 +52,7 @@
 
 25. DONE: In `worker.py`, the `_build_retry_prompt()` passes `validation.summary` which is just "tests: FAIL, lint: PASS". Change it to pass the full output from the failed validation step (the actual pytest traceback or lint errors) so Claude can see what specifically went wrong.
 
-26. PENDING: Add an `--analyze` CLI flag to `main.py`... wait, main.py is protected. Instead, create a standalone `analyze.py` script that runs `TaskDiscovery.discover_all()` and prints a formatted report of all discovered tasks grouped by source type, with counts and priorities. This helps users understand what the system would work on.
+26. DONE: Add an `--analyze` CLI flag to `main.py`... wait, main.py is protected. Instead, create a standalone `analyze.py` script that runs `TaskDiscovery.discover_all()` and prints a formatted report of all discovered tasks grouped by source type, with counts and priorities. This helps users understand what the system would work on.
 
 27. PENDING: In `claude_runner.py:ClaudeRunner.run()`, the rate limit detection (line 446) only checks for "rate limit", "429", and "too many requests" in stderr. Add detection for "quota exceeded", "capacity", and "overloaded" which are also common API error patterns. Update `_CB_ERROR_PATTERNS` accordingly.
 
@@ -123,3 +123,5 @@
 24. DONE: In `task_discovery.py:_discover_quality_issues()`, added three new quality checks beyond file length: (a) functions with more than 5 parameters using `ast.parse` (excluding self/cls), (b) deeply nested code (indentation level >4 based on 4-space indent), (c) files with no module-level docstring. Each creates a separate `quality` task with priority 5. Capped at 5 total tasks.
 
 25. DONE: In `worker.py`, the retry flow already passes full validation output (not just `validation.summary`). The `_format_validation_errors()` method (lines 507-520) extracts the full output from each failed validation step including command, exit code, and actual pytest traceback/lint errors, capped at 8000 chars per step. This was already implemented as part of task 1's changes to the worker retry flow.
+
+26. DONE: Created standalone `analyze.py` script that runs `TaskDiscovery.discover_all()` and prints a formatted report of all discovered tasks grouped by source type, with counts and priorities. Supports `--config` for custom config and `--verbose` for detailed context output.
