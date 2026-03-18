@@ -28,7 +28,7 @@
 
 13. DONE: Add tests for the circuit breaker exponential backoff in `claude_runner.py`. Create test cases in `tests/test_claude_runner.py` that verify: (a) recovery timeout doubles after each re-open, (b) timeout is capped at max_recovery_timeout, (c) jitter is applied within the expected range, (d) successful call resets backoff.
 
-14. PENDING: In `safety.py:check_memory()`, the macOS implementation only counts "Pages free" + "Pages speculative" + "Pages purgeable". Add "Pages inactive" to the count since macOS treats inactive pages as available memory, which currently causes false low-memory warnings.
+14. DONE: In `safety.py:check_memory()`, the macOS implementation only counts "Pages free" + "Pages speculative" + "Pages purgeable". Add "Pages inactive" to the count since macOS treats inactive pages as available memory, which currently causes false low-memory warnings.
 
 15. PENDING: Add a `validate_task_feasibility()` method to `task_discovery.py:TaskDiscovery` that estimates task complexity by checking: (a) number of files referenced, (b) whether referenced files exist, (c) whether the task description is specific enough (>20 chars, contains a file reference). Return a feasibility score 0-1. Use this in `discover_all()` to filter out low-feasibility tasks (score < 0.3).
 
@@ -99,3 +99,5 @@
 11. DONE: Add test coverage for `conflict_resolver.py` by creating `tests/test_conflict_resolver.py` with tests for: successful resolution, failed resolution, timeout handling, and empty conflict list. Mock the Claude CLI calls.
 
 12. DONE: In `coordinator.py:_merge_worker_branch()`, after a failed rebase (line 365), the method doesn't attempt the merge strategy as a fallback. Add fallback logic: if rebase fails and strategy is "rebase", try a regular merge before giving up.
+
+14. DONE: In `safety.py:check_memory()`, the macOS implementation only counts "Pages free" + "Pages speculative" + "Pages purgeable". Add "Pages inactive" to the count since macOS treats inactive pages as available memory, which currently causes false low-memory warnings.

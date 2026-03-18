@@ -257,7 +257,7 @@ class SafetyGuard:
                                 free_pages += int(line.split()[-1].rstrip("."))
                             except (ValueError, IndexError):
                                 pass
-                        elif "Pages speculative:" in line or "Pages purgeable:" in line:
+                        elif "Pages inactive:" in line or "Pages speculative:" in line or "Pages purgeable:" in line:
                             try:
                                 free_pages += int(line.split()[-1].rstrip("."))
                             except (ValueError, IndexError):
