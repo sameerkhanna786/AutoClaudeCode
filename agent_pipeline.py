@@ -14,6 +14,7 @@ from typing import Callable, Dict, List, Optional
 
 from claude_runner import ClaudeResult, ClaudeRunner
 from config_schema import Config
+from shared import TASK_TYPE_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -428,9 +429,23 @@ class AgentPipeline:
             )
             plan_text = task_desc
         else:
+            # Gather task-type-specific planning instructions
+            task_type_guidance = ""
+            task_sources = {getattr(t, "source", "") for t in tasks}
+            for src in sorted(task_sources):
+                instructions = TASK_TYPE_INSTRUCTIONS.get(src, "")
+                if instructions:
+                    task_type_guidance += f"\n\n## Guidelines for '{src}' tasks:\n{instructions}"
+
             planner_prompt = (
                 f"You are the PLANNER agent.\n\n"
                 f"TASK:\n{task_desc}\n\n"
+            )
+            if task_type_guidance:
+                planner_prompt += (
+                    f"TASK-TYPE-SPECIFIC GUIDELINES:{task_type_guidance}\n\n"
+                )
+            planner_prompt += (
                 f"Create a detailed plan for implementing the above task. "
                 f"Write the plan to {self._ws_dir}/plan.md"
             )

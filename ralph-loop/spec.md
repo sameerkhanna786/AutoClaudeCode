@@ -64,7 +64,7 @@
 
 31. DONE: Add tests for `worker._cost_limit_exceeded()` in `tests/test_worker.py` that verify: (a) returns False when well under budget, (b) returns True at 90% threshold, (c) handles state.get_total_cost() exceptions gracefully, (d) logs appropriate warning message.
 
-32. PENDING: In `agent_pipeline.py:AgentPipeline.run()`, the planner prompt (line 416) is generic. Enhance it to include task-type-specific planning instructions from `TASK_TYPE_INSTRUCTIONS` in `shared.py`, so the planner knows the conventions for the specific task type.
+32. DONE: In `agent_pipeline.py:AgentPipeline.run()`, the planner prompt (line 416) is generic. Enhance it to include task-type-specific planning instructions from `TASK_TYPE_INSTRUCTIONS` in `shared.py`, so the planner knows the conventions for the specific task type.
 
 33. PENDING: Add a `_discover_dead_code()` method to `task_discovery.py` that uses `ast.parse` to find functions/methods that are defined but never called within the same module (simple intra-module dead code detection). Create `quality` tasks with priority 5. Only flag functions not starting with `_` (public API) or starting with `test_`.
 
@@ -135,3 +135,5 @@
 30. DONE: In `coordinator.py`, added a `_log_cycle_summary()` method called at the end of `_run_cycle()` that logs: number of tasks dispatched, number succeeded, number failed, total cost, total duration, and which task types succeeded/failed. Added `cycle_start = time.time()` at the top of `_run_cycle()` to track duration. The summary is logged via `logger.info` with all requested metrics.
 
 31. DONE: Added 5 tests for `worker._cost_limit_exceeded()` in `tests/test_worker.py` in a new `TestCostLimitExceeded` class: (a) returns False when well under budget, (b) returns True at exact 90% threshold, (c) returns True when over threshold, (d) returns False and handles exceptions gracefully when `state.get_total_cost()` raises, (e) logs appropriate warning message when cost guard is triggered.
+
+32. DONE: In `agent_pipeline.py:AgentPipeline.run()`, enhanced the planner prompt to include task-type-specific planning instructions from `TASK_TYPE_INSTRUCTIONS` in `shared.py`. Added import of `TASK_TYPE_INSTRUCTIONS` and logic to gather guidelines for each task source type, appending them as a "TASK-TYPE-SPECIFIC GUIDELINES" section in the planner prompt.
