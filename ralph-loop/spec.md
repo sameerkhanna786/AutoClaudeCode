@@ -42,7 +42,7 @@
 
 20. DONE: Add a `get_task_success_history()` method to `state.py:StateManager` that returns the last N attempts for a given task_key, including what error occurred each time. Use this in `shared.py:build_retry_prompt()` to include previous failure reasons so Claude doesn't repeat the same mistake.
 
-21. PENDING: In `validator.py`, add a `validate_syntax_only()` method that just runs `ast.parse()` on all changed `.py` files. This can be used as a fast pre-check before running the full test suite, catching obvious syntax errors in <1 second instead of waiting for pytest to fail.
+21. DONE: In `validator.py`, add a `validate_syntax_only()` method that just runs `ast.parse()` on all changed `.py` files. This can be used as a fast pre-check before running the full test suite, catching obvious syntax errors in <1 second instead of waiting for pytest to fail.
 
 22. PENDING: In `orchestrator.py`, the `_run_cycle()` method is ~200 lines. Extract the validation+retry loop into a separate `_validate_with_retries()` method to improve readability and make it easier to test the retry logic in isolation.
 
@@ -113,3 +113,5 @@
 19. DONE: In `shared.py:build_retry_prompt()`, added a "COMMON FAILURE PATTERNS" section with a `_COMMON_FAILURE_PATTERNS` dict mapping task sources (test_failure, lint, todo, quality, coverage, claude_idea) to common failure causes, and a `_common_failure_patterns()` helper that appends relevant tips to the retry prompt based on task type.
 
 20. DONE: Added `get_task_success_history()` method to `state.py:StateManager` that returns the last N attempts for a given task_key/description, including error and validation_summary. Added `_format_task_history()` helper and optional `task_history` parameter to `shared.py:build_retry_prompt()`. Updated `orchestrator.py` and `worker.py` to pass task history to retry prompts. Added tests in both `test_state.py` and `test_shared.py`.
+
+21. DONE: Added `validate_syntax_only()` method to `validator.py` that runs `ast.parse()` on all changed `.py` files. Handles missing files, non-Python files, and `SyntaxError`/`UnicodeDecodeError` gracefully. Returns a `ValidationResult` with a "syntax" step. Added 7 tests in `tests/test_validator.py`.

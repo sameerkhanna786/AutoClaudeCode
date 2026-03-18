@@ -1,5 +1,6 @@
 """Tests for validator module."""
 
+import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -319,3 +320,53 @@ class TestValidateWithBaseline:
         test_cmd = test_calls[0][0][0]
         assert " -x " not in f" {test_cmd} "
         assert "-q" in test_cmd  # other flags preserved
+
+
+class TestValidateSyntaxOnly:
+    def test_valid_python_files(self, validator, tmp_path):
+        """Valid Python files pass syntax check."""
+        (tmp_path / "good.py").write_text("x = 1\n")
+        result = validator.validate_syntax_only(["good.py"], str(tmp_path))
+        assert result.passed is True
+        assert result.steps[0].name == "syntax"
+        assert "1 file(s) passed" in result.steps[0].output
+
+    def test_syntax_error_detected(self, validator, tmp_path):
+        """Files with syntax errors fail the check."""
+        (tmp_path / "bad.py").write_text("def foo(\n")
+        result = validator.validate_syntax_only(["bad.py"], str(tmp_path))
+        assert result.passed is False
+        assert "Syntax errors found" in result.steps[0].output
+        assert "bad.py" in result.steps[0].output
+
+    def test_no_py_files(self, validator):
+        """Non-Python files are skipped, result passes."""
+        result = validator.validate_syntax_only(["readme.md", "data.json"], "/tmp")
+        assert result.passed is True
+        assert "No .py files" in result.steps[0].output
+
+    def test_missing_file_skipped(self, validator, tmp_path):
+        """Files that don't exist are silently skipped."""
+        result = validator.validate_syntax_only(["nonexistent.py"], str(tmp_path))
+        assert result.passed is True
+
+    def test_mixed_valid_and_invalid(self, validator, tmp_path):
+        """One bad file among good ones fails the whole check."""
+        (tmp_path / "good.py").write_text("x = 1\n")
+        (tmp_path / "bad.py").write_text("def :\n")
+        result = validator.validate_syntax_only(["good.py", "bad.py"], str(tmp_path))
+        assert result.passed is False
+        assert "bad.py" in result.steps[0].output
+
+    def test_uses_config_target_dir(self, default_config, tmp_path):
+        """Uses config.target_dir when working_dir is not specified."""
+        (tmp_path / "ok.py").write_text("a = 1\n")
+        default_config.target_dir = str(tmp_path)
+        v = Validator(default_config)
+        result = v.validate_syntax_only(["ok.py"])
+        assert result.passed is True
+
+    def test_empty_file_list(self, validator):
+        """Empty file list passes."""
+        result = validator.validate_syntax_only([], "/tmp")
+        assert result.passed is True

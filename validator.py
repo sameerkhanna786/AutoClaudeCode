@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import logging
 import os
 import re
@@ -115,6 +116,66 @@ class Validator:
                 return ValidationResult(passed=False, steps=steps)
 
         return ValidationResult(passed=True, steps=steps)
+
+    def validate_syntax_only(
+        self,
+        changed_files: List[str],
+        working_dir: Optional[str] = None,
+    ) -> ValidationResult:
+        """Fast pre-check: run ast.parse() on changed .py files.
+
+        Catches syntax errors in <1 second without running the full test suite.
+        """
+        cwd = working_dir or self.config.target_dir
+        errors: List[str] = []
+
+        py_files = [f for f in changed_files if f.endswith(".py")]
+        if not py_files:
+            return ValidationResult(
+                passed=True,
+                steps=[ValidationStep(
+                    name="syntax",
+                    command="ast.parse()",
+                    passed=True,
+                    output="No .py files to check",
+                )],
+            )
+
+        for filepath in py_files:
+            full_path = os.path.join(cwd, filepath)
+            if not os.path.isfile(full_path):
+                continue
+            try:
+                with open(full_path, "r", encoding="utf-8") as f:
+                    source = f.read()
+                ast.parse(source, filename=filepath)
+            except SyntaxError as e:
+                errors.append(f"{filepath}:{e.lineno}: {e.msg}")
+            except (OSError, UnicodeDecodeError) as e:
+                logger.warning("Could not read %s for syntax check: %s", filepath, e)
+
+        if errors:
+            output = "Syntax errors found:\n" + "\n".join(errors)
+            logger.warning("Syntax check failed: %d error(s)", len(errors))
+            return ValidationResult(
+                passed=False,
+                steps=[ValidationStep(
+                    name="syntax",
+                    command="ast.parse()",
+                    passed=False,
+                    output=output,
+                )],
+            )
+
+        return ValidationResult(
+            passed=True,
+            steps=[ValidationStep(
+                name="syntax",
+                command="ast.parse()",
+                passed=True,
+                output=f"All {len(py_files)} file(s) passed syntax check",
+            )],
+        )
 
     # Regex to parse pytest FAILED lines, e.g.:
     # FAILED tests/test_foo.py::TestBar::test_baz - AssertionError: ...
