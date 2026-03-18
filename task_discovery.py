@@ -237,6 +237,9 @@ class TaskDiscovery:
         if dc.enable_complexity_check:
             tasks.extend(self._discover_complexity_issues())
 
+        if dc.enable_import_check:
+            tasks.extend(self._discover_import_issues())
+
         # Group related tasks to avoid duplicate work
         tasks = self._group_related_tasks(tasks)
 
@@ -852,6 +855,120 @@ class TaskDiscovery:
                     ))
 
         return tasks[:5]
+
+    def _discover_import_issues(self) -> List[Task]:
+        """Scan Python files for unused imports using ast.parse.
+
+        Creates lint tasks with priority 3 for files with unused imports.
+        Only scans files not in exclude_dirs.
+        """
+        tasks: List[Task] = []
+        target = Path(self.target_dir)
+        exclude_dirs = set(self.config.discovery.exclude_dirs)
+
+        for root, dirs, files in os.walk(target):
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+
+                fpath = Path(root) / fname
+                rel_path = str(fpath.relative_to(target))
+
+                try:
+                    source = fpath.read_text(errors="ignore")
+                    tree = ast.parse(source, filename=rel_path)
+                except (OSError, SyntaxError):
+                    continue
+
+                unused = self._find_unused_imports(tree)
+                if unused:
+                    import_list = ", ".join(unused[:5])
+                    if len(unused) > 5:
+                        import_list += f" (+{len(unused) - 5} more)"
+                    desc = (
+                        f"Remove {len(unused)} unused import(s) in "
+                        f"`{rel_path}`: {import_list}"
+                    )
+                    # Use the line number of the first unused import
+                    first_line = None
+                    for node in ast.walk(tree):
+                        if isinstance(node, (ast.Import, ast.ImportFrom)):
+                            for alias in node.names:
+                                name = alias.asname if alias.asname else alias.name
+                                if name in unused:
+                                    first_line = node.lineno
+                                    break
+                        if first_line:
+                            break
+                    tasks.append(Task(
+                        description=desc,
+                        priority=3,
+                        source="lint",
+                        source_file=rel_path,
+                        line_number=first_line,
+                    ))
+
+                if len(tasks) >= 10:
+                    return tasks[:10]
+
+        return tasks[:10]
+
+    def _find_unused_imports(self, tree: ast.AST) -> List[str]:
+        """Find imported names that are never used in the module body.
+
+        Returns a list of unused import names. Skips __all__ exports,
+        __init__.py re-exports, and names used in type annotations.
+        """
+        imported: dict = {}  # name -> ast node
+
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    name = alias.asname if alias.asname else alias.name
+                    # For dotted imports like 'os.path', the bound name is 'os'
+                    if "." in name and not alias.asname:
+                        name = name.split(".")[0]
+                    imported[name] = node
+            elif isinstance(node, ast.ImportFrom):
+                # Skip 'from __future__ import ...'
+                if node.module and node.module == "__future__":
+                    continue
+                for alias in node.names:
+                    if alias.name == "*":
+                        continue
+                    name = alias.asname if alias.asname else alias.name
+                    imported[name] = node
+
+        if not imported:
+            return []
+
+        # Check if __all__ is defined — if so, exports count as usage
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "__all__":
+                        # All imports could be re-exports; skip this file
+                        return []
+
+        # Collect all names used in the module (excluding the import statements)
+        used_names: set = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                used_names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                # For 'os.path.join', the Name node 'os' is already captured
+                pass
+
+        # An import is unused if its bound name never appears as a Name node
+        # outside the import statement itself
+        unused = []
+        for name in imported:
+            if name not in used_names:
+                unused.append(name)
+
+        return sorted(unused)
 
     def _discover_complexity_issues(self) -> List[Task]:
         """Scan Python files for functions longer than 50 lines using ast.parse."""

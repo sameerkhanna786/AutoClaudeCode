@@ -763,3 +763,98 @@ class TestDiscoverClaudeIdeasHistory:
         assert "API design" in prompt
         # Default focus areas should not be present
         assert "New features or functionality" not in prompt
+
+
+class TestDiscoverImportIssues:
+    def test_finds_unused_import(self, discovery, tmp_path):
+        """Detects an import that is never used in the module."""
+        (tmp_path / "unused.py").write_text("import os\n\nx = 1\n")
+        tasks = discovery._discover_import_issues()
+        assert len(tasks) == 1
+        assert tasks[0].source == "lint"
+        assert tasks[0].priority == 3
+        assert "os" in tasks[0].description
+        assert "unused.py" in tasks[0].description
+
+    def test_no_unused_imports(self, discovery, tmp_path):
+        """No tasks when all imports are used."""
+        (tmp_path / "clean.py").write_text("import os\n\npath = os.getcwd()\n")
+        tasks = discovery._discover_import_issues()
+        assert tasks == []
+
+    def test_skips_future_imports(self, discovery, tmp_path):
+        """from __future__ import annotations should not be flagged."""
+        (tmp_path / "future.py").write_text(
+            "from __future__ import annotations\n\nx = 1\n"
+        )
+        tasks = discovery._discover_import_issues()
+        assert tasks == []
+
+    def test_skips_files_with_all(self, discovery, tmp_path):
+        """Files defining __all__ are skipped (re-exports)."""
+        (tmp_path / "reexport.py").write_text(
+            "import os\nimport sys\n\n__all__ = ['os', 'sys']\n"
+        )
+        tasks = discovery._discover_import_issues()
+        assert tasks == []
+
+    def test_handles_syntax_error(self, discovery, tmp_path):
+        """Files with syntax errors are silently skipped."""
+        (tmp_path / "broken.py").write_text("def foo(\n")
+        tasks = discovery._discover_import_issues()
+        assert tasks == []
+
+    def test_respects_exclude_dirs(self, discovery, tmp_path):
+        """Files in excluded directories are not scanned."""
+        venv = tmp_path / "venv"
+        venv.mkdir()
+        (venv / "unused.py").write_text("import os\n\nx = 1\n")
+        tasks = discovery._discover_import_issues()
+        assert tasks == []
+
+    def test_from_import_unused(self, discovery, tmp_path):
+        """Detects unused 'from X import Y' style imports."""
+        (tmp_path / "fromimport.py").write_text(
+            "from os.path import join\n\nx = 1\n"
+        )
+        tasks = discovery._discover_import_issues()
+        assert len(tasks) == 1
+        assert "join" in tasks[0].description
+
+    def test_aliased_import_used(self, discovery, tmp_path):
+        """Aliased imports that are used should not be flagged."""
+        (tmp_path / "alias.py").write_text(
+            "import numpy as np\n\nresult = np.array([1])\n"
+        )
+        tasks = discovery._discover_import_issues()
+        assert tasks == []
+
+    def test_aliased_import_unused(self, discovery, tmp_path):
+        """Aliased imports that are unused should be flagged."""
+        (tmp_path / "alias_unused.py").write_text(
+            "import numpy as np\n\nx = 1\n"
+        )
+        tasks = discovery._discover_import_issues()
+        assert len(tasks) == 1
+        assert "np" in tasks[0].description
+
+    def test_caps_at_ten(self, discovery, tmp_path):
+        """No more than 10 tasks should be returned."""
+        for i in range(15):
+            (tmp_path / f"mod{i}.py").write_text(f"import os\n\nx = {i}\n")
+        tasks = discovery._discover_import_issues()
+        assert len(tasks) <= 10
+
+    def test_star_import_not_flagged(self, discovery, tmp_path):
+        """'from X import *' should not be flagged as unused."""
+        (tmp_path / "star.py").write_text("from os import *\n\nx = 1\n")
+        tasks = discovery._discover_import_issues()
+        assert tasks == []
+
+    def test_sets_source_file_and_line(self, discovery, tmp_path):
+        """Tasks should have source_file and line_number set."""
+        (tmp_path / "loc.py").write_text("import os\nimport sys\n\nprint(sys.argv)\n")
+        tasks = discovery._discover_import_issues()
+        assert len(tasks) == 1
+        assert tasks[0].source_file == "loc.py"
+        assert tasks[0].line_number == 1  # 'import os' is on line 1
