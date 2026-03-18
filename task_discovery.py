@@ -892,7 +892,7 @@ class TaskDiscovery:
 
     def _discover_quality_issues(self) -> List[Task]:
         """Review source files for general quality issues."""
-        tasks = []
+        tasks: List[Task] = []
         target = Path(self.target_dir)
         exclude_dirs = set(self.config.discovery.exclude_dirs)
 
@@ -920,6 +920,81 @@ class TaskDiscovery:
                         source="quality",
                         source_file=rel_path,
                     ))
+
+                # AST-based checks
+                try:
+                    tree = ast.parse(content, filename=rel_path)
+                except SyntaxError:
+                    continue
+
+                # (a) Functions with more than 5 parameters
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        args = node.args
+                        param_count = (
+                            len(args.posonlyargs)
+                            + len(args.args)
+                            + len(args.kwonlyargs)
+                        )
+                        # Exclude 'self' and 'cls' from count
+                        if args.args and args.args[0].arg in ("self", "cls"):
+                            param_count -= 1
+                        if param_count > 5:
+                            tasks.append(Task(
+                                description=(
+                                    f"Reduce parameters in `{node.name}` in "
+                                    f"`{rel_path}:{node.lineno}` ({param_count} params)"
+                                ),
+                                priority=5,
+                                source="quality",
+                                source_file=rel_path,
+                                line_number=node.lineno,
+                            ))
+
+                # (b) Deeply nested code (indentation level > 4)
+                max_indent = 0
+                deepest_line = 0
+                for i, line in enumerate(lines, 1):
+                    stripped = line.lstrip()
+                    if not stripped or stripped.startswith("#"):
+                        continue
+                    indent = len(line) - len(stripped)
+                    # Assume 4-space indentation
+                    level = indent // 4
+                    if level > max_indent:
+                        max_indent = level
+                        deepest_line = i
+                if max_indent > 4:
+                    tasks.append(Task(
+                        description=(
+                            f"Reduce nesting depth in `{rel_path}:{deepest_line}` "
+                            f"(max indentation level {max_indent})"
+                        ),
+                        priority=5,
+                        source="quality",
+                        source_file=rel_path,
+                        line_number=deepest_line,
+                    ))
+
+                # (c) Files with no module-level docstring
+                if tree.body:
+                    first_stmt = tree.body[0]
+                    has_docstring = (
+                        isinstance(first_stmt, ast.Expr)
+                        and isinstance(first_stmt.value, (ast.Constant,))
+                        and isinstance(first_stmt.value.value, str)
+                    )
+                    if not has_docstring:
+                        tasks.append(Task(
+                            description=f"Add module-level docstring to `{rel_path}`",
+                            priority=5,
+                            source="quality",
+                            source_file=rel_path,
+                            line_number=1,
+                        ))
+
+                if len(tasks) >= 5:
+                    return tasks[:5]
 
         return tasks[:5]
 

@@ -48,7 +48,7 @@
 
 23. DONE: Add tests for `GracefulDegradation` in `tests/test_safety.py` that verify all four degradation levels (normal, mild, moderate, severe) return correct `batch_size_factor` and `sleep_multiplier` values at the exact threshold boundaries (69%, 70%, 85%, 95%).
 
-24. PENDING: In `task_discovery.py:_discover_quality_issues()`, the only quality check is file length >500 lines. Add checks for: (a) functions with more than 5 parameters (using `ast.parse`), (b) deeply nested code (indentation level >4), (c) files with no docstring on the module level. Create separate tasks for each finding.
+24. DONE: In `task_discovery.py:_discover_quality_issues()`, the only quality check is file length >500 lines. Add checks for: (a) functions with more than 5 parameters (using `ast.parse`), (b) deeply nested code (indentation level >4), (c) files with no docstring on the module level. Create separate tasks for each finding.
 
 25. PENDING: In `worker.py`, the `_build_retry_prompt()` passes `validation.summary` which is just "tests: FAIL, lint: PASS". Change it to pass the full output from the failed validation step (the actual pytest traceback or lint errors) so Claude can see what specifically went wrong.
 
@@ -119,3 +119,5 @@
 22. DONE: In `orchestrator.py`, the validation+retry loop was already extracted into `_validate_with_retries()` (lines 244-496). The `_cycle()` method delegates to it at line 866 for single-agent mode and line 940 for multi-agent mode. No code changes needed — the extraction was already in place.
 
 23. DONE: Added 12 tests for `GracefulDegradation` in `tests/test_safety.py` covering all four degradation levels (normal at <70%, mild at 70%, moderate at 85%, severe at 95%) with exact boundary checks for `batch_size_factor` and `sleep_multiplier`. Also tests cost-driven degradation, combined rate+cost reasons, and recovery from degraded to normal state.
+
+24. DONE: In `task_discovery.py:_discover_quality_issues()`, added three new quality checks beyond file length: (a) functions with more than 5 parameters using `ast.parse` (excluding self/cls), (b) deeply nested code (indentation level >4 based on 4-space indent), (c) files with no module-level docstring. Each creates a separate `quality` task with priority 5. Capped at 5 total tasks.
