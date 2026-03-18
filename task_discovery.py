@@ -318,6 +318,24 @@ class TaskDiscovery:
         except OSError:
             return ""
 
+    def _enrich_task_context(self, task: 'Task') -> None:
+        """Populate a task's context with code snippets from file references in its description."""
+        # Try primary regex, then fallback
+        match = _FILE_REF_RE.search(task.description)
+        if not match:
+            match = _FILE_REF_FALLBACK_RE.search(task.description)
+        if not match:
+            return
+
+        filepath = match.group(1)
+        line_num = int(match.group(2)) if match.group(2) else 1
+        snippet = self._read_file_snippet(filepath, line_num, context_lines=5)
+        if snippet:
+            task.context = f"File: {filepath}\n{snippet}"
+            task.source_file = filepath
+            if match.group(2):
+                task.line_number = line_num
+
     def _discover_test_failures(self) -> List[Task]:
         """Run pytest and parse failures."""
         test_cmd = self.config.validation.test_command
@@ -707,6 +725,10 @@ class TaskDiscovery:
                 elif desc:
                     logger.debug("Skipping short IDEA line: %r", desc)
 
+        # Enrich tasks with file context from their descriptions
+        for task in tasks:
+            self._enrich_task_context(task)
+
         logger.info("Claude discovered %d improvement ideas", len(tasks))
         if not tasks and result_text.strip():
             # Attempt fallback extraction from analysis-format text
@@ -725,6 +747,9 @@ class TaskDiscovery:
                             priority=4,
                             source="claude_idea",
                         ))
+            # Enrich fallback tasks with file context
+            for task in tasks:
+                self._enrich_task_context(task)
             if tasks:
                 logger.info(
                     "Extracted %d tasks from analysis-format text "
