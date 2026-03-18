@@ -60,7 +60,7 @@
 
 29. DONE: In `shared.py:build_plan_prompt()`, the planning prompt asks Claude to "Output your complete plan within 5 turns" but doesn't specify a format. Add a structured output format requirement: "Output your plan as a numbered list where each item specifies: FILE, CHANGE_TYPE (add/modify/delete), and DESCRIPTION of the change."
 
-30. PENDING: In `coordinator.py`, add a `_log_cycle_summary()` method called at the end of `_run_cycle()` that logs: number of tasks dispatched, number succeeded, number failed, total cost, total duration, and which task types succeeded/failed. This provides quick visibility into each parallel cycle's effectiveness.
+30. DONE: In `coordinator.py`, add a `_log_cycle_summary()` method called at the end of `_run_cycle()` that logs: number of tasks dispatched, number succeeded, number failed, total cost, total duration, and which task types succeeded/failed. This provides quick visibility into each parallel cycle's effectiveness.
 
 31. PENDING: Add tests for `worker._cost_limit_exceeded()` in `tests/test_worker.py` that verify: (a) returns False when well under budget, (b) returns True at 90% threshold, (c) handles state.get_total_cost() exceptions gracefully, (d) logs appropriate warning message.
 
@@ -131,3 +131,5 @@
 28. DONE: Added `_discover_test_coverage_gaps()` method to `task_discovery.py` that scans for Python source files with no corresponding `test_*.py` file in the tests directory. Creates `coverage` tasks with priority 4 for untested modules. Skips `__init__.py`, `conftest.py`, `setup.py`, test files, and files in `exclude_dirs`. Capped at 10 tasks. Added `enable_test_coverage_gaps` config flag to `config_schema.py` and registered in `discover_all()`.
 
 29. DONE: In `shared.py:build_plan_prompt()`, added a structured OUTPUT FORMAT section to both single-task and multi-task branches. The format requires a numbered list where each item specifies FILE, CHANGE_TYPE (add/modify/delete), and DESCRIPTION of the change, giving Claude a concrete structure to follow when outputting plans.
+
+30. DONE: In `coordinator.py`, added a `_log_cycle_summary()` method called at the end of `_run_cycle()` that logs: number of tasks dispatched, number succeeded, number failed, total cost, total duration, and which task types succeeded/failed. Added `cycle_start = time.time()` at the top of `_run_cycle()` to track duration. The summary is logged via `logger.info` with all requested metrics.

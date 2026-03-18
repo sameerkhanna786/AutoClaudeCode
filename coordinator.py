@@ -96,6 +96,7 @@ class ParallelCoordinator:
 
     def _run_cycle(self) -> None:
         """Run a single parallel cycle."""
+        cycle_start = time.time()
         self.safety.pre_flight_checks()
         self._check_worktree_disk_space()
 
@@ -233,6 +234,7 @@ class ParallelCoordinator:
             finally:
                 self._cleanup_worker_with_timeout(worker)
 
+        self._log_cycle_summary(results, cycle_start)
         self._workers.clear()
         self.git.prune_worktrees()
 
@@ -283,6 +285,43 @@ class ParallelCoordinator:
             task_source_files=[t.source_file or "" for t in result.tasks],
             task_line_numbers=[t.line_number for t in result.tasks],
         ))
+
+    def _log_cycle_summary(
+        self, results: List[tuple], cycle_start: float,
+    ) -> None:
+        """Log a summary of the parallel cycle's outcomes."""
+        if not results:
+            return
+
+        total_duration = time.time() - cycle_start
+        total_tasks = 0
+        succeeded = 0
+        failed = 0
+        total_cost = 0.0
+        succeeded_types: List[str] = []
+        failed_types: List[str] = []
+
+        for result, _worker in results:
+            n_tasks = len(result.tasks) if result.tasks else 1
+            total_tasks += n_tasks
+            total_cost += result.cost_usd
+            task_types = [t.source for t in result.tasks] if result.tasks else ["unknown"]
+            if result.success:
+                succeeded += n_tasks
+                succeeded_types.extend(task_types)
+            else:
+                failed += n_tasks
+                failed_types.extend(task_types)
+
+        logger.info(
+            "Cycle summary: %d task(s) dispatched, %d succeeded, %d failed | "
+            "cost=$%.4f | duration=%.1fs | "
+            "succeeded_types=%s | failed_types=%s",
+            total_tasks, succeeded, failed,
+            total_cost, total_duration,
+            list(set(succeeded_types)) if succeeded_types else [],
+            list(set(failed_types)) if failed_types else [],
+        )
 
     def _merge_worker_branch(self, worker: Worker, result: WorkerResult) -> bool:
         """Merge a worker's branch back into main.
