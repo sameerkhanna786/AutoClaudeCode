@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from config_schema import Config
-from safety import SafetyError, SafetyGuard
+from safety import GracefulDegradation, SafetyError, SafetyGuard
 from state import CycleRecord, StateManager
 
 
@@ -302,3 +302,96 @@ class TestMemoryCheck:
                         with patch.object(guard, 'check_consecutive_failures'):
                             guard.pre_flight_checks()
             mock_mem.assert_called_once()
+
+
+class TestGracefulDegradation:
+    @pytest.fixture
+    def degradation(self, default_config):
+        default_config.safety.max_cycles_per_hour = 100
+        default_config.safety.max_cost_usd_per_hour = 100.0
+        return GracefulDegradation(default_config)
+
+    def test_normal_level_below_70(self, degradation):
+        """At 69% usage, should return normal (level 0)."""
+        result = degradation.check_and_adjust(69, 0.0)
+        assert result["degraded"] is False
+        assert result["level"] == 0
+        assert result["batch_size_factor"] == 1.0
+        assert result["sleep_multiplier"] == 1.0
+        assert result["reason"] == ""
+        assert degradation.is_degraded is False
+        assert degradation.degradation_level == 0
+
+    def test_mild_level_at_70(self, degradation):
+        """At exactly 70% usage, should return mild (level 1)."""
+        result = degradation.check_and_adjust(70, 0.0)
+        assert result["degraded"] is True
+        assert result["level"] == 1
+        assert result["batch_size_factor"] == 0.75
+        assert result["sleep_multiplier"] == 2.0
+        assert "Mild" in result["reason"]
+        assert degradation.is_degraded is True
+        assert degradation.degradation_level == 1
+
+    def test_moderate_level_at_85(self, degradation):
+        """At exactly 85% usage, should return moderate (level 2)."""
+        result = degradation.check_and_adjust(85, 0.0)
+        assert result["degraded"] is True
+        assert result["level"] == 2
+        assert result["batch_size_factor"] == 0.5
+        assert result["sleep_multiplier"] == 3.0
+        assert "Moderate" in result["reason"]
+        assert degradation.is_degraded is True
+        assert degradation.degradation_level == 2
+
+    def test_severe_level_at_95(self, degradation):
+        """At exactly 95% usage, should return severe (level 3)."""
+        result = degradation.check_and_adjust(95, 0.0)
+        assert result["degraded"] is True
+        assert result["level"] == 3
+        assert result["batch_size_factor"] == 0.25
+        assert result["sleep_multiplier"] == 4.0
+        assert "Severe" in result["reason"]
+        assert degradation.is_degraded is True
+        assert degradation.degradation_level == 3
+
+    def test_boundary_69_is_normal(self, degradation):
+        """69% is just below the mild threshold."""
+        result = degradation.check_and_adjust(69, 69.0)
+        assert result["level"] == 0
+        assert result["degraded"] is False
+
+    def test_boundary_84_is_mild(self, degradation):
+        """84% is between mild and moderate thresholds."""
+        result = degradation.check_and_adjust(84, 0.0)
+        assert result["level"] == 1
+
+    def test_boundary_94_is_moderate(self, degradation):
+        """94% is between moderate and severe thresholds."""
+        result = degradation.check_and_adjust(94, 0.0)
+        assert result["level"] == 2
+
+    def test_cost_driven_degradation(self, degradation):
+        """Cost percentage drives degradation when higher than rate."""
+        result = degradation.check_and_adjust(0, 95.0)
+        assert result["level"] == 3
+        assert "cost" in result["reason"]
+
+    def test_max_of_rate_and_cost(self, degradation):
+        """The higher of rate_pct and cost_pct determines the level."""
+        result = degradation.check_and_adjust(70, 95.0)
+        assert result["level"] == 3  # cost at 95% dominates
+
+    def test_reason_includes_both_when_both_above_70(self, degradation):
+        """When both rate and cost are >= 70%, reason mentions both."""
+        result = degradation.check_and_adjust(80, 90.0)
+        assert "rate" in result["reason"]
+        assert "cost" in result["reason"]
+
+    def test_recovery_from_degraded_to_normal(self, degradation):
+        """Degradation level returns to normal when usage drops."""
+        degradation.check_and_adjust(95, 0.0)
+        assert degradation.is_degraded is True
+        result = degradation.check_and_adjust(50, 0.0)
+        assert result["level"] == 0
+        assert degradation.is_degraded is False

@@ -46,7 +46,7 @@
 
 22. DONE: In `orchestrator.py`, the `_run_cycle()` method is ~200 lines. Extract the validation+retry loop into a separate `_validate_with_retries()` method to improve readability and make it easier to test the retry logic in isolation.
 
-23. PENDING: Add tests for `GracefulDegradation` in `tests/test_safety.py` that verify all four degradation levels (normal, mild, moderate, severe) return correct `batch_size_factor` and `sleep_multiplier` values at the exact threshold boundaries (69%, 70%, 85%, 95%).
+23. DONE: Add tests for `GracefulDegradation` in `tests/test_safety.py` that verify all four degradation levels (normal, mild, moderate, severe) return correct `batch_size_factor` and `sleep_multiplier` values at the exact threshold boundaries (69%, 70%, 85%, 95%).
 
 24. PENDING: In `task_discovery.py:_discover_quality_issues()`, the only quality check is file length >500 lines. Add checks for: (a) functions with more than 5 parameters (using `ast.parse`), (b) deeply nested code (indentation level >4), (c) files with no docstring on the module level. Create separate tasks for each finding.
 
@@ -117,3 +117,5 @@
 21. DONE: Added `validate_syntax_only()` method to `validator.py` that runs `ast.parse()` on all changed `.py` files. Handles missing files, non-Python files, and `SyntaxError`/`UnicodeDecodeError` gracefully. Returns a `ValidationResult` with a "syntax" step. Added 7 tests in `tests/test_validator.py`.
 
 22. DONE: In `orchestrator.py`, the validation+retry loop was already extracted into `_validate_with_retries()` (lines 244-496). The `_cycle()` method delegates to it at line 866 for single-agent mode and line 940 for multi-agent mode. No code changes needed — the extraction was already in place.
+
+23. DONE: Added 12 tests for `GracefulDegradation` in `tests/test_safety.py` covering all four degradation levels (normal at <70%, mild at 70%, moderate at 85%, severe at 95%) with exact boundary checks for `batch_size_factor` and `sleep_multiplier`. Also tests cost-driven degradation, combined rate+cost reasons, and recovery from degraded to normal state.
