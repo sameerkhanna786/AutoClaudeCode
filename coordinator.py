@@ -561,7 +561,29 @@ class ParallelCoordinator:
                 self.state.get_total_cost(lookback_seconds=3600),
             )
             effective_workers = max(1, int(self.max_workers * deg["batch_size_factor"]))
-        return [[t] for t in ordered[:effective_workers]]
+
+        # Group tasks that reference the same source_file to avoid merge
+        # conflicts when different workers modify the same file.
+        groups: List[List[Task]] = []
+        file_to_group: dict = {}  # source_file -> group index
+
+        for t in ordered:
+            if len(groups) >= effective_workers and (
+                t.source_file is None or t.source_file not in file_to_group
+            ):
+                break  # No room for a new group
+
+            if t.source_file and t.source_file in file_to_group:
+                # Append to existing group that already handles this file
+                groups[file_to_group[t.source_file]].append(t)
+            else:
+                if len(groups) >= effective_workers:
+                    break
+                if t.source_file:
+                    file_to_group[t.source_file] = len(groups)
+                groups.append([t])
+
+        return groups
 
     def _setup_signals(self) -> None:
         """Register signal handlers for graceful shutdown."""

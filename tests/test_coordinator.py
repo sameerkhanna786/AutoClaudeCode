@@ -139,6 +139,43 @@ class TestPartitionTasks:
             assert len(g) == 1
 
 
+    def test_same_source_file_grouped_together(self, parallel_config):
+        """Tasks referencing the same source_file go to the same worker."""
+        parallel_config.parallel.max_workers = 4
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description="Fix func A in foo.py", priority=3, source="lint", source_file="foo.py"),
+            Task(description="Fix func B in foo.py", priority=3, source="lint", source_file="foo.py"),
+            Task(description="Fix bar.py", priority=3, source="lint", source_file="bar.py"),
+        ]
+        groups = coord._partition_tasks(tasks)
+        # foo.py tasks grouped together, bar.py separate
+        assert len(groups) == 2
+        foo_group = [g for g in groups if any(t.source_file == "foo.py" for t in g)]
+        assert len(foo_group) == 1
+        assert len(foo_group[0]) == 2
+        bar_group = [g for g in groups if any(t.source_file == "bar.py" for t in g)]
+        assert len(bar_group) == 1
+        assert len(bar_group[0]) == 1
+
+    def test_same_source_file_respects_max_workers(self, parallel_config):
+        """Same-file grouping still respects max_workers for new groups."""
+        parallel_config.parallel.max_workers = 2
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description="Fix A", priority=3, source="lint", source_file="a.py"),
+            Task(description="Fix B", priority=3, source="lint", source_file="b.py"),
+            Task(description="Fix A2", priority=4, source="lint", source_file="a.py"),
+            Task(description="Fix C", priority=4, source="lint", source_file="c.py"),
+        ]
+        groups = coord._partition_tasks(tasks)
+        # Only 2 groups max, but a.py tasks should be grouped
+        assert len(groups) == 2
+        a_group = [g for g in groups if any(t.source_file == "a.py" for t in g)]
+        assert len(a_group) == 1
+        assert len(a_group[0]) == 2  # both a.py tasks grouped
+
+
 class TestMergeWorkerBranch:
     @pytest.mark.requires_subprocess
     def test_fast_forward_merge(self, tmp_git_repo, parallel_config):
