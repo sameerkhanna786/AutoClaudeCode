@@ -65,6 +65,10 @@ class ParallelCoordinator:
                 self.max_workers, once,
             )
 
+            # Log strategy performance from recent history
+            perf_report = self.state.get_strategy_performance_report()
+            logger.info(perf_report)
+
             while self._running:
                 try:
                     self._run_cycle()

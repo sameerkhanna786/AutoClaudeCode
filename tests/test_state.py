@@ -1091,3 +1091,45 @@ class TestProductiveFiles:
         files = state_mgr.get_productive_files(lookback_seconds=3600)
         assert "old.py" not in files
         assert "recent.py" in files
+
+
+class TestStrategyPerformanceReport:
+    def test_empty_history(self, state_mgr):
+        report = state_mgr.get_strategy_performance_report()
+        assert report == "No task history in the last 24 hours."
+
+    def test_report_format(self, state_mgr):
+        now = time.time()
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix test",
+            task_type="test_failure", success=True,
+            cost_usd=0.10, duration_seconds=30.0,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix test 2",
+            task_type="test_failure", success=False,
+            cost_usd=0.20, duration_seconds=60.0,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix lint",
+            task_type="lint", success=True,
+            cost_usd=0.05, duration_seconds=10.0,
+        ))
+        report = state_mgr.get_strategy_performance_report()
+        assert "Strategy Performance (last 24h):" in report
+        # lint has 100% success rate, should appear first
+        assert report.index("lint") < report.index("test_failure")
+        assert "1/1 succeeded" in report  # lint
+        assert "1/2 succeeded" in report  # test_failure
+        assert "avg cost" in report
+        assert "avg duration" in report
+
+    def test_old_records_excluded(self, state_mgr):
+        old = time.time() - 200000
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=old, task_description="Old task",
+            task_type="lint", success=True,
+            cost_usd=0.10, duration_seconds=20.0,
+        ))
+        report = state_mgr.get_strategy_performance_report()
+        assert report == "No task history in the last 24 hours."

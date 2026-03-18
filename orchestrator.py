@@ -998,6 +998,10 @@ class Orchestrator:
         try:
             logger.info("Orchestrator started (once=%s)", once)
 
+            # Log strategy performance from recent history
+            perf_report = self.state.get_strategy_performance_report()
+            logger.info(perf_report)
+
             # Check for incomplete session from a previous crash
             if self._session_manager and self._session_manager.has_incomplete_session():
                 prev_session = self._session_manager.load_session()

@@ -490,6 +490,27 @@ class StateManager:
                 })
         return matches[-max_attempts:]
 
+    def get_strategy_performance_report(self, lookback_seconds: int = 86400) -> str:
+        """Return a formatted string showing performance per task type over the lookback period.
+
+        Shows success rate, average cost, and average duration for each task type.
+        """
+        perf = self.get_strategy_performance(lookback_seconds=lookback_seconds)
+        if not perf:
+            return "No task history in the last 24 hours."
+
+        lines = ["Strategy Performance (last 24h):"]
+        # Sort by success rate descending, then by total attempts descending
+        for source in sorted(perf, key=lambda s: (-perf[s]["success_rate"], -perf[s]["total"])):
+            p = perf[source]
+            lines.append(
+                f"  {source}: {p['successes']}/{p['total']} succeeded "
+                f"({p['success_rate']:.0%}), "
+                f"avg cost ${p['avg_cost']:.4f}, "
+                f"avg duration {p['avg_duration']:.1f}s"
+            )
+        return "\n".join(lines)
+
     def load_history(self) -> List[Dict[str, Any]]:
         """Public API for loading history (safe for external callers)."""
         return self._load_history()
