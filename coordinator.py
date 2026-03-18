@@ -479,45 +479,32 @@ class ParallelCoordinator:
         return False
 
     def _check_worktree_disk_space(self) -> None:
-        """Check disk usage of worktree directories and warn/clean up if excessive.
+        """Check disk space and clean up stale worktree directories if low.
 
         Prevents parallel workers from exhausting disk when multiple worktrees
-        accumulate. Logs warnings at 80% of min_disk_space_mb and removes
-        stale worktree directories if disk space falls below the safety threshold.
+        accumulate. Uses shutil.disk_usage() for an efficient O(1) disk space
+        check instead of recursively walking worktree directories.
         """
         worktree_base = Path(self.config.target_dir) / self.config.parallel.worktree_base_dir
         if not worktree_base.exists():
             return
 
-        # Calculate total worktree disk usage
-        total_bytes = 0
+        # Collect worktree directories (cheap iterdir, no recursive walk)
         worktree_dirs = []
         try:
             for child in worktree_base.iterdir():
                 if child.is_dir() and child.name.startswith("worker-"):
-                    try:
-                        dir_size = sum(
-                            f.stat().st_size
-                            for f in child.rglob("*")
-                            if f.is_file()
-                        )
-                        total_bytes += dir_size
-                        worktree_dirs.append((child, dir_size))
-                    except OSError:
-                        continue
+                    worktree_dirs.append(child)
         except OSError:
             return
 
-        total_mb = total_bytes / (1024 * 1024)
-        min_disk_mb = self.config.safety.min_disk_space_mb
-
-        if total_mb > 0:
+        if worktree_dirs:
             logger.debug(
-                "Worktree disk usage: %.1f MB across %d directories",
-                total_mb, len(worktree_dirs),
+                "Found %d worktree directories", len(worktree_dirs),
             )
 
-        # Check if overall disk space is getting low
+        # Check overall disk space (O(1) syscall, no recursive walk)
+        min_disk_mb = self.config.safety.min_disk_space_mb
         try:
             usage = shutil.disk_usage(self.config.target_dir)
             free_mb = usage.free / (1024 * 1024)
@@ -527,13 +514,13 @@ class ParallelCoordinator:
         warning_threshold = min_disk_mb * 1.5
         if free_mb < warning_threshold:
             logger.warning(
-                "Disk space low (%.0f MB free) with %.1f MB in worktrees. "
+                "Disk space low (%.0f MB free) with %d worktree directories. "
                 "Cleaning up stale worktree directories.",
-                free_mb, total_mb,
+                free_mb, len(worktree_dirs),
             )
             # Remove worktree dirs that don't correspond to active workers
             active_ids = {w.worker_id for w in self._workers}
-            for wt_dir, _ in worktree_dirs:
+            for wt_dir in worktree_dirs:
                 # Parse worker id from directory name (e.g., "worker-0")
                 try:
                     wt_id = int(wt_dir.name.split("-", 1)[1])

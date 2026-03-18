@@ -125,30 +125,38 @@ def _compute_hourly_buckets(
     records: List[Dict[str, Any]],
     now: float,
 ) -> List[Dict[str, Any]]:
-    """Compute per-hour aggregates for the last 24 hours."""
-    buckets = []
-    for hours_ago in range(24):
-        bucket_end = now - hours_ago * 3600
-        bucket_start = bucket_end - 3600
+    """Compute per-hour aggregates for the last 24 hours.
 
-        bucket_records = [
-            r for r in records
-            if bucket_start <= r.get("timestamp", 0) < bucket_end
-        ]
+    Uses a single O(n) pass over records instead of scanning all records
+    24 times (once per bucket).
+    """
+    # Initialize accumulators for each bucket
+    cycles = [0] * 24
+    successes = [0] * 24
+    costs = [0.0] * 24
 
-        total = len(bucket_records)
-        successes = sum(1 for r in bucket_records if r.get("success", False))
-        cost = sum(r.get("cost_usd", 0.0) for r in bucket_records)
+    cutoff = now - 24 * 3600
+    for r in records:
+        ts = r.get("timestamp", 0)
+        if ts < cutoff or ts >= now:
+            continue
+        hours_ago = int((now - ts) / 3600)
+        if 0 <= hours_ago < 24:
+            cycles[hours_ago] += 1
+            if r.get("success", False):
+                successes[hours_ago] += 1
+            costs[hours_ago] += r.get("cost_usd", 0.0)
 
-        buckets.append({
-            "hours_ago": hours_ago,
-            "cycles": total,
-            "successes": successes,
-            "failures": total - successes,
-            "cost_usd": round(cost, 4),
-        })
-
-    return buckets
+    return [
+        {
+            "hours_ago": h,
+            "cycles": cycles[h],
+            "successes": successes[h],
+            "failures": cycles[h] - successes[h],
+            "cost_usd": round(costs[h], 4),
+        }
+        for h in range(24)
+    ]
 
 
 def _compute_type_breakdown(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
