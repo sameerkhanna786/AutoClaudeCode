@@ -289,6 +289,59 @@ class ClaudeRunner:
             logger.warning("Terminating running Claude subprocess (pid=%s)", proc.pid)
             self._kill_process(proc)
 
+    @staticmethod
+    def _try_parse_json(text: str) -> Optional[Dict[str, Any]]:
+        """Try to extract a JSON dict from *text* using multiple strategies.
+
+        1. Lines that start with '{' (most common case).
+        2. JSON embedded mid-line (after banner text).
+        3. raw_decode on the full text for multi-line JSON.
+
+        Returns ``None`` when no valid JSON object is found.
+        """
+        lines = text.splitlines()
+
+        # Strategy 1: lines starting with '{'
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or not stripped.startswith("{"):
+                continue
+            try:
+                obj = json.loads(stripped)
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                pass
+
+        # Strategy 2: JSON embedded mid-line
+        for line in lines:
+            stripped = line.strip()
+            pos = stripped.find("{")
+            if pos <= 0:
+                continue
+            while pos != -1:
+                try:
+                    obj = json.loads(stripped[pos:])
+                    if isinstance(obj, dict):
+                        return obj
+                except json.JSONDecodeError:
+                    pass
+                pos = stripped.find("{", pos + 1)
+
+        # Strategy 3: raw_decode for multi-line JSON
+        decoder = json.JSONDecoder()
+        for i, ch in enumerate(text):
+            if ch != "{":
+                continue
+            try:
+                obj, _ = decoder.raw_decode(text, i)
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
     def _parse_json_response(self, stdout: str) -> Dict[str, Any]:
         """Parse JSON from Claude CLI output.
 
@@ -299,48 +352,9 @@ class ClaudeRunner:
         if not stdout or not stdout.strip():
             raise ValueError("Claude CLI produced empty output (no JSON to parse)")
 
-        # Strategy 1a: Try each line as a complete JSON object starting with '{'.
-        # This handles the common case where the JSON is on its own line.
-        for line in stdout.splitlines():
-            line = line.strip()
-            if not line or not line.startswith("{"):
-                continue
-            try:
-                obj = json.loads(line)
-                if isinstance(obj, dict):
-                    return obj
-            except json.JSONDecodeError:
-                pass
-
-        # Strategy 1b: Try finding JSON mid-line (preceded by text on the same line).
-        for line in stdout.splitlines():
-            line = line.strip()
-            brace_pos = line.find("{")
-            if brace_pos <= 0:
-                continue
-            # Try from each '{' position after the start of the line
-            while brace_pos != -1:
-                candidate = line[brace_pos:]
-                try:
-                    obj = json.loads(candidate)
-                    if isinstance(obj, dict):
-                        return obj
-                except json.JSONDecodeError:
-                    pass
-                brace_pos = line.find("{", brace_pos + 1)
-
-        # Strategy 2: Fall back to raw_decode for multi-line JSON.
-        # Try parsing from any '{' position to handle JSON starting mid-line.
-        decoder = json.JSONDecoder()
-        for i, ch in enumerate(stdout):
-            if ch != "{":
-                continue
-            try:
-                obj, end = decoder.raw_decode(stdout, i)
-                if isinstance(obj, dict):
-                    return obj
-            except json.JSONDecodeError:
-                pass
+        result = self._try_parse_json(stdout)
+        if result is not None:
+            return result
 
         raise ValueError("No JSON object found in Claude CLI output")
 
