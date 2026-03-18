@@ -285,3 +285,55 @@ class TestWorkerBaseline:
             main_repo_dir=tmp_git_repo,
         )
         assert worker.baseline_failures == set()
+
+
+class TestCostLimitExceeded:
+    def test_returns_false_when_under_budget(self, worker_config, tmp_git_repo):
+        """Returns False when cost is well under the 90% threshold."""
+        state = MagicMock(spec=LockedStateManager)
+        state.get_total_cost.return_value = 1.0  # $1 hourly
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+        # default max_cost_usd_per_hour=10.0, so 90% = $9.0
+        # $1.0 + $0.5 = $1.5 < $9.0
+        assert worker._cost_limit_exceeded(0.5) is False
+
+    def test_returns_true_at_90_percent_threshold(self, worker_config, tmp_git_repo):
+        """Returns True when cost hits the 90% threshold."""
+        state = MagicMock(spec=LockedStateManager)
+        state.get_total_cost.return_value = 8.5  # $8.5 hourly
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+        # $8.5 + $0.5 = $9.0 >= $10.0 * 0.9 = $9.0
+        assert worker._cost_limit_exceeded(0.5) is True
+
+    def test_returns_true_when_over_threshold(self, worker_config, tmp_git_repo):
+        """Returns True when cost exceeds the 90% threshold."""
+        state = MagicMock(spec=LockedStateManager)
+        state.get_total_cost.return_value = 9.0
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+        # $9.0 + $1.0 = $10.0 >= $9.0 threshold
+        assert worker._cost_limit_exceeded(1.0) is True
+
+    def test_handles_get_total_cost_exception(self, worker_config, tmp_git_repo):
+        """Returns False when state.get_total_cost() raises an exception."""
+        state = MagicMock(spec=LockedStateManager)
+        state.get_total_cost.side_effect = RuntimeError("DB connection failed")
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+        assert worker._cost_limit_exceeded(5.0) is False
+
+    def test_logs_warning_when_triggered(self, worker_config, tmp_git_repo):
+        """Logs a warning message when cost limit is exceeded."""
+        state = MagicMock(spec=LockedStateManager)
+        state.get_total_cost.return_value = 9.0
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+
+        with patch('worker.logger') as mock_logger:
+            result = worker._cost_limit_exceeded(1.0)
+            assert result is True
+            mock_logger.warning.assert_called_once()
+            warning_msg = mock_logger.warning.call_args[0][0]
+            assert "cost guard triggered" in warning_msg
