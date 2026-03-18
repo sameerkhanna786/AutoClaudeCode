@@ -219,11 +219,15 @@ class Validator:
                     "All %d test failure(s) are pre-existing, treating tests as passed",
                     len(current_failures),
                 )
+                baseline_note = (
+                    f"NOTE: All {len(current_failures)} failure(s) are "
+                    f"pre-existing baseline failures\n\n"
+                )
                 steps.append(ValidationStep(
                     name="tests",
                     command=test_step.command,
                     passed=True,
-                    output=test_step.output,
+                    output=baseline_note + test_step.output,
                     return_code=test_step.return_code,
                 ))
 
