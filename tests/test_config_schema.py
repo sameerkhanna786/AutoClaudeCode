@@ -809,3 +809,60 @@ class TestValidateEnumFields:
         config.agent_pipeline.review_detail = "invalid"
         # Should NOT raise — only warns
         validate_config(config)
+
+
+class TestConfigLoadingRobustness:
+    """Tests for error handling during config loading."""
+
+    def test_malformed_yaml_raises_valueerror(self):
+        """Malformed YAML should raise ValueError, not yaml.YAMLError."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = str(Path(tmpdir) / "bad.yaml")
+            Path(config_path).write_text("{{{{bad yaml: [unterminated")
+            with pytest.raises(ValueError, match="Invalid YAML"):
+                load_config(config_path)
+
+    def test_valid_yaml_loads_normally(self):
+        """Valid YAML should load without errors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = str(Path(tmpdir) / "good.yaml")
+            Path(config_path).write_text("claude:\n  model: sonnet\n")
+            config = load_config(config_path)
+            assert config.claude.model == "sonnet"
+
+    def test_webhook_unknown_keys_ignored(self):
+        """Unknown keys in webhook config should be silently ignored."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = str(Path(tmpdir) / "webhooks.yaml")
+            Path(config_path).write_text(
+                "notifications:\n"
+                "  enabled: true\n"
+                "  webhooks:\n"
+                "    - url: https://example.com/hook\n"
+                "      type: slack\n"
+                "      name: test\n"
+                "      headers: {Authorization: Bearer xyz}\n"
+                "      custom_field: should_be_ignored\n"
+            )
+            config = load_config(config_path)
+            assert len(config.notifications.webhooks) == 1
+            assert config.notifications.webhooks[0].url == "https://example.com/hook"
+            assert config.notifications.webhooks[0].type == "slack"
+
+    def test_git_not_found_raises_valueerror(self):
+        """Missing git binary should raise ValueError during validation."""
+        from unittest.mock import patch
+        from config_schema import validate_config
+        config = Config()
+        with patch("config_schema.subprocess.run", side_effect=FileNotFoundError("git")):
+            with pytest.raises(ValueError, match="git is not installed"):
+                validate_config(config)
+
+    def test_git_timeout_raises_valueerror(self):
+        """Git subprocess timeout should raise ValueError."""
+        from unittest.mock import patch
+        from config_schema import validate_config
+        config = Config()
+        with patch("config_schema.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=10)):
+            with pytest.raises(ValueError, match="timed out"):
+                validate_config(config)

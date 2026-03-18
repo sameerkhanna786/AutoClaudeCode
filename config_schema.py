@@ -345,7 +345,10 @@ def load_config(path: Optional[str] = None) -> Config:
         return config
 
     with open(config_path, "r") as f:
-        raw = yaml.safe_load(f)
+        try:
+            raw = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
 
     if not raw or not isinstance(raw, dict):
         return config
@@ -396,8 +399,10 @@ def load_config(path: Optional[str] = None) -> Config:
         if "events" in notif_raw and isinstance(notif_raw["events"], dict):
             _merge_dataclass(config.notifications.events, notif_raw["events"])
         if "webhooks" in notif_raw and isinstance(notif_raw["webhooks"], list):
+            _webhook_fields = {"url", "type", "name"}
             config.notifications.webhooks = [
-                WebhookConfig(**wh) for wh in notif_raw["webhooks"]
+                WebhookConfig(**{k: v for k, v in wh.items() if k in _webhook_fields})
+                for wh in notif_raw["webhooks"]
                 if isinstance(wh, dict) and wh.get("url")
             ]
 
@@ -586,10 +591,19 @@ def validate_config(config: Config) -> None:
         raise ValueError(
             f"target_dir does not exist or is not a directory: {target}"
         )
-    git_check = subprocess.run(
-        ["git", "rev-parse", "--git-dir"],
-        cwd=target, capture_output=True, text=True, timeout=10,
-    )
+    try:
+        git_check = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=target, capture_output=True, text=True, timeout=10,
+        )
+    except FileNotFoundError:
+        raise ValueError(
+            "git is not installed or not found on PATH"
+        )
+    except subprocess.TimeoutExpired:
+        raise ValueError(
+            f"git rev-parse timed out for target_dir: {target}"
+        )
     if git_check.returncode != 0:
         raise ValueError(
             f"target_dir is not a git repository: {target}"
