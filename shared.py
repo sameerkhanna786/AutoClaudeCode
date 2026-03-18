@@ -12,6 +12,54 @@ from task_discovery import Task
 
 logger = logging.getLogger(__name__)
 
+# Regex to extract file references from task descriptions and context.
+# Matches backtick-quoted file paths like `foo.py:123` and unquoted paths
+# preceded by "in" or "for".
+_FILE_REF_RE = re.compile(
+    r'`([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json|md|txt))'
+    r'(?::(\d+))?(?:-\d+)?`'
+)
+_FILE_REF_FALLBACK_RE = re.compile(
+    r'(?:in\s+|for\s+)([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json|md|txt))'
+    r'(?::(\d+))?'
+)
+
+
+def _extract_relevant_files(tasks: List[Task], max_files: int = 5) -> List[str]:
+    """Extract unique file references from task descriptions and context.
+
+    Returns up to *max_files* unique file paths, ordered by first appearance.
+    """
+    seen: set = set()
+    files: List[str] = []
+
+    for task in tasks:
+        texts = [task.description]
+        if task.context:
+            texts.append(task.context)
+        if task.source_file:
+            path = task.source_file
+            if path not in seen:
+                seen.add(path)
+                files.append(path)
+
+        for text in texts:
+            for match in _FILE_REF_RE.finditer(text):
+                path = match.group(1)
+                if path not in seen:
+                    seen.add(path)
+                    files.append(path)
+            for match in _FILE_REF_FALLBACK_RE.finditer(text):
+                path = match.group(1)
+                if path not in seen:
+                    seen.add(path)
+                    files.append(path)
+
+        if len(files) >= max_files:
+            break
+
+    return files[:max_files]
+
 
 # ------------------------------------------------------------------
 # Task dependency ordering (DAG topological sort)
@@ -472,12 +520,20 @@ def build_task_prompt(
     protected = ", ".join(protected_files)
     preamble = _working_dir_preamble(working_dir)
 
+    # Build RELEVANT FILES section from file references in tasks
+    relevant = _extract_relevant_files(tasks)
+    relevant_section = ""
+    if relevant:
+        lines = "\n".join(f"- {f}" for f in relevant)
+        relevant_section = f"\nRELEVANT FILES:\n{lines}\n"
+
     if len(tasks) > 1:
         task_list = format_task_list(tasks)
         return (
             f"{preamble}\n"
             "You have been given a batch of tasks to address in a single comprehensive change.\n\n"
-            f"TASKS:\n{task_list}\n\n"
+            f"TASKS:\n{task_list}\n"
+            f"{relevant_section}\n"
             "INSTRUCTIONS:\n"
             "- Make the minimal changes needed to complete ALL tasks above.\n"
             "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
@@ -496,7 +552,8 @@ def build_task_prompt(
     return (
         f"{preamble}\n"
         f"TASK: {task.description}\n"
-        f"{context_section}\n"
+        f"{context_section}"
+        f"{relevant_section}\n"
         "INSTRUCTIONS:\n"
         "- Make the minimal changes needed to complete this task.\n"
         "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"

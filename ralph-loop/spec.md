@@ -20,7 +20,7 @@
 
 9. DONE: In `worker.py:execute()`, when Claude modifies files in the main repo instead of the worktree (lines 229-244), the error message is generic. Enhance it to include what files were modified and suggest the likely cause (Claude used relative paths instead of absolute paths to the worktree). Also log the prompt's working directory preamble for debugging.
 
-10. PENDING: In `shared.py:build_task_prompt()`, add a section that lists the 3-5 most relevant files for the task by extracting file references from the task description and context using `_FILE_REF_RE`. Format as "RELEVANT FILES:\n- path/to/file.py\n" so Claude knows where to look first.
+10. DONE: In `shared.py:build_task_prompt()`, add a section that lists the 3-5 most relevant files for the task by extracting file references from the task description and context using `_FILE_REF_RE`. Format as "RELEVANT FILES:\n- path/to/file.py\n" so Claude knows where to look first.
 
 11. PENDING: Add test coverage for `conflict_resolver.py` by creating `tests/test_conflict_resolver.py` with tests for: successful resolution, failed resolution, timeout handling, and empty conflict list. Mock the Claude CLI calls.
 
@@ -91,3 +91,5 @@
 8. DONE: Add a `_discover_import_issues()` method to `task_discovery.py` that uses `ast.parse` to find unused imports in Python files. Create `lint` tasks with priority 3 for files with unused imports. Only scan files not in `exclude_dirs`.
 
 9. DONE: In `worker.py:execute()`, when Claude modifies files in the main repo instead of the worktree (lines 229-244), the error message is generic. Enhance it to include what files were modified and suggest the likely cause (Claude used relative paths instead of absolute paths to the worktree). Also log the prompt's working directory preamble for debugging.
+
+10. DONE: In `shared.py:build_task_prompt()`, add a section that lists the 3-5 most relevant files for the task by extracting file references from the task description and context using `_FILE_REF_RE`. Format as "RELEVANT FILES:\n- path/to/file.py\n" so Claude knows where to look first.
