@@ -529,14 +529,35 @@ class SafetyGuard:
                 )
 
     def pre_flight_checks(self) -> None:
-        """Run all pre-cycle safety checks."""
-        self.check_disk_space()
-        self.check_memory()
-        self.check_rate_limit()
-        self.check_cost_limit()
-        self.check_consecutive_failures()
-        self.check_backup_dir_size()
-        self.check_git_object_growth()
+        """Run all pre-cycle safety checks.
+
+        Collects all check failures and raises a single SafetyError with
+        all issues listed, so the caller sees every problem at once.
+        """
+        failures: List[str] = []
+
+        checks = [
+            self.check_disk_space,
+            self.check_memory,
+            self.check_rate_limit,
+            self.check_cost_limit,
+            self.check_consecutive_failures,
+            self.check_backup_dir_size,
+            self.check_git_object_growth,
+        ]
+
+        for check in checks:
+            try:
+                check()
+            except SafetyError as e:
+                failures.append(str(e))
+
+        if failures:
+            combined = "; ".join(failures)
+            raise SafetyError(
+                f"{len(failures)} pre-flight check(s) failed: {combined}"
+            )
+
         logger.debug("All pre-flight checks passed")
 
     def post_claude_checks(self, changed_files: List[str]) -> None:

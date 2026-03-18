@@ -303,6 +303,41 @@ class TestMemoryCheck:
                             guard.pre_flight_checks()
             mock_mem.assert_called_once()
 
+    def test_pre_flight_checks_collects_all_failures(self, guard):
+        """pre_flight_checks should collect all failures into a single error."""
+        with patch.object(guard, 'check_disk_space', side_effect=SafetyError("Low disk")):
+            with patch.object(guard, 'check_memory', side_effect=SafetyError("Low memory")):
+                with patch.object(guard, 'check_rate_limit'):
+                    with patch.object(guard, 'check_cost_limit'):
+                        with patch.object(guard, 'check_consecutive_failures'):
+                            with pytest.raises(SafetyError, match="2 pre-flight check.*failed"):
+                                guard.pre_flight_checks()
+
+    def test_pre_flight_checks_combined_error_contains_all_messages(self, guard):
+        """The combined error message should contain each individual failure."""
+        with patch.object(guard, 'check_disk_space', side_effect=SafetyError("Low disk space")):
+            with patch.object(guard, 'check_memory'):
+                with patch.object(guard, 'check_rate_limit', side_effect=SafetyError("Rate limit reached")):
+                    with patch.object(guard, 'check_cost_limit', side_effect=SafetyError("Cost limit reached")):
+                        with patch.object(guard, 'check_consecutive_failures'):
+                            with pytest.raises(SafetyError) as exc_info:
+                                guard.pre_flight_checks()
+                            msg = str(exc_info.value)
+                            assert "Low disk space" in msg
+                            assert "Rate limit reached" in msg
+                            assert "Cost limit reached" in msg
+                            assert "3 pre-flight check(s) failed" in msg
+
+    def test_pre_flight_checks_single_failure_still_reports_count(self, guard):
+        """Even a single failure should use the collected error format."""
+        with patch.object(guard, 'check_disk_space'):
+            with patch.object(guard, 'check_memory'):
+                with patch.object(guard, 'check_rate_limit'):
+                    with patch.object(guard, 'check_cost_limit', side_effect=SafetyError("Cost limit")):
+                        with patch.object(guard, 'check_consecutive_failures'):
+                            with pytest.raises(SafetyError, match="1 pre-flight check.*failed.*Cost limit"):
+                                guard.pre_flight_checks()
+
 
 class TestGracefulDegradation:
     @pytest.fixture
