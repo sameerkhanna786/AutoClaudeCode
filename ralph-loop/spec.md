@@ -38,7 +38,7 @@
 
 18. DONE: In `coordinator.py:_partition_tasks()`, tasks are assigned one-per-worker but there's no consideration of task independence. Added a check that avoids assigning two tasks that reference the same `source_file` to different workers (they'd create merge conflicts). Same-file tasks are now grouped together.
 
-19. PENDING: In `shared.py:build_retry_prompt()`, add a "COMMON FAILURE PATTERNS" section that includes tips based on the task type. For example, for `test_failure` tasks: "Common causes: wrong assertion value, missing import, function signature changed". For `lint` tasks: "Common causes: unused import not removed, line too long".
+19. DONE: In `shared.py:build_retry_prompt()`, added a "COMMON FAILURE PATTERNS" section with tips based on the task type. Added `_COMMON_FAILURE_PATTERNS` dict and `_common_failure_patterns()` helper.
 
 20. PENDING: Add a `get_task_success_history()` method to `state.py:StateManager` that returns the last N attempts for a given task_key, including what error occurred each time. Use this in `shared.py:build_retry_prompt()` to include previous failure reasons so Claude doesn't repeat the same mistake.
 
@@ -109,3 +109,5 @@
 17. DONE: Add tests for `session_manager.py` in `tests/test_session_manager.py`. Test: session file creation/loading, orphaned worktree detection, cleanup of stale sessions, and recovery flow.
 
 18. DONE: In `coordinator.py:_partition_tasks()`, tasks are assigned one-per-worker but there's no consideration of task independence. Added a check that avoids assigning two tasks that reference the same `source_file` to different workers (they'd create merge conflicts). Same-file tasks are now grouped together.
+
+19. DONE: In `shared.py:build_retry_prompt()`, added a "COMMON FAILURE PATTERNS" section with a `_COMMON_FAILURE_PATTERNS` dict mapping task sources (test_failure, lint, todo, quality, coverage, claude_idea) to common failure causes, and a `_common_failure_patterns()` helper that appends relevant tips to the retry prompt based on task type.

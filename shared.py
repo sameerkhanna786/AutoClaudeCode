@@ -6,7 +6,7 @@ import ast
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from task_discovery import Task
 
@@ -681,6 +681,57 @@ def build_execute_prompt(
     )
 
 
+_COMMON_FAILURE_PATTERNS: Dict[str, str] = {
+    "test_failure": (
+        "- Wrong assertion value or outdated expected result\n"
+        "- Missing import in the module under test\n"
+        "- Function signature changed but callers not updated\n"
+        "- Fixture or mock not matching new behavior\n"
+        "- Off-by-one errors in boundary conditions"
+    ),
+    "lint": (
+        "- Unused import not removed after refactoring\n"
+        "- Line too long (exceeds configured max length)\n"
+        "- Trailing whitespace or missing newline at end of file\n"
+        "- Variable assigned but never used\n"
+        "- Wrong import order (stdlib vs third-party vs local)"
+    ),
+    "todo": (
+        "- Implementation incomplete — only part of the TODO was addressed\n"
+        "- New code introduced a test regression\n"
+        "- Missing error handling for edge cases mentioned in the TODO"
+    ),
+    "quality": (
+        "- Refactoring changed behavior instead of just restructuring\n"
+        "- Extracted function has wrong parameter list or return value\n"
+        "- Existing tests rely on the old structure"
+    ),
+    "coverage": (
+        "- New test imports the wrong module or function name\n"
+        "- Test assertions don't match actual function behavior\n"
+        "- Missing test fixtures or setup for the code under test"
+    ),
+    "claude_idea": (
+        "- Change scope was too broad — unrelated code was affected\n"
+        "- New code conflicts with existing patterns or conventions\n"
+        "- Missing edge case handling that existing tests exercise"
+    ),
+}
+
+
+def _common_failure_patterns(tasks: List[Task]) -> str:
+    """Return a COMMON FAILURE PATTERNS section based on task types."""
+    sources = {t.source for t in tasks if t.source}
+    tips = []
+    for source in sorted(sources):
+        patterns = _COMMON_FAILURE_PATTERNS.get(source)
+        if patterns:
+            tips.append(f"For {source} tasks:\n{patterns}")
+    if not tips:
+        return ""
+    return "COMMON FAILURE PATTERNS:\n" + "\n".join(tips) + "\n"
+
+
 def build_retry_prompt(
     tasks: List[Task],
     failure_output: str,
@@ -732,5 +783,6 @@ def build_retry_prompt(
         "- Do NOT run git commands (add, commit, push). The orchestrator handles git.\n"
         f"- Do NOT modify these protected files: {protected}\n"
         "- Your previous changes are still in the working tree. Build on them, do not start over.\n"
-        "- Focus on making ALL validations pass.\n"
+        "- Focus on making ALL validations pass.\n\n"
+        f"{_common_failure_patterns(tasks)}"
     )
