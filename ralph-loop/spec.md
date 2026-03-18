@@ -56,7 +56,7 @@
 
 27. DONE: In `claude_runner.py:ClaudeRunner.run()`, the rate limit detection only checked for "rate limit", "429", and "too many requests" in stderr. Added "quota exceeded" and "capacity" to `_CB_ERROR_PATTERNS` ("overloaded" was already present). Updated the retry-loop rate limit detection to also trigger rate-limit-style backoff for "quota exceeded", "capacity", and "overloaded" patterns.
 
-28. PENDING: Add a `_discover_test_coverage_gaps()` method to `task_discovery.py` that doesn't require pytest-cov. Instead, scan for Python source files that have no corresponding `test_*.py` file in the tests directory. Create `coverage` tasks with priority 4 for untested modules. This is cheaper than running pytest-cov.
+28. DONE: Add a `_discover_test_coverage_gaps()` method to `task_discovery.py` that doesn't require pytest-cov. Instead, scan for Python source files that have no corresponding `test_*.py` file in the tests directory. Create `coverage` tasks with priority 4 for untested modules. This is cheaper than running pytest-cov.
 
 29. PENDING: In `shared.py:build_plan_prompt()`, the planning prompt asks Claude to "Output your complete plan within 5 turns" but doesn't specify a format. Add a structured output format requirement: "Output your plan as a numbered list where each item specifies: FILE, CHANGE_TYPE (add/modify/delete), and DESCRIPTION of the change."
 
@@ -127,3 +127,5 @@
 26. DONE: Created standalone `analyze.py` script that runs `TaskDiscovery.discover_all()` and prints a formatted report of all discovered tasks grouped by source type, with counts and priorities. Supports `--config` for custom config and `--verbose` for detailed context output.
 
 27. DONE: In `claude_runner.py:ClaudeRunner.run()`, the rate limit detection only checked for "rate limit", "429", and "too many requests" in stderr. Added "quota exceeded" and "capacity" to `_CB_ERROR_PATTERNS` ("overloaded" was already present). Updated the retry-loop rate limit detection to also trigger rate-limit-style backoff for "quota exceeded", "capacity", and "overloaded" patterns.
+
+28. DONE: Added `_discover_test_coverage_gaps()` method to `task_discovery.py` that scans for Python source files with no corresponding `test_*.py` file in the tests directory. Creates `coverage` tasks with priority 4 for untested modules. Skips `__init__.py`, `conftest.py`, `setup.py`, test files, and files in `exclude_dirs`. Capped at 10 tasks. Added `enable_test_coverage_gaps` config flag to `config_schema.py` and registered in `discover_all()`.

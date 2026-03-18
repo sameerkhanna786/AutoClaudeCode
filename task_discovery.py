@@ -240,6 +240,9 @@ class TaskDiscovery:
         if dc.enable_import_check:
             tasks.extend(self._discover_import_issues())
 
+        if dc.enable_test_coverage_gaps:
+            tasks.extend(self._discover_test_coverage_gaps())
+
         # Filter out low-feasibility tasks
         if dc.enable_feasibility_filter:
             before_count = len(tasks)
@@ -1159,3 +1162,64 @@ class TaskDiscovery:
                     return tasks[:5]
 
         return tasks[:5]
+
+    def _discover_test_coverage_gaps(self) -> List[Task]:
+        """Find Python source files that have no corresponding test_*.py file.
+
+        Scans for .py source files and checks if a matching test file exists
+        in the tests directory. Creates coverage tasks with priority 4 for
+        untested modules. Skips __init__.py, test files, conftest.py, setup.py,
+        and files in exclude_dirs. Caps at 10 tasks.
+        """
+        tasks: List[Task] = []
+        target = Path(self.target_dir)
+        exclude_dirs = set(self.config.discovery.exclude_dirs)
+
+        # Find the tests directory
+        tests_dir = target / "tests"
+        if not tests_dir.is_dir():
+            return tasks
+
+        # Collect existing test file basenames (without test_ prefix)
+        tested_modules: set = set()
+        for test_file in tests_dir.glob("test_*.py"):
+            # test_foo.py -> foo
+            module_name = test_file.stem[5:]  # strip "test_"
+            tested_modules.add(module_name)
+
+        for root, dirs, files in os.walk(target):
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+
+            rel_root = Path(root).relative_to(target)
+            # Skip the tests directory itself
+            if str(rel_root).startswith("tests"):
+                continue
+
+            for fname in sorted(files):
+                if not fname.endswith(".py"):
+                    continue
+                if fname.startswith("test_") or fname == "__init__.py":
+                    continue
+                if fname in ("conftest.py", "setup.py"):
+                    continue
+
+                module_name = fname[:-3]  # strip .py
+                if module_name in tested_modules:
+                    continue
+
+                rel_path = str(rel_root / fname) if str(rel_root) != "." else fname
+                desc = (
+                    f"Add tests for untested module `{rel_path}` "
+                    f"(no `tests/test_{module_name}.py` found)"
+                )
+                tasks.append(Task(
+                    description=desc,
+                    priority=4,
+                    source="coverage",
+                    source_file=rel_path,
+                ))
+
+                if len(tasks) >= 10:
+                    return tasks
+
+        return tasks
