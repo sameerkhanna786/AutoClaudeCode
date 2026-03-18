@@ -30,7 +30,7 @@
 
 14. DONE: In `safety.py:check_memory()`, the macOS implementation only counts "Pages free" + "Pages speculative" + "Pages purgeable". Add "Pages inactive" to the count since macOS treats inactive pages as available memory, which currently causes false low-memory warnings.
 
-15. PENDING: Add a `validate_task_feasibility()` method to `task_discovery.py:TaskDiscovery` that estimates task complexity by checking: (a) number of files referenced, (b) whether referenced files exist, (c) whether the task description is specific enough (>20 chars, contains a file reference). Return a feasibility score 0-1. Use this in `discover_all()` to filter out low-feasibility tasks (score < 0.3).
+15. DONE: Add a `validate_task_feasibility()` method to `task_discovery.py:TaskDiscovery` that estimates task complexity by checking: (a) number of files referenced, (b) whether referenced files exist, (c) whether the task description is specific enough (>20 chars, contains a file reference). Return a feasibility score 0-1. Use this in `discover_all()` to filter out low-feasibility tasks (score < 0.3).
 
 16. PENDING: In `agent_pipeline.py`, the planner agent always runs even for simple tasks like lint fixes. Add a `skip_planning_for` config list (default: `["lint", "todo"]`) that skips the planner for simple task types and goes straight to the coder, saving one Claude invocation per simple task.
 
@@ -101,3 +101,5 @@
 12. DONE: In `coordinator.py:_merge_worker_branch()`, after a failed rebase (line 365), the method doesn't attempt the merge strategy as a fallback. Add fallback logic: if rebase fails and strategy is "rebase", try a regular merge before giving up.
 
 14. DONE: In `safety.py:check_memory()`, the macOS implementation only counts "Pages free" + "Pages speculative" + "Pages purgeable". Add "Pages inactive" to the count since macOS treats inactive pages as available memory, which currently causes false low-memory warnings.
+
+15. DONE: Add a `validate_task_feasibility()` method to `task_discovery.py:TaskDiscovery` that estimates task complexity by checking: (a) number of files referenced, (b) whether referenced files exist, (c) whether the task description is specific enough (>20 chars, contains a file reference). Return a feasibility score 0-1. Use this in `discover_all()` to filter out low-feasibility tasks (score < 0.3).

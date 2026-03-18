@@ -240,6 +240,14 @@ class TaskDiscovery:
         if dc.enable_import_check:
             tasks.extend(self._discover_import_issues())
 
+        # Filter out low-feasibility tasks
+        if dc.enable_feasibility_filter:
+            before_count = len(tasks)
+            tasks = [t for t in tasks if self.validate_task_feasibility(t) >= 0.3]
+            filtered = before_count - len(tasks)
+            if filtered:
+                logger.info("Feasibility filter removed %d low-scoring task(s)", filtered)
+
         # Group related tasks to avoid duplicate work
         tasks = self._group_related_tasks(tasks)
 
@@ -263,6 +271,65 @@ class TaskDiscovery:
         # Sort by priority (lower number = higher priority)
         tasks.sort(key=lambda t: t.priority)
         return tasks
+
+    def validate_task_feasibility(self, task: Task) -> float:
+        """Estimate task feasibility based on description quality and file references.
+
+        Returns a score between 0.0 and 1.0:
+        - (a) Number of files referenced (more refs = more concrete)
+        - (b) Whether referenced files actually exist
+        - (c) Whether the description is specific enough (>20 chars, has a file ref)
+        """
+        score = 0.0
+
+        desc = task.description
+        # (c) Description specificity: >20 chars
+        if len(desc) > 20:
+            score += 0.3
+        else:
+            # Very short descriptions are unlikely to be actionable
+            score += 0.1
+
+        # Find all file references in description + context
+        combined = desc + "\n" + task.context
+        refs_primary = _FILE_REF_RE.findall(combined)
+        refs_fallback = _FILE_REF_FALLBACK_RE.findall(combined)
+        # Each match is a tuple (filename, line_num_or_empty)
+        file_refs = set()
+        for match in refs_primary:
+            file_refs.add(match[0])
+        for match in refs_fallback:
+            file_refs.add(match[0])
+        # Also count source_file if set
+        if task.source_file:
+            file_refs.add(task.source_file)
+
+        num_refs = len(file_refs)
+
+        # (c continued) Has at least one file reference
+        if num_refs > 0:
+            score += 0.3
+        # (a) More file references = more concrete (up to 0.2 for 3+ refs)
+        if num_refs >= 3:
+            score += 0.2
+        elif num_refs >= 1:
+            score += 0.1
+
+        # (b) Check if referenced files exist
+        if file_refs:
+            existing = 0
+            for ref in file_refs:
+                fpath = Path(ref)
+                if not fpath.is_absolute():
+                    fpath = Path(self.target_dir) / ref
+                if fpath.exists():
+                    existing += 1
+            if existing > 0:
+                # At least some files exist
+                exist_ratio = existing / len(file_refs)
+                score += 0.2 * exist_ratio
+
+        return min(score, 1.0)
 
     def _group_related_tasks(self, tasks: List[Task]) -> List[Task]:
         """Group related tasks by file path to avoid duplicate work.

@@ -101,6 +101,7 @@ class DiscoveryConfig:
     discovery_prompt: str = ""  # Custom prompt for claude_ideas; empty = use default
     idea_cooldown_seconds: int = 600  # Minimum seconds between claude_ideas runs; 0 = no limit
     adaptive_priority: bool = False  # Boost priority of high-success-rate task types
+    enable_feasibility_filter: bool = False  # Filter out low-feasibility tasks (score < 0.3)
 
 
 @dataclass
