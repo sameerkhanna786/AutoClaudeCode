@@ -18,7 +18,7 @@
 
 8. DONE: Add a `_discover_import_issues()` method to `task_discovery.py` that uses `ast.parse` to find unused imports in Python files. Create `lint` tasks with priority 3 for files with unused imports. Only scan files not in `exclude_dirs`.
 
-9. PENDING: In `worker.py:execute()`, when Claude modifies files in the main repo instead of the worktree (lines 229-244), the error message is generic. Enhance it to include what files were modified and suggest the likely cause (Claude used relative paths instead of absolute paths to the worktree). Also log the prompt's working directory preamble for debugging.
+9. DONE: In `worker.py:execute()`, when Claude modifies files in the main repo instead of the worktree (lines 229-244), the error message is generic. Enhance it to include what files were modified and suggest the likely cause (Claude used relative paths instead of absolute paths to the worktree). Also log the prompt's working directory preamble for debugging.
 
 10. PENDING: In `shared.py:build_task_prompt()`, add a section that lists the 3-5 most relevant files for the task by extracting file references from the task description and context using `_FILE_REF_RE`. Format as "RELEVANT FILES:\n- path/to/file.py\n" so Claude knows where to look first.
 
@@ -85,6 +85,9 @@
 5. DONE: In `validator.py:validate_with_baseline()`, when test failures are all pre-existing, the method returns `passed=True` but the `output` in the step still contains all the failure text. Add a note to the output like "NOTE: All N failure(s) are pre-existing baseline failures" so that downstream consumers (retry prompts, logs) don't confuse baseline failures with new issues.
 
 6. DONE: In `claude_runner.py`, the `_parse_json_response()` method has three nearly-identical JSON parsing strategies. Refactor into a single `_try_parse_json(text) -> Optional[dict]` helper that tries line-by-line parsing, then multi-line, then raw_decode, reducing the method from ~50 lines to ~20.
+
 7. DONE: In `task_discovery.py:_discover_claude_ideas()`, lines 552-630 have three nearly-identical JSON extraction strategies (line-by-line, multi-line join, raw_decode). Extract this into a shared `_extract_json_text(raw_output) -> str` utility function in `task_discovery.py` that both this method and `claude_runner.py:_parse_json_response()` could reference, reducing duplication.
 
 8. DONE: Add a `_discover_import_issues()` method to `task_discovery.py` that uses `ast.parse` to find unused imports in Python files. Create `lint` tasks with priority 3 for files with unused imports. Only scan files not in `exclude_dirs`.
+
+9. DONE: In `worker.py:execute()`, when Claude modifies files in the main repo instead of the worktree (lines 229-244), the error message is generic. Enhance it to include what files were modified and suggest the likely cause (Claude used relative paths instead of absolute paths to the worktree). Also log the prompt's working directory preamble for debugging.

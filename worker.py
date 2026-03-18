@@ -229,17 +229,36 @@ class Worker:
             main_repo_post_state = set(main_repo_git.get_changed_files())
             new_main_dirty = sorted(main_repo_post_state - main_repo_pre_state)
             if new_main_dirty:
+                worktree_abs = str(Path(self.worktree_dir).resolve())
+                files_list = "\n  ".join(new_main_dirty[:10])
+                extra = (
+                    f" (and {len(new_main_dirty) - 10} more)"
+                    if len(new_main_dirty) > 10 else ""
+                )
                 logger.error(
-                    "Worker %d: Claude modified files in the main repo "
-                    "instead of the worktree: %s",
-                    self.worker_id, new_main_dirty[:5],
+                    "Worker %d: Claude modified %d file(s) in the main repo "
+                    "instead of the worktree.\n"
+                    "  Modified files:\n  %s%s\n"
+                    "  Likely cause: Claude used relative paths or the main "
+                    "repo path (%s) instead of absolute paths to the "
+                    "worktree (%s).\n"
+                    "  Prompt working_dir was set to: %s",
+                    self.worker_id, len(new_main_dirty),
+                    files_list, extra,
+                    self.main_repo_dir, worktree_abs, worktree_abs,
+                )
+                error_msg = (
+                    f"Claude modified {len(new_main_dirty)} main repo "
+                    f"file(s) instead of worktree: {new_main_dirty[:5]}. "
+                    f"Likely cause: used relative paths instead of absolute "
+                    f"paths to the worktree ({worktree_abs})"
                 )
                 return WorkerResult(
                     success=False,
                     branch_name=self.branch_name,
                     cost_usd=total_cost,
                     duration_seconds=time.time() - start_time,
-                    error=f"Claude modified main repo files: {new_main_dirty[:5]}",
+                    error=error_msg,
                     tasks=self.tasks,
                 )
 
