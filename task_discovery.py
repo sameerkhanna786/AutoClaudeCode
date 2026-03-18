@@ -228,17 +228,29 @@ class TaskDiscovery:
 
         return result
 
+    # Regex to extract file path and line number from pytest traceback lines
+    # Matches patterns like "tests/test_foo.py:5: AssertionError"
+    _TRACEBACK_LOC_RE = re.compile(
+        r'^(\S+\.py):(\d+):\s+\w+(?:Error|Exception|Warning)'
+    )
+
     def _extract_test_traceback(self, full_output: str, test_id: str) -> str:
-        """Extract the traceback section for a specific test from pytest output."""
+        """Extract the traceback section for a specific test from pytest output.
+
+        Includes assertion details (lines starting with 'E') and ensures the
+        last 5 lines of the traceback are always present.
+        """
         if not test_id:
             return ""
         lines = full_output.split("\n")
         collecting = False
         result_lines: List[str] = []
+        assertion_lines: List[str] = []
         for line in lines:
             if test_id in line and ("FAILED" in line or "ERROR" in line or "___" in line):
                 collecting = True
                 result_lines = [line]
+                assertion_lines = []
                 continue
             if collecting:
                 if (line.startswith("___") and test_id not in line) or \
@@ -246,7 +258,45 @@ class TaskDiscovery:
                    (line.startswith("FAILED ") and test_id not in line):
                     break
                 result_lines.append(line)
-        return "\n".join(result_lines)
+                # Collect assertion detail lines (pytest prefixes them with 'E')
+                stripped = line.lstrip()
+                if stripped.startswith("E ") or stripped.startswith("E\t"):
+                    assertion_lines.append(line)
+
+        if not result_lines:
+            return ""
+
+        # Ensure the last 5 lines of the traceback are included
+        # (they typically contain the assertion and location info)
+        traceback_text = "\n".join(result_lines)
+        if len(result_lines) > 5:
+            last_5 = "\n".join(result_lines[-5:])
+            # If assertion lines exist but aren't in last 5 lines, append them
+            if assertion_lines:
+                for aline in assertion_lines:
+                    if aline not in result_lines[-5:]:
+                        traceback_text += "\n" + aline
+
+        return traceback_text
+
+    def _extract_traceback_location(self, traceback_text: str) -> tuple:
+        """Extract file path and line number from a pytest traceback.
+
+        Returns (source_file, line_number) or (None, None) if not found.
+        """
+        if not traceback_text:
+            return None, None
+        # Search for the last file:line pattern in the traceback
+        # (the last one is typically the failing assertion location)
+        last_match = None
+        for line in traceback_text.split("\n"):
+            line = line.strip()
+            m = self._TRACEBACK_LOC_RE.match(line)
+            if m:
+                last_match = m
+        if last_match:
+            return last_match.group(1), int(last_match.group(2))
+        return None, None
 
     def _read_file_snippet(self, filepath: str, line_num: int, context_lines: int = 5) -> str:
         """Read a snippet of a file around the given line number."""
@@ -308,10 +358,14 @@ class TaskDiscovery:
                 parts = line.split()
                 test_id = parts[1] if len(parts) > 1 else ""
                 per_test_ctx = self._extract_test_traceback(full_output, test_id)
+                # Extract file path and line number from the traceback
+                src_file, src_line = self._extract_traceback_location(per_test_ctx)
                 tasks.append(Task(
                     description=desc,
                     priority=2,
                     source="test_failure",
+                    source_file=src_file,
+                    line_number=src_line,
                     context=per_test_ctx if per_test_ctx else full_output,
                 ))
 
