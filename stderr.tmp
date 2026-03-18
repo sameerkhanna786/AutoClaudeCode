@@ -1,0 +1,8 @@
+Claude Code at Meta (https://fburl.com/claude.code.users)
+WARNING: **Model choice**
+  SEV 2 -- S630783: Multiple users reporting Claude latency
+  We are redirecting traffic to GCP directly to address slowness issues, but this can result in an incorrect /model choice. Use /model or remove your model choice from your settings.json file
+  (To disable: META_DISABLE_SHAMAN=1 claude_code)
+'Latest' native version check (lookup was cached - delete /Users/sameertkhanna/Library/Caches/claude_code_native_versions/.available_versions to force refresh!) completed in 136.459µs
+Resolved 'latest' native version to: 2.1.71 (from 21 available versions)
+Using native Claude Code binary version: 2.1.71

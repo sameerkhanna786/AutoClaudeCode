@@ -312,9 +312,10 @@ class Worker:
                 )
                 cycle_state.update(phase="retrying", retry_count=retry)
 
-                # Build retry prompt with failure output
+                # Build retry prompt with full failure output
+                failure_output = self._format_validation_errors(validation)
                 retry_prompt = self._build_retry_prompt(
-                    self.tasks, is_batch, validation.summary,
+                    self.tasks, is_batch, failure_output,
                 )
                 retry_result = self._claude.run(
                     retry_prompt,
@@ -483,6 +484,21 @@ class Worker:
             self.config.safety.protected_files,
             working_dir=str(Path(self.worktree_dir).resolve()),
         )
+
+    def _format_validation_errors(self, validation) -> str:
+        """Extract failure details from ValidationResult for the retry prompt."""
+        parts = []
+        for step in validation.steps:
+            if not step.passed:
+                parts.append(f"--- {step.name} FAILED (exit code {step.return_code}) ---")
+                parts.append(f"Command: {step.command}")
+                if step.output:
+                    output = step.output[:8000]
+                    if len(step.output) > 8000:
+                        output += "\n... (truncated)"
+                    parts.append(output)
+                parts.append("")
+        return "\n".join(parts) if parts else validation.summary
 
     def _build_retry_prompt(
         self, tasks: List[Task], is_batch: bool, failure_output: str,
