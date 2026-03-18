@@ -36,6 +36,7 @@ from shared import (
     build_execute_prompt as shared_build_execute_prompt,
     build_retry_prompt as shared_build_retry_prompt,
 )
+from task_queue import TaskApprovalQueue
 from telemetry import compute_metrics
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ class Orchestrator:
         self.cycle_state = CycleStateWriter(str(Path(config.paths.history_file).parent))
         self.notifier = NotificationManager(config.notifications)
         self._degradation = GracefulDegradation(config)
+        self._task_queue = TaskApprovalQueue(str(Path(config.paths.state_dir)))
         self._running = True
         self._consecutive_exceptions = 0
         self._backoff_seconds = 0
@@ -110,7 +112,12 @@ class Orchestrator:
 
     def _setup_signals(self) -> None:
         """Register signal handlers for graceful shutdown."""
+        self._signal_received = False
+
         def handler(signum, frame):
+            if self._signal_received:
+                return  # Avoid redundant handling on repeated delivery
+            self._signal_received = True
             logger.info("Received signal %d, shutting down gracefully...", signum)
             self._running = False
             self.claude.terminate()
@@ -142,7 +149,12 @@ class Orchestrator:
 
     def _gather_tasks(self) -> List[Task]:
         """Gather all eligible tasks, respecting batch_mode and adaptive sizing."""
-        tasks = gather_tasks(self.config, self.feedback, self.state, self.discovery)
+        dashboard_active = self._task_queue.is_dashboard_active()
+        tasks = gather_tasks(
+            self.config, self.feedback, self.state, self.discovery,
+            dashboard_active=dashboard_active,
+            task_approval_queue=self._task_queue,
+        )
 
         if not self.config.orchestrator.batch_mode:
             return tasks[:1]
@@ -595,8 +607,23 @@ class Orchestrator:
             )
 
         # 2-5. Gather tasks
+        # Clean up stale pending approval tasks periodically
+        self._task_queue.clear_stale(max_age=3600)
+
         tasks = self._gather_tasks()
         if not tasks:
+            # Check if tasks are pending approval
+            pending_count = self._task_queue.pending_count()
+            if pending_count > 0:
+                logger.info(
+                    "Waiting for task approval (%d tasks pending)", pending_count,
+                )
+                self.cycle_state.update(
+                    phase="waiting_approval",
+                    pending_approval_count=pending_count,
+                )
+                return
+
             dc = self.config.discovery
             enabled_methods = []
             if dc.enable_test_failures:

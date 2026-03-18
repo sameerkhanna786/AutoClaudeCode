@@ -28,7 +28,7 @@ def cmd_generate(args):
     prd = generate_prd(tasks, config=config, state_manager=state)
 
     fmt = "json" if args.output.endswith(".json") else "yaml"
-    export_prd(prd, args.output, format=fmt)
+    export_prd(prd, args.output, fmt=fmt)
     print(f"Generated PRD with {len(tasks)} tasks -> {args.output}")
 
 

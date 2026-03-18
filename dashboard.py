@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from telemetry import compute_metrics
+from task_queue import TaskApprovalQueue
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -151,6 +152,28 @@ tr.expandable:hover{background:rgba(88,166,255,.05)}
 .msg{padding:8px 12px;border-radius:4px;margin-bottom:8px;font-size:13px}
 .msg.error{background:rgba(248,81,73,.1);color:var(--fail);border:1px solid rgba(248,81,73,.3)}
 .msg.ok{background:rgba(63,185,80,.1);color:var(--success);border:1px solid rgba(63,185,80,.3)}
+
+/* Pending tasks panel */
+.pending-panel{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:20px}
+.pending-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.pending-header h3{font-size:14px;font-weight:600}
+.pending-badge{background:var(--warn);color:#000;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;margin-left:8px}
+.pending-bulk-actions{display:flex;gap:8px}
+.pending-bulk-actions button{padding:4px 12px;border-radius:4px;font-size:12px;border:1px solid var(--border)}
+.btn-approve-all{background:rgba(63,185,80,.15);color:var(--success);border-color:var(--success)!important}
+.btn-decline-all{background:rgba(248,81,73,.15);color:var(--fail);border-color:var(--fail)!important}
+.pending-task{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.pending-task-info{flex:1;min-width:0}
+.pending-task-desc{font-size:13px;margin-bottom:4px;word-break:break-word}
+.pending-task-meta{font-size:11px;color:var(--muted)}
+.pending-task-context{font-size:11px;color:var(--muted);margin-top:4px;max-height:60px;overflow:hidden;white-space:pre-wrap;font-family:monospace}
+.pending-task-actions{display:flex;gap:6px;flex-shrink:0}
+.pending-task-actions button{padding:4px 12px;border-radius:4px;font-size:12px;border:none;font-weight:500}
+.btn-approve{background:var(--success);color:#000}
+.btn-decline{background:var(--fail);color:#fff}
+.approval-mode-indicator{font-size:12px;padding:4px 10px;border-radius:4px;font-weight:500}
+.approval-mode-active{background:rgba(210,153,34,.15);color:var(--warn);border:1px solid rgba(210,153,34,.3)}
+.approval-mode-auto{background:rgba(63,185,80,.15);color:var(--success);border:1px solid rgba(63,185,80,.3)}
 </style>
 </head>
 <body>
@@ -167,6 +190,9 @@ tr.expandable:hover{background:rgba(88,166,255,.05)}
 <div class="container">
   <!-- Status cards -->
   <div class="cards" id="status-cards"></div>
+
+  <!-- Pending tasks approval panel -->
+  <div id="pending-panel"></div>
 
   <!-- Cycle history -->
   <h2 class="section-title">Cycle History</h2>
@@ -206,6 +232,7 @@ let autoRefresh = true;
 let statusData = {};
 let historyData = [];
 let feedbackData = {pending:[], done:[], failed:[]};
+let pendingTasks = [];
 let logLines = [];
 let sortCol = 'timestamp';
 let sortAsc = false;
@@ -227,7 +254,7 @@ function toggleAutoRefresh(){
 }
 
 function startPolling(){
-  fetchStatus(); fetchHistory(); fetchFeedback(); if(logOpen) fetchLog();
+  fetchStatus(); fetchHistory(); fetchFeedback(); fetchPendingTasks(); if(logOpen) fetchLog();
   statusTimer = setInterval(fetchStatus, 5000);
   historyTimer = setInterval(fetchHistory, 10000);
   feedbackTimer = setInterval(fetchFeedback, 10000);
@@ -264,6 +291,7 @@ async function fetchStatus(){
   if(!d) return;
   statusData = d;
   renderStatus();
+  fetchPendingTasks();
   updateTimestamp();
 }
 
@@ -307,15 +335,94 @@ function renderStatus(){
     const cost = cs.accumulated_cost ? ' &middot; $' + cs.accumulated_cost.toFixed(4) : '';
     const retry = cs.retry_count ? ' &middot; retry ' + cs.retry_count : '';
     const batchInfo = (cs.batch_size||1) > 1 ? ' &middot; batch of ' + cs.batch_size : '';
+    const pendingInfo = cs.pending_approval_count ? ' &middot; ' + cs.pending_approval_count + ' awaiting approval' : '';
+    const waitingApproval = cs.phase === 'waiting_approval';
     html += `<div class="card" style="grid-column:1/-1">
       <div class="card-label">Current Activity</div>
-      <div class="card-value" style="font-size:16px;color:var(--${phaseCls})">${phase}${agent}</div>
+      <div class="card-value" style="font-size:16px;color:var(--${waitingApproval ? 'warn' : phaseCls})">${waitingApproval ? 'Waiting for Approval' : phase}${agent}</div>
       <div style="margin-top:6px;color:var(--muted);font-size:13px">${desc}</div>
-      <div style="margin-top:4px;color:var(--muted);font-size:12px">Elapsed: ${elapsed}${cost}${retry}${batchInfo}</div>
+      <div style="margin-top:4px;color:var(--muted);font-size:12px">Elapsed: ${elapsed}${cost}${retry}${batchInfo}${pendingInfo}</div>
     </div>`;
   }
 
   el.innerHTML = html;
+}
+
+// Pending Tasks Approval
+async function fetchPendingTasks(){
+  const d = await api('/api/pending-tasks');
+  if(!d) return;
+  pendingTasks = d.tasks || [];
+  renderPendingTasks();
+}
+
+function renderPendingTasks(){
+  const panel = document.getElementById('pending-panel');
+  if(!panel) return;
+
+  // Show approval mode indicator based on cycle state
+  const cs = statusData.cycle_state;
+  const isWaiting = cs && cs.phase === 'waiting_approval';
+
+  if(pendingTasks.length === 0 && !isWaiting){
+    panel.innerHTML = '';
+    return;
+  }
+
+  let html = '<div class="pending-panel">';
+  html += '<div class="pending-header">';
+  html += `<h3>Pending Tasks <span class="pending-badge">${pendingTasks.length}</span></h3>`;
+  if(pendingTasks.length > 0){
+    html += `<div class="pending-bulk-actions">
+      <button class="btn-approve-all" onclick="approveAllTasks()">Accept All</button>
+      <button class="btn-decline-all" onclick="declineAllTasks()">Decline All</button>
+    </div>`;
+  }
+  html += '</div>';
+
+  if(pendingTasks.length === 0){
+    html += '<div style="color:var(--muted);font-size:13px;padding:8px 0">No tasks awaiting approval.</div>';
+  } else {
+    pendingTasks.forEach(t => {
+      const sourceBadge = `<span class="badge badge-${t.source||'unknown'}">${t.source||'unknown'}</span>`;
+      const desc = escHtml((t.description||'').substring(0, 200));
+      const priority = t.priority ? `P${t.priority}` : '';
+      const context = t.context ? escHtml(t.context.substring(0, 150)) : '';
+      html += `<div class="pending-task">
+        <div class="pending-task-info">
+          <div class="pending-task-desc">${desc}</div>
+          <div class="pending-task-meta">${sourceBadge} ${priority}</div>
+          ${context ? `<div class="pending-task-context">${context}</div>` : ''}
+        </div>
+        <div class="pending-task-actions">
+          <button class="btn-approve" onclick="approveTask('${escHtml(t.id)}')">Accept</button>
+          <button class="btn-decline" onclick="declineTask('${escHtml(t.id)}')">Decline</button>
+        </div>
+      </div>`;
+    });
+  }
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+async function approveTask(id){
+  const d = await api('/api/pending-tasks/' + encodeURIComponent(id) + '/approve', {method:'POST'});
+  if(d && d.ok) fetchPendingTasks();
+}
+
+async function declineTask(id){
+  const d = await api('/api/pending-tasks/' + encodeURIComponent(id) + '/decline', {method:'POST'});
+  if(d && d.ok) fetchPendingTasks();
+}
+
+async function approveAllTasks(){
+  const d = await api('/api/pending-tasks/approve-all', {method:'POST'});
+  if(d && d.ok) fetchPendingTasks();
+}
+
+async function declineAllTasks(){
+  const d = await api('/api/pending-tasks/decline-all', {method:'POST'});
+  if(d && d.ok) fetchPendingTasks();
 }
 
 // History
@@ -926,6 +1033,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     dashboard_cfg: Dict[str, Any] = {}
     loc_cache: Dict[str, Any] = {}
     loc_lock: threading.Lock = threading.Lock()
+    task_queue: Optional[TaskApprovalQueue] = None
 
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress default request logging to stderr."""
@@ -944,6 +1052,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "/api/feedback": self._api_feedback_list,
             "/api/log": self._api_log,
             "/api/metrics": self._api_metrics,
+            "/api/pending-tasks": self._api_pending_tasks_list,
         }
 
         handler = routes.get(path)
@@ -958,6 +1067,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/api/feedback":
             self._api_feedback_submit()
+        elif path == "/api/pending-tasks/approve-all":
+            self._api_pending_tasks_approve_all()
+        elif path == "/api/pending-tasks/decline-all":
+            self._api_pending_tasks_decline_all()
+        elif path.startswith("/api/pending-tasks/") and path.endswith("/approve"):
+            task_id = path[len("/api/pending-tasks/"):-len("/approve")]
+            self._api_pending_tasks_approve(task_id)
+        elif path.startswith("/api/pending-tasks/") and path.endswith("/decline"):
+            task_id = path[len("/api/pending-tasks/"):-len("/decline")]
+            self._api_pending_tasks_decline(task_id)
         else:
             self._send_error(404, "Not found")
 
@@ -982,6 +1101,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def _api_status(self, query: Dict) -> None:
+        # Write heartbeat so orchestrator knows dashboard is active
+        if self.task_queue:
+            self.task_queue.update_heartbeat()
         status = compute_status(self.dashboard_cfg)
         self._send_json(status)
 
@@ -1109,6 +1231,51 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         self._send_json({"ok": True, "deleted": name})
 
+    def _api_pending_tasks_list(self, query: Dict) -> None:
+        if not self.task_queue:
+            self._send_json({"tasks": []})
+            return
+        tasks = self.task_queue.list_pending()
+        self._send_json({"tasks": tasks})
+
+    def _api_pending_tasks_approve(self, task_id: str) -> None:
+        if not self.task_queue:
+            self._send_error(503, "Task queue not available")
+            return
+        if not task_id or ".." in task_id or "/" in task_id:
+            self._send_error(400, "Invalid task ID")
+            return
+        if self.task_queue.approve(task_id):
+            self._send_json({"ok": True, "approved": task_id})
+        else:
+            self._send_error(404, f"Task '{task_id}' not found in pending queue")
+
+    def _api_pending_tasks_decline(self, task_id: str) -> None:
+        if not self.task_queue:
+            self._send_error(503, "Task queue not available")
+            return
+        if not task_id or ".." in task_id or "/" in task_id:
+            self._send_error(400, "Invalid task ID")
+            return
+        if self.task_queue.decline(task_id):
+            self._send_json({"ok": True, "declined": task_id})
+        else:
+            self._send_error(404, f"Task '{task_id}' not found in pending queue")
+
+    def _api_pending_tasks_approve_all(self) -> None:
+        if not self.task_queue:
+            self._send_error(503, "Task queue not available")
+            return
+        count = self.task_queue.approve_all()
+        self._send_json({"ok": True, "approved_count": count})
+
+    def _api_pending_tasks_decline_all(self) -> None:
+        if not self.task_queue:
+            self._send_error(503, "Task queue not available")
+            return
+        count = self.task_queue.decline_all()
+        self._send_json({"ok": True, "declined_count": count})
+
     def _api_log(self, query: Dict) -> None:
         num_lines = min(int(query.get("lines", ["100"])[0]), MAX_LOG_LINES)
         lines = read_log_tail(self.dashboard_cfg["log_file"], num_lines)
@@ -1184,6 +1351,7 @@ def main() -> None:
     DashboardHandler.dashboard_cfg = cfg
     DashboardHandler.loc_cache = {}
     DashboardHandler.loc_lock = threading.Lock()
+    DashboardHandler.task_queue = TaskApprovalQueue(cfg["state_dir"])
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), DashboardHandler)
     logger.info("Dashboard running at http://localhost:%d", args.port)

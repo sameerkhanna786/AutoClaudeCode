@@ -201,7 +201,7 @@ def test_full_batch_cycle(integration_repo):
 
     call_count = [0]
 
-    def mock_claude_run(prompt):
+    def mock_claude_run(prompt, **kwargs):
         call_count[0] += 1
         if call_count[0] == 1:
             # Planning phase: return a plan (no file changes)
@@ -227,7 +227,11 @@ def test_full_batch_cycle(integration_repo):
 
     orch.claude.run = mock_claude_run
 
-    orch._cycle()
+    # Also patch create_runner for the planning phase runner
+    mock_plan_runner = MagicMock()
+    mock_plan_runner.run.side_effect = mock_claude_run
+    with patch("provider_runner.create_runner", return_value=mock_plan_runner):
+        orch._cycle()
 
     # Verify the fix was committed (commit message should be descriptive, no [auto] prefix)
     result = subprocess.run(

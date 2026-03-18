@@ -372,5 +372,149 @@ class TestDashboardHandlerAPI(unittest.TestCase):
             handler.send_response.assert_called_with(404)
 
 
+class TestPendingTasksAPI(unittest.TestCase):
+    """Test pending tasks approval API endpoints."""
+
+    def _make_handler(self, method="GET", path="/", body=None, headers=None):
+        handler = DashboardHandler.__new__(DashboardHandler)
+        handler.wfile = BytesIO()
+        handler.rfile = BytesIO(body.encode() if body else b"")
+        handler.path = path
+        handler.command = method
+        handler.request_version = "HTTP/1.1"
+        handler.headers = MagicMock()
+        handler.headers.get = lambda key, default="0": (
+            headers.get(key, default) if headers else default
+        )
+        handler.dashboard_cfg = {
+            "target_dir": ".",
+            "history_file": "/nonexistent/history.json",
+            "state_dir": "/nonexistent",
+            "lock_file": "/nonexistent/lock.pid",
+            "log_file": "/nonexistent/log.txt",
+            "feedback_dir": "/nonexistent/feedback",
+            "feedback_done_dir": "/nonexistent/feedback/done",
+            "feedback_failed_dir": "/nonexistent/feedback/failed",
+            "max_consecutive_failures": 5,
+            "max_cycles_per_hour": 30,
+            "max_cost_usd_per_hour": 10.0,
+            "min_disk_space_mb": 500,
+        }
+        handler.loc_cache = {}
+        handler.loc_lock = threading.Lock()
+        handler._headers_buffer = []
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+        return handler
+
+    def test_list_pending_no_queue(self):
+        handler = self._make_handler(path="/api/pending-tasks")
+        handler.task_queue = None
+        handler._api_pending_tasks_list({})
+        output = handler.wfile.getvalue().decode()
+        data = json.loads(output)
+        self.assertEqual(data["tasks"], [])
+
+    def test_list_pending_with_queue(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from task_queue import TaskApprovalQueue
+            from task_discovery import Task
+            queue = TaskApprovalQueue(tmpdir)
+            task = Task(description="Fix lint", priority=2, source="lint")
+            queue.enqueue(task)
+
+            handler = self._make_handler(path="/api/pending-tasks")
+            handler.task_queue = queue
+            handler._api_pending_tasks_list({})
+            output = handler.wfile.getvalue().decode()
+            data = json.loads(output)
+            self.assertEqual(len(data["tasks"]), 1)
+
+    def test_approve_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from task_queue import TaskApprovalQueue
+            from task_discovery import Task
+            queue = TaskApprovalQueue(tmpdir)
+            task = Task(description="Fix lint", priority=2, source="lint")
+            queue.enqueue(task)
+            task_id = queue.list_pending()[0]["id"]
+
+            handler = self._make_handler(method="POST")
+            handler.task_queue = queue
+            handler._api_pending_tasks_approve(task_id)
+            output = handler.wfile.getvalue().decode()
+            data = json.loads(output)
+            self.assertTrue(data.get("ok"))
+            self.assertEqual(queue.pending_count(), 0)
+
+    def test_decline_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from task_queue import TaskApprovalQueue
+            from task_discovery import Task
+            queue = TaskApprovalQueue(tmpdir)
+            task = Task(description="Fix lint", priority=2, source="lint")
+            queue.enqueue(task)
+            task_id = queue.list_pending()[0]["id"]
+
+            handler = self._make_handler(method="POST")
+            handler.task_queue = queue
+            handler._api_pending_tasks_decline(task_id)
+            output = handler.wfile.getvalue().decode()
+            data = json.loads(output)
+            self.assertTrue(data.get("ok"))
+            self.assertEqual(queue.pending_count(), 0)
+
+    def test_approve_all(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from task_queue import TaskApprovalQueue
+            from task_discovery import Task
+            queue = TaskApprovalQueue(tmpdir)
+            for i in range(3):
+                queue.enqueue(Task(description=f"Task {i}", priority=2, source="lint",
+                                   source_file=f"f{i}.py"))
+            handler = self._make_handler(method="POST")
+            handler.task_queue = queue
+            handler._api_pending_tasks_approve_all()
+            output = handler.wfile.getvalue().decode()
+            data = json.loads(output)
+            self.assertTrue(data.get("ok"))
+            self.assertEqual(data["approved_count"], 3)
+
+    def test_decline_all(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from task_queue import TaskApprovalQueue
+            from task_discovery import Task
+            queue = TaskApprovalQueue(tmpdir)
+            for i in range(2):
+                queue.enqueue(Task(description=f"Task {i}", priority=2, source="lint",
+                                   source_file=f"f{i}.py"))
+            handler = self._make_handler(method="POST")
+            handler.task_queue = queue
+            handler._api_pending_tasks_decline_all()
+            output = handler.wfile.getvalue().decode()
+            data = json.loads(output)
+            self.assertTrue(data.get("ok"))
+            self.assertEqual(data["declined_count"], 2)
+
+    def test_approve_invalid_id(self):
+        handler = self._make_handler(method="POST")
+        handler.task_queue = MagicMock()
+        handler._api_pending_tasks_approve("../evil")
+        output = handler.wfile.getvalue().decode()
+        data = json.loads(output)
+        self.assertIn("error", data)
+
+    def test_status_writes_heartbeat(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from task_queue import TaskApprovalQueue
+            queue = TaskApprovalQueue(tmpdir)
+            handler = self._make_handler(path="/api/status")
+            handler.task_queue = queue
+            handler.dashboard_cfg["state_dir"] = tmpdir
+            handler._api_status({})
+            self.assertTrue(queue.is_dashboard_active())
+
+
 if __name__ == "__main__":
     unittest.main()

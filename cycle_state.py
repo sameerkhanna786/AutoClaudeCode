@@ -31,6 +31,7 @@ class CycleState:
     accumulated_cost: float = 0.0
     batch_size: int = 1
     retry_count: int = 0
+    pending_approval_count: int = 0
 
 
 class CycleStateWriter:
@@ -114,6 +115,7 @@ def read_cycle_state(state_dir: str, filename: str = "current_cycle.json") -> Op
             accumulated_cost=data.get("accumulated_cost", 0.0),
             batch_size=data.get("batch_size", 1),
             retry_count=data.get("retry_count", 0),
+            pending_approval_count=data.get("pending_approval_count", 0),
         )
     except (json.JSONDecodeError, OSError):
         return None

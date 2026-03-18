@@ -35,7 +35,7 @@ def compute_metrics(
         return _empty_metrics()
 
     # Duration distribution
-    durations = [r.get("duration_seconds", 0.0) for r in recent if "duration_seconds" in r]
+    durations = [r.get("duration_seconds", 0.0) for r in recent if r.get("duration_seconds", 0.0) > 0]
     duration_stats = _compute_distribution(durations)
 
     # Validation retry patterns

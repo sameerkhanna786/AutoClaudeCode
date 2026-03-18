@@ -547,7 +547,12 @@ class ParallelCoordinator:
 
     def _setup_signals(self) -> None:
         """Register signal handlers for graceful shutdown."""
+        self._signal_received = False
+
         def handler(signum, frame):
+            if self._signal_received:
+                return  # Avoid redundant handling on repeated delivery
+            self._signal_received = True
             logger.info("Received signal %d, shutting down workers...", signum)
             self._running = False
             # Terminate any running Claude subprocesses in workers

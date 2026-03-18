@@ -207,6 +207,28 @@ class TestGatherTasks:
         assert tasks[0].description == "Fix Y"
 
 
+class TestSignalHandlerIdempotent:
+    def test_repeated_signals_handled_once(self, parallel_config, caplog):
+        """Signal handler only logs once even if called multiple times."""
+        import logging
+        import signal
+
+        coord = ParallelCoordinator(parallel_config)
+        coord._setup_signals()
+
+        # Get the registered handler
+        handler = signal.getsignal(signal.SIGTERM)
+
+        with caplog.at_level(logging.INFO):
+            handler(signal.SIGTERM, None)
+            handler(signal.SIGTERM, None)
+            handler(signal.SIGTERM, None)
+
+        signal_msgs = [r for r in caplog.records if "Received signal" in r.message]
+        assert len(signal_msgs) == 1
+        assert not coord._running
+
+
 class TestCleanupAllWorktreesTimeout:
     def test_cleanup_completes_normally(self, parallel_config):
         """Normal cleanup finishes within the timeout."""

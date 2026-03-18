@@ -55,7 +55,7 @@ class TestExportPrd(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             prd = {"version": "1.0", "tasks": [{"id": "t1", "description": "Fix"}]}
             output = str(Path(tmpdir) / "prd.yaml")
-            export_prd(prd, output, format="yaml")
+            export_prd(prd, output, fmt="yaml")
             content = Path(output).read_text()
             loaded = yaml.safe_load(content)
             self.assertEqual(loaded["version"], "1.0")
@@ -64,7 +64,7 @@ class TestExportPrd(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             prd = {"version": "1.0", "tasks": [{"id": "t1", "description": "Fix"}]}
             output = str(Path(tmpdir) / "prd.json")
-            export_prd(prd, output, format="json")
+            export_prd(prd, output, fmt="json")
             content = Path(output).read_text()
             loaded = json.loads(content)
             self.assertEqual(loaded["version"], "1.0")
