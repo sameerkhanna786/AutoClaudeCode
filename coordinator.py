@@ -363,7 +363,25 @@ class ParallelCoordinator:
                         )
                 else:
                     logger.warning(
-                        "Worker %d: rebase failed on attempt %d/%d",
+                        "Worker %d: rebase failed on attempt %d/%d, trying merge fallback",
+                        worker.worker_id, attempt + 1, max_retries + 1,
+                    )
+                    # Fallback: try a regular merge when rebase fails
+                    try:
+                        self.git.checkout(original_branch)
+                    except Exception as e:
+                        logger.error("Failed to checkout %s for merge fallback: %s", original_branch, e)
+                        continue
+                    if self.git.merge_branch(worker.branch_name):
+                        logger.info(
+                            "Worker %d: merge fallback succeeded for branch %s into %s",
+                            worker.worker_id, worker.branch_name, original_branch,
+                        )
+                        return True
+                    # Merge fallback also had conflicts
+                    self.git.abort_merge()
+                    logger.warning(
+                        "Worker %d: merge fallback also failed on attempt %d/%d",
                         worker.worker_id, attempt + 1, max_retries + 1,
                     )
 

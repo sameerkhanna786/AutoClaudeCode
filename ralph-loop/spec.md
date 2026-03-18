@@ -24,7 +24,7 @@
 
 11. DONE: Add test coverage for `conflict_resolver.py` by creating `tests/test_conflict_resolver.py` with tests for: successful resolution, failed resolution, timeout handling, and empty conflict list. Mock the Claude CLI calls.
 
-12. PENDING: In `coordinator.py:_merge_worker_branch()`, after a failed rebase (line 365), the method doesn't attempt the merge strategy as a fallback. Add fallback logic: if rebase fails and strategy is "rebase", try a regular merge before giving up.
+12. DONE: In `coordinator.py:_merge_worker_branch()`, after a failed rebase (line 365), the method doesn't attempt the merge strategy as a fallback. Add fallback logic: if rebase fails and strategy is "rebase", try a regular merge before giving up.
 
 13. PENDING: Add tests for the circuit breaker exponential backoff in `claude_runner.py`. Create test cases in `tests/test_claude_runner.py` that verify: (a) recovery timeout doubles after each re-open, (b) timeout is capped at max_recovery_timeout, (c) jitter is applied within the expected range, (d) successful call resets backoff.
 
@@ -95,3 +95,5 @@
 10. DONE: In `shared.py:build_task_prompt()`, add a section that lists the 3-5 most relevant files for the task by extracting file references from the task description and context using `_FILE_REF_RE`. Format as "RELEVANT FILES:\n- path/to/file.py\n" so Claude knows where to look first.
 
 11. DONE: Add test coverage for `conflict_resolver.py` by creating `tests/test_conflict_resolver.py` with tests for: successful resolution, failed resolution, timeout handling, and empty conflict list. Mock the Claude CLI calls.
+
+12. DONE: In `coordinator.py:_merge_worker_branch()`, after a failed rebase (line 365), the method doesn't attempt the merge strategy as a fallback. Add fallback logic: if rebase fails and strategy is "rebase", try a regular merge before giving up.
