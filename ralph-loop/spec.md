@@ -54,7 +54,7 @@
 
 26. DONE: Add an `--analyze` CLI flag to `main.py`... wait, main.py is protected. Instead, create a standalone `analyze.py` script that runs `TaskDiscovery.discover_all()` and prints a formatted report of all discovered tasks grouped by source type, with counts and priorities. This helps users understand what the system would work on.
 
-27. PENDING: In `claude_runner.py:ClaudeRunner.run()`, the rate limit detection (line 446) only checks for "rate limit", "429", and "too many requests" in stderr. Add detection for "quota exceeded", "capacity", and "overloaded" which are also common API error patterns. Update `_CB_ERROR_PATTERNS` accordingly.
+27. DONE: In `claude_runner.py:ClaudeRunner.run()`, the rate limit detection only checked for "rate limit", "429", and "too many requests" in stderr. Added "quota exceeded" and "capacity" to `_CB_ERROR_PATTERNS` ("overloaded" was already present). Updated the retry-loop rate limit detection to also trigger rate-limit-style backoff for "quota exceeded", "capacity", and "overloaded" patterns.
 
 28. PENDING: Add a `_discover_test_coverage_gaps()` method to `task_discovery.py` that doesn't require pytest-cov. Instead, scan for Python source files that have no corresponding `test_*.py` file in the tests directory. Create `coverage` tasks with priority 4 for untested modules. This is cheaper than running pytest-cov.
 
@@ -125,3 +125,5 @@
 25. DONE: In `worker.py`, the retry flow already passes full validation output (not just `validation.summary`). The `_format_validation_errors()` method (lines 507-520) extracts the full output from each failed validation step including command, exit code, and actual pytest traceback/lint errors, capped at 8000 chars per step. This was already implemented as part of task 1's changes to the worker retry flow.
 
 26. DONE: Created standalone `analyze.py` script that runs `TaskDiscovery.discover_all()` and prints a formatted report of all discovered tasks grouped by source type, with counts and priorities. Supports `--config` for custom config and `--verbose` for detailed context output.
+
+27. DONE: In `claude_runner.py:ClaudeRunner.run()`, the rate limit detection only checked for "rate limit", "429", and "too many requests" in stderr. Added "quota exceeded" and "capacity" to `_CB_ERROR_PATTERNS` ("overloaded" was already present). Updated the retry-loop rate limit detection to also trigger rate-limit-style backoff for "quota exceeded", "capacity", and "overloaded" patterns.
