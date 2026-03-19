@@ -375,12 +375,10 @@ class SafetyGuard:
         """Ensure number of changed files is within limit."""
         limit = self.config.orchestrator.max_changed_files
         if limit <= 0:
-            if limit == 0:
-                raise SafetyError(
-                    "max_changed_files is zero; no files can be changed"
-                )
             raise SafetyError(
-                f"max_changed_files must be positive (got {limit})"
+                "max_changed_files is zero; no files can be changed"
+                if limit == 0
+                else f"max_changed_files must be positive (got {limit})"
             )
         count = len(changed_files)
         if count > limit:

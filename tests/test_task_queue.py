@@ -448,6 +448,23 @@ class TestSanitizeFilenameCollisions(unittest.TestCase):
         name = _sanitize_filename(long_key)
         self.assertLessEqual(len(name), 120)
 
+    def test_long_key_preserves_hash_suffix(self):
+        """Truncated filenames must preserve the hash suffix to prevent collisions."""
+        long_key = "a" * 200
+        name = _sanitize_filename(long_key)
+        # The name should end with _<8-char-hex>
+        self.assertRegex(name, r'_[0-9a-f]{8}$')
+
+    def test_two_long_keys_different_hashes(self):
+        """Two different long keys that truncate identically must have different hashes."""
+        key1 = "a" * 200
+        key2 = "a" * 200 + "b"
+        name1 = _sanitize_filename(key1)
+        name2 = _sanitize_filename(key2)
+        self.assertNotEqual(name1, name2)
+        self.assertLessEqual(len(name1), 120)
+        self.assertLessEqual(len(name2), 120)
+
 
 if __name__ == "__main__":
     unittest.main()

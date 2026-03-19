@@ -212,6 +212,17 @@ class TestNaturalLanguageSummarizerFailure(unittest.TestCase):
         self.assertIn("some work", result)
         self.assertIn("encountered issues", result)
 
+    def test_single_task_failure_default_template_grammar(self):
+        """Default failure template should read naturally with desc at the end."""
+        summarizer = NaturalLanguageSummarizer()
+        tasks = [{"source": "new_source", "description": "fix the widget"}]
+        result = summarizer.summarize(tasks, success=False)
+        # Description should come after "issues:" not in the middle of the sentence
+        self.assertTrue(
+            result.endswith("fix the widget"),
+            f"Expected description at end, got: {result}",
+        )
+
 
 class TestNotifyDedupWithHashedKey(unittest.TestCase):
     """Tests that rate-limiting dedup uses hashed keys (not raw details)."""

@@ -131,7 +131,13 @@ class FeedbackManager:
                 dir=str(dst.parent), suffix=".tmp"
             )
             try:
-                content = src.read_text(encoding='utf-8', errors='replace')
+                # Read source content first — if this fails, we must
+                # close tmp_fd to avoid leaking the file descriptor.
+                try:
+                    content = src.read_text(encoding='utf-8', errors='replace')
+                except Exception:
+                    os.close(tmp_fd)
+                    raise
                 try:
                     f = os.fdopen(tmp_fd, "w")
                 except Exception:
@@ -338,8 +344,13 @@ class FeedbackManager:
             dst = directory / f"{stem}_{counter}{suffix}"
             counter += 1
         if dst.exists():
+            # All numbered slots exhausted — use a timestamp suffix to
+            # guarantee uniqueness and prevent silent file overwrites.
+            ts = int(time.time() * 1000)
+            dst = directory / f"{stem}_{ts}{suffix}"
             logger.warning(
-                "All 1000 filename slots exhausted for %s in %s", name, directory,
+                "All 1000 filename slots exhausted for %s in %s, using timestamp suffix",
+                name, directory,
             )
         return dst
 

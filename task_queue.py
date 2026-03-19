@@ -38,14 +38,17 @@ def _sanitize_filename(key: str) -> str:
 
     Appends a short hash suffix to prevent collisions when distinct keys
     differ only in characters replaced by '_' (e.g. "fix: foo" vs "fix; foo").
+    The hash suffix is always preserved even when truncating long names.
     """
     safe = _SAFE_FILENAME_RE.sub('_', key)
     # Append 8-char hash to distinguish keys that sanitize identically
     key_hash = hashlib.md5(key.encode()).hexdigest()[:8]
-    safe = f"{safe}_{key_hash}"
-    if len(safe) > MAX_FILENAME_LENGTH:
-        safe = safe[:MAX_FILENAME_LENGTH]
-    return safe
+    hash_suffix = f"_{key_hash}"
+    # Truncate the safe prefix to ensure the hash suffix is always preserved
+    max_prefix_len = MAX_FILENAME_LENGTH - len(hash_suffix)
+    if len(safe) > max_prefix_len:
+        safe = safe[:max_prefix_len]
+    return f"{safe}{hash_suffix}"
 
 
 class TaskApprovalQueue:

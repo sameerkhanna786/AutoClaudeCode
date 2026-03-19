@@ -62,7 +62,7 @@ class NaturalLanguageSummarizer:
                 template = self._TEMPLATES.get(source, "I worked on: {desc}")
             else:
                 template = self._FAILURE_TEMPLATES.get(
-                    source, "I worked on {desc} but encountered issues",
+                    source, "I worked on a task but encountered issues: {desc}",
                 )
             return template.format(desc=desc)
 

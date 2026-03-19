@@ -116,6 +116,16 @@ class TestSafetyGuard:
         with pytest.raises(SafetyError, match="Too many files"):
             guard.check_file_count(["a.py", "b.py", "c.py"])
 
+    def test_check_file_count_zero_raises(self, guard):
+        guard.config.orchestrator.max_changed_files = 0
+        with pytest.raises(SafetyError, match="zero"):
+            guard.check_file_count(["a.py"])
+
+    def test_check_file_count_negative_raises(self, guard):
+        guard.config.orchestrator.max_changed_files = -1
+        with pytest.raises(SafetyError, match="positive"):
+            guard.check_file_count(["a.py"])
+
     def test_pre_flight_checks(self, guard):
         guard.pre_flight_checks()  # Should not raise with defaults
 

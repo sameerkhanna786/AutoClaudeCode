@@ -489,3 +489,17 @@ class TestUniqueDst:
         (fb_mgr.done_dir / "task_2.txt").write_text("existing")
         dst = fb_mgr._unique_dst(fb_mgr.done_dir, "task.txt")
         assert dst == fb_mgr.done_dir / "task_3.txt"
+
+    def test_all_slots_exhausted_uses_timestamp(self, fb_mgr):
+        """When all 1000 numbered slots are exhausted, uses timestamp suffix."""
+        done_dir = fb_mgr.done_dir
+        # Create the base file and all 999 numbered variants
+        (done_dir / "task.txt").write_text("existing")
+        for i in range(1, 1000):
+            (done_dir / f"task_{i}.txt").write_text("existing")
+        dst = fb_mgr._unique_dst(done_dir, "task.txt")
+        # Should NOT be an existing file (no silent overwrite)
+        assert not dst.exists()
+        # Should contain a timestamp-like number (>= 1000)
+        assert "task_" in dst.name
+        assert dst.suffix == ".txt"
