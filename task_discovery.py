@@ -176,13 +176,16 @@ class Task:
                 return f"todo:{self.source_file}:{self.line_number}"
             return f"todo:{self.source_file}"
 
-        if self.source in ("lint", "test_failure", "quality", "coverage") and self.source_file:
-            return f"{self.source}:{self.source_file}"
-
         if self.source == "coverage":
+            # Try module-specific key first (from description), then fall back to file
             match = re.search(r'for\s+(\S+)', self.description)
             if match:
                 return f"coverage:{match.group(1)}"
+            if self.source_file:
+                return f"coverage:{self.source_file}"
+
+        if self.source in ("lint", "test_failure", "quality") and self.source_file:
+            return f"{self.source}:{self.source_file}"
 
         if self.source == "claude_idea":
             match = _FILE_REF_RE.search(self.description)
@@ -257,22 +260,8 @@ class TaskDiscovery:
         # Group related tasks to avoid duplicate work
         tasks = self._group_related_tasks(tasks)
 
-        # Boost priority for historically high-success-rate sources
-        if self.state_manager and dc.adaptive_priority and tasks:
-            try:
-                performance = self.state_manager.get_strategy_performance(lookback_seconds=86400)
-                if performance:
-                    for task in tasks:
-                        perf = performance.get(task.source)
-                        if perf and perf.get("total", 0) >= 2:
-                            success_rate = perf.get("success_rate", 0.0)
-                            if success_rate > 0.5:
-                                # Higher success rate -> lower priority number (higher priority)
-                                # e.g., 90% success -> priority reduced by 2
-                                boost = int(success_rate * 3)  # 0-3 boost
-                                task.priority = max(1, task.priority - boost)
-            except Exception as e:
-                logger.debug("Strategy performance boosting failed: %s", e)
+        # NOTE: Adaptive priority boosting is applied in shared.gather_tasks()
+        # to avoid double-boosting. Do NOT apply it here as well.
 
         # Sort by priority (lower number = higher priority)
         tasks.sort(key=lambda t: t.priority)

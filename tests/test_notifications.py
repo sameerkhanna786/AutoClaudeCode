@@ -262,5 +262,29 @@ class TestNotifyDedupWithHashedKey(unittest.TestCase):
             self.assertLess(len(key), 100)
 
 
+class TestPeriodicSummaryEvent(unittest.TestCase):
+
+    @patch("notifications.urllib.request.urlopen")
+    def test_periodic_summary_respects_config(self, mock_urlopen):
+        """periodic_summary should be filterable via on_periodic_summary config."""
+        events = NotificationEventsConfig(on_periodic_summary=False)
+        config = _make_config(events=events)
+        mgr = NotificationManager(config)
+        mgr.notify("periodic_summary", {"summary": "test"})
+        mock_urlopen.assert_not_called()
+
+    @patch("notifications.urllib.request.urlopen")
+    def test_periodic_summary_enabled_sends(self, mock_urlopen):
+        """periodic_summary sends notification when enabled."""
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+        events = NotificationEventsConfig(on_periodic_summary=True)
+        config = _make_config(events=events)
+        mgr = NotificationManager(config)
+        mgr.notify("periodic_summary", {"summary": "test"})
+        time.sleep(0.2)
+        mock_urlopen.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

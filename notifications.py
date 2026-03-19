@@ -23,6 +23,7 @@ _EVENT_FIELD_MAP = {
     "consecutive_failure_threshold": "on_consecutive_failure_threshold",
     "cost_limit_exceeded": "on_cost_limit_exceeded",
     "safety_error": "on_safety_error",
+    "periodic_summary": "on_periodic_summary",
 }
 
 

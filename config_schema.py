@@ -196,6 +196,7 @@ class NotificationEventsConfig:
     on_consecutive_failure_threshold: bool = True
     on_cost_limit_exceeded: bool = True
     on_safety_error: bool = True
+    on_periodic_summary: bool = True
     summary_interval_cycles: int = 0  # Send periodic summary every N cycles; 0 = disabled
 
 

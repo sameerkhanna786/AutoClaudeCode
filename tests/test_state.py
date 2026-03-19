@@ -1252,3 +1252,32 @@ class TestFilePatternRegex:
         files = state_mgr.get_productive_files()
         assert "main.py" in files
         assert "config.yaml" in files
+
+    def test_transient_io_error_preserves_cached_history(self, state_mgr):
+        """A transient OSError in _load_history should return cached data, not empty list."""
+        import time
+        from state import CycleRecord
+        # Write some history
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=time.time(),
+                task_description=f"Task {i}",
+                success=True,
+            ))
+        # Verify we have 3 records cached
+        assert len(state_mgr._load_history()) == 3
+
+        # Now simulate a transient IO error during _load_history
+        original_stat = Path.stat
+        call_count = 0
+        def failing_stat(self_path, *a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if str(self_path).endswith("history.json") and call_count > 6:
+                raise OSError("Transient NFS error")
+            return original_stat(self_path, *a, **kw)
+
+        with patch.object(Path, "stat", failing_stat):
+            result = state_mgr._load_history()
+        # Should return the cached 3 records, not an empty list
+        assert len(result) == 3

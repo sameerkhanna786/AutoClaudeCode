@@ -14,7 +14,6 @@ from config_schema import Config
 from cycle_state import CycleState, CycleStateWriter
 from git_manager import GitManager
 from safety import SafetyError, SafetyGuard
-from state import CycleRecord
 from state_lock import LockedStateManager
 from task_discovery import Task
 from validator import Validator

@@ -466,3 +466,26 @@ class TestGetPendingFeedbackSymlinkSecurity:
         # The symlink should be skipped - no task with "sensitive data"
         for t in tasks:
             assert "sensitive data" not in t.description
+
+
+class TestUniqueDst:
+    """Test the _unique_dst helper for collision avoidance."""
+
+    def test_no_collision(self, fb_mgr):
+        """When no file exists, returns the original name."""
+        dst = fb_mgr._unique_dst(fb_mgr.done_dir, "task.txt")
+        assert dst == fb_mgr.done_dir / "task.txt"
+
+    def test_collision_increments(self, fb_mgr):
+        """When file exists, appends _1, _2, etc."""
+        (fb_mgr.done_dir / "task.txt").write_text("existing")
+        dst = fb_mgr._unique_dst(fb_mgr.done_dir, "task.txt")
+        assert dst == fb_mgr.done_dir / "task_1.txt"
+
+    def test_multiple_collisions(self, fb_mgr):
+        """Skips over multiple existing files."""
+        (fb_mgr.done_dir / "task.txt").write_text("existing")
+        (fb_mgr.done_dir / "task_1.txt").write_text("existing")
+        (fb_mgr.done_dir / "task_2.txt").write_text("existing")
+        dst = fb_mgr._unique_dst(fb_mgr.done_dir, "task.txt")
+        assert dst == fb_mgr.done_dir / "task_3.txt"

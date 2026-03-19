@@ -326,6 +326,23 @@ class FeedbackManager:
         except (OSError, ValueError):
             return False
 
+    def _unique_dst(self, directory: Path, name: str) -> Path:
+        """Generate a unique destination path, avoiding overwrites."""
+        dst = directory / name
+        if not dst.exists():
+            return dst
+        stem = dst.stem
+        suffix = dst.suffix
+        counter = 1
+        while dst.exists() and counter < 1000:
+            dst = directory / f"{stem}_{counter}{suffix}"
+            counter += 1
+        if dst.exists():
+            logger.warning(
+                "All 1000 filename slots exhausted for %s in %s", name, directory,
+            )
+        return dst
+
     def mark_done(self, source_file: str) -> None:
         """Move a processed feedback file to the done/ directory."""
         src = Path(source_file)
@@ -336,15 +353,7 @@ class FeedbackManager:
             logger.warning("Rejecting mark_done for path outside feedback dir: %s", src)
             return
 
-        dst = self.done_dir / src.name
-        # Avoid overwriting existing done files
-        if dst.exists():
-            stem = dst.stem
-            suffix = dst.suffix
-            counter = 1
-            while dst.exists() and counter < 1000:
-                dst = self.done_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
+        dst = self._unique_dst(self.done_dir, src.name)
 
         try:
             self._atomic_move(src, dst)
@@ -363,15 +372,7 @@ class FeedbackManager:
             logger.warning("Rejecting mark_failed for path outside feedback dir: %s", src)
             return
 
-        dst = self.failed_dir / src.name
-        # Avoid overwriting existing failed files
-        if dst.exists():
-            stem = dst.stem
-            suffix = dst.suffix
-            counter = 1
-            while dst.exists() and counter < 1000:
-                dst = self.failed_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
+        dst = self._unique_dst(self.failed_dir, src.name)
 
         try:
             self._atomic_move(src, dst)
@@ -420,14 +421,7 @@ class FeedbackManager:
             logger.warning("Rejecting mark_done_claimed for path outside feedback dir: %s", claimed)
             return
         # Move the claimed file to done with the original name
-        dst = self.done_dir / src.name
-        if dst.exists():
-            stem = dst.stem
-            suffix = dst.suffix
-            counter = 1
-            while dst.exists() and counter < 1000:
-                dst = self.done_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
+        dst = self._unique_dst(self.done_dir, src.name)
         try:
             self._atomic_move(claimed, dst)
         except OSError as e:
@@ -447,14 +441,7 @@ class FeedbackManager:
         if not self._is_within_feedback_dir(claimed):
             logger.warning("Rejecting mark_failed_claimed for path outside feedback dir: %s", claimed)
             return
-        dst = self.failed_dir / src.name
-        if dst.exists():
-            stem = dst.stem
-            suffix = dst.suffix
-            counter = 1
-            while dst.exists() and counter < 1000:
-                dst = self.failed_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
+        dst = self._unique_dst(self.failed_dir, src.name)
         try:
             self._atomic_move(claimed, dst)
         except OSError as e:

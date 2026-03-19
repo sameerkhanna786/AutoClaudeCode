@@ -18,6 +18,12 @@ from process_utils import kill_process_group
 
 logger = logging.getLogger(__name__)
 
+
+class _ProcResult:
+    """Lightweight CompletedProcess-like object for downstream code."""
+    pass
+
+
 # Circuit breaker defaults
 CB_FAILURE_THRESHOLD = 5  # consecutive failures before opening
 CB_RECOVERY_TIMEOUT = 300  # seconds to wait before half-open
@@ -416,9 +422,6 @@ class ClaudeRunner:
                     with self._process_lock:
                         self._current_process = None
 
-                # Build a CompletedProcess-like namespace for downstream code
-                class _ProcResult:
-                    pass
                 proc = _ProcResult()
                 proc.returncode = popen_proc.returncode
                 proc.stdout = stdout

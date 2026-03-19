@@ -234,14 +234,22 @@ class AgentPipeline:
         for f in data.get("findings", []):
             if not isinstance(f, dict):
                 continue
+            try:
+                line_number = int(f.get("line_number", 0))
+            except (ValueError, TypeError):
+                line_number = 0
+            try:
+                confidence = float(f.get("confidence", 0.8))
+            except (ValueError, TypeError):
+                confidence = 0.8
             findings.append(ReviewFinding(
                 filepath=str(f.get("filepath", "")),
-                line_number=int(f.get("line_number", 0)),
+                line_number=line_number,
                 severity=str(f.get("severity", "warning")).lower(),
                 category=str(f.get("category", "")),
                 description=str(f.get("description", "")),
                 suggestion=str(f.get("suggestion", "")),
-                confidence=float(f.get("confidence", 0.8)),
+                confidence=confidence,
             ))
 
         # Parse verdict from the JSON or fall back to text

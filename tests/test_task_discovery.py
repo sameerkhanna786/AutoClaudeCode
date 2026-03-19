@@ -884,3 +884,35 @@ class TestReadFileSnippetPreloaded:
             str(fpath), 2, context_lines=1, preloaded_content=content,
         )
         assert from_disk == from_mem
+
+
+class TestCoverageTaskKeyDedup:
+    """Coverage tasks for different modules in same file get unique keys."""
+
+    def test_coverage_tasks_different_modules_same_file(self):
+        t1 = Task(
+            description="Improve coverage for module_a",
+            source="coverage",
+            priority=5,
+            source_file="src/utils.py",
+        )
+        t2 = Task(
+            description="Improve coverage for module_b",
+            source="coverage",
+            priority=5,
+            source_file="src/utils.py",
+        )
+        # They should have different task_keys since the module names differ
+        assert t1.task_key != t2.task_key
+        assert "module_a" in t1.task_key
+        assert "module_b" in t2.task_key
+
+    def test_coverage_task_key_falls_back_to_file(self):
+        t = Task(
+            description="Add test coverage",
+            source="coverage",
+            priority=5,
+            source_file="src/utils.py",
+        )
+        # No "for <module>" pattern, should fall back to source_file
+        assert t.task_key == "coverage:src/utils.py"

@@ -140,6 +140,11 @@ class StateManager:
             return self._cache
         except OSError as e:
             logger.warning("Failed to read history: %s", e)
+            # Return stale cache if available, otherwise empty list.
+            # Never return [] when we have cached data — that would cause
+            # record_cycle to overwrite the history file with a single entry.
+            if self._cache is not None:
+                return self._cache
             return []
 
     def _save_history(self, records: List[Dict[str, Any]]) -> None:

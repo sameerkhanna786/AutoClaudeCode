@@ -638,6 +638,31 @@ VERDICT: APPROVED
         assert report is not None
         assert report.approved is True
 
+    def test_malformed_line_number_and_confidence(self):
+        """Non-numeric line_number/confidence from LLM should not crash."""
+        review_text = '''```json
+{
+  "approved": false,
+  "summary": "Issues",
+  "findings": [
+    {
+      "filepath": "foo.py",
+      "line_number": "N/A",
+      "severity": "error",
+      "category": "bug",
+      "description": "Something wrong",
+      "suggestion": "Fix it",
+      "confidence": "high"
+    }
+  ]
+}
+```'''
+        report = self.pipeline._parse_structured_review(review_text)
+        assert report is not None
+        assert len(report.findings) == 1
+        assert report.findings[0].line_number == 0
+        assert report.findings[0].confidence == 0.8
+
 
 class TestFilterFindings:
     """Test confidence-based filtering and deduplication."""
