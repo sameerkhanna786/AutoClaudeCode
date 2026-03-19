@@ -193,6 +193,40 @@ class TestReentrantLock:
         assert order[0][0] == order[1][0]  # Same thread ID
 
 
+class TestGetTaskFailureCountLookbackSeconds:
+    """Tests that get_task_failure_count correctly passes lookback_seconds to parent."""
+
+    def test_lookback_seconds_default(self, locked_state):
+        """get_task_failure_count should accept lookback_seconds parameter."""
+        record = CycleRecord(
+            timestamp=time.time(),
+            task_description="Failing task",
+            task_type="lint",
+            success=False,
+        )
+        locked_state.record_cycle(record)
+        count = locked_state.get_task_failure_count("Failing task", lookback_seconds=86400)
+        assert count == 1
+
+    def test_lookback_seconds_short_window_excludes_old(self, locked_state):
+        """Old failures should be excluded with a short lookback window."""
+        old_record = CycleRecord(
+            timestamp=time.time() - 7200,  # 2 hours ago
+            task_description="Old failure",
+            task_type="lint",
+            success=False,
+        )
+        locked_state.record_cycle(old_record)
+        count = locked_state.get_task_failure_count("Old failure", lookback_seconds=3600)
+        assert count == 0
+
+    def test_lookback_seconds_keyword_arg_does_not_raise(self, locked_state):
+        """Passing lookback_seconds as keyword arg should not raise TypeError."""
+        locked_state.get_task_failure_count(
+            "task", task_type="lint", task_key="k", lookback_seconds=1800
+        )
+
+
 class TestMissingLockedWrappers:
     """Tests for methods that were missing locked wrappers."""
 

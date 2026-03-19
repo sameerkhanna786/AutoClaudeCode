@@ -160,7 +160,13 @@ class ConflictResolver:
         # Try to find a fenced code block (``` ... ```)
         match = _CODE_BLOCK_RE.search(response_text)
         if match:
-            return match.group(1)
+            content = match.group(1)
+            # Strip leading/trailing newlines from code fence content
+            if content.startswith('\n'):
+                content = content[1:]
+            if content.endswith('\n'):
+                content = content[:-1]
+            return content
 
         # No code block found — return the raw text
         return response_text.strip()

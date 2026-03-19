@@ -59,15 +59,23 @@ def run_with_group_kill(
 
     Returns a RunResult with stdout, stderr, returncode, and a timed_out flag.
     """
-    proc = subprocess.Popen(
-        command,
-        shell=shell,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=text,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            command,
+            shell=shell,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=text,
+            start_new_session=True,
+        )
+    except (FileNotFoundError, OSError) as e:
+        return RunResult(
+            returncode=-1,
+            stdout="",
+            stderr=f"Failed to start process: {e}",
+            timed_out=False,
+        )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
         return RunResult(

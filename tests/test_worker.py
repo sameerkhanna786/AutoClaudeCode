@@ -421,3 +421,37 @@ class TestPlanRunnerExposedForTermination:
         assert idx_restore > idx_plan, (
             "Execution runner must be restored after plan_runner completes"
         )
+
+
+class TestWorkerCleanupIsolation:
+    """Tests that cleanup() isolates failures between operations."""
+
+    def test_cleanup_continues_after_remove_worktree_failure(self, worker_config, tmp_git_repo):
+        """If remove_worktree fails, delete_branch and prune should still run."""
+        state = MagicMock(spec=LockedStateManager)
+        tasks = [Task(description="test", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+
+        mock_git = MagicMock()
+        mock_git.remove_worktree.side_effect = Exception("worktree removal failed")
+
+        with patch("worker.GitManager", return_value=mock_git):
+            worker.cleanup()
+
+        mock_git.delete_branch.assert_called_once()
+        mock_git.prune_worktrees.assert_called_once()
+
+    def test_cleanup_continues_after_delete_branch_failure(self, worker_config, tmp_git_repo):
+        """If delete_branch fails, prune should still run."""
+        state = MagicMock(spec=LockedStateManager)
+        tasks = [Task(description="test", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+
+        mock_git = MagicMock()
+        mock_git.delete_branch.side_effect = Exception("branch deletion failed")
+
+        with patch("worker.GitManager", return_value=mock_git):
+            worker.cleanup()
+
+        mock_git.remove_worktree.assert_called_once()
+        mock_git.prune_worktrees.assert_called_once()

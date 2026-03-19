@@ -122,7 +122,10 @@ class ParallelCoordinator:
                         except Exception:
                             shutil.rmtree(wt_path, ignore_errors=True)
                     if branch:
-                        self.git.delete_branch(branch, force=True)
+                        try:
+                            self.git.delete_branch(branch, force=True)
+                        except Exception as e:
+                            logger.warning("Failed to delete orphaned branch %s: %s", branch, e)
                 self.git.prune_worktrees()
 
         # Check for graceful degradation

@@ -25,7 +25,7 @@ def _is_private_ip(hostname: str) -> bool:
     try:
         addr_infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
     except (socket.gaierror, OSError):
-        return False
+        return True  # Block on DNS failure to prevent SSRF via unresolvable hosts
     for family, _type, _proto, _canonname, sockaddr in addr_infos:
         ip_str = sockaddr[0]
         try:

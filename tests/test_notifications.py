@@ -473,11 +473,19 @@ class TestIsPrivateIpFunction(unittest.TestCase):
         self.assertFalse(_is_private_ip("dns.google"))
 
     @patch("notifications.socket.getaddrinfo")
-    def test_dns_failure_returns_false(self, mock_getaddrinfo):
+    def test_dns_failure_returns_true(self, mock_getaddrinfo):
+        """DNS failure should block the request to prevent SSRF via unresolvable hosts."""
         from notifications import _is_private_ip
         import socket
         mock_getaddrinfo.side_effect = socket.gaierror("DNS lookup failed")
-        self.assertFalse(_is_private_ip("nonexistent.local"))
+        self.assertTrue(_is_private_ip("nonexistent.local"))
+
+    @patch("notifications.socket.getaddrinfo")
+    def test_os_error_returns_true(self, mock_getaddrinfo):
+        """OSError during DNS should also block to prevent SSRF."""
+        from notifications import _is_private_ip
+        mock_getaddrinfo.side_effect = OSError("Network unreachable")
+        self.assertTrue(_is_private_ip("unreachable.host"))
 
 
 class TestHttpWebhookWarning(unittest.TestCase):

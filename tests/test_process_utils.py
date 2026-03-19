@@ -117,6 +117,24 @@ class TestRunWithGroupKillBaseException(unittest.TestCase):
         mock_kill.assert_called_once_with(mock_proc)
 
 
+class TestPopenFailure(unittest.TestCase):
+    """Tests that Popen failures (FileNotFoundError, OSError) are handled gracefully."""
+
+    def test_command_not_found_returns_runresult(self):
+        """FileNotFoundError from Popen should return RunResult, not raise."""
+        result = run_with_group_kill(["nonexistent_command_xyz_12345"])
+        self.assertEqual(result.returncode, -1)
+        self.assertFalse(result.timed_out)
+        self.assertIn("Failed to start process", result.stderr)
+
+    def test_bad_cwd_returns_runresult(self):
+        """OSError from invalid cwd should return RunResult, not raise."""
+        result = run_with_group_kill(["echo", "hello"], cwd="/nonexistent/path/xyz")
+        self.assertEqual(result.returncode, -1)
+        self.assertFalse(result.timed_out)
+        self.assertIn("Failed to start process", result.stderr)
+
+
 class TestKillProcessGroup(unittest.TestCase):
 
     def test_already_dead_process(self):

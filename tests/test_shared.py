@@ -853,7 +853,8 @@ class TestWebhookUrlSchemeValidation(unittest.TestCase):
             events=NotificationEventsConfig(),
         )
         mgr = NotificationManager(config)
-        with patch("notifications.urllib.request.urlopen") as mock_urlopen:
+        with patch("notifications._is_private_ip", return_value=False), \
+             patch("notifications.urllib.request.urlopen") as mock_urlopen:
             mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
             mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
             mgr._send_webhook(config.webhooks[0], "test_event", {"msg": "hi"})

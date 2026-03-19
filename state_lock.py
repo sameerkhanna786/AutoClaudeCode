@@ -82,9 +82,10 @@ class LockedStateManager(StateManager):
         with self._file_lock():
             return super().get_consecutive_failures()
 
-    def get_task_failure_count(self, task_description: str, task_type: str = "", task_key: str = "") -> int:
+    def get_task_failure_count(self, task_description: str, task_type: str = "",
+                              task_key: str = "", lookback_seconds: int = 86400) -> int:
         with self._file_lock():
-            return super().get_task_failure_count(task_description, task_type, task_key)
+            return super().get_task_failure_count(task_description, task_type, task_key, lookback_seconds)
 
     def compute_adaptive_batch_size(self) -> int:
         with self._file_lock():

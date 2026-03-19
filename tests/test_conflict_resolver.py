@@ -54,7 +54,7 @@ class TestExtractResolvedContent:
     def test_extracts_from_code_block(self):
         response = "Here is the resolved file:\n```python\nresolved line\n```\nDone."
         result = ConflictResolver._extract_resolved_content(response)
-        assert result == "resolved line\n"
+        assert result == "resolved line"
 
     def test_returns_raw_text_without_code_block(self):
         response = "resolved content here"
@@ -71,7 +71,21 @@ class TestExtractResolvedContent:
     def test_extracts_first_code_block_when_multiple(self):
         response = "```\nfirst\n```\ntext\n```\nsecond\n```"
         result = ConflictResolver._extract_resolved_content(response)
-        assert result == "first\n"
+        assert result == "first"
+
+    def test_code_block_strips_surrounding_newlines(self):
+        """Code block content should not have spurious leading/trailing newlines."""
+        response = "```python\ndef hello():\n    pass\n```"
+        result = ConflictResolver._extract_resolved_content(response)
+        assert result == "def hello():\n    pass"
+        assert not result.startswith("\n")
+        assert not result.endswith("\n")
+
+    def test_code_block_preserves_internal_newlines(self):
+        """Internal newlines in the code block should be preserved."""
+        response = "```\nline1\n\nline3\n```"
+        result = ConflictResolver._extract_resolved_content(response)
+        assert result == "line1\n\nline3"
 
 
 # ---------------------------------------------------------------------------

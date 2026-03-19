@@ -470,13 +470,22 @@ class Worker:
     def cleanup(self) -> None:
         """Remove the worktree and delete the branch."""
         main_git = GitManager(self.main_repo_dir)
-        main_git.remove_worktree(self.worktree_dir, force=True)
-        main_git.delete_branch(self.branch_name, force=True)
+        try:
+            main_git.remove_worktree(self.worktree_dir, force=True)
+        except Exception as e:
+            logger.warning("Worker %d: remove_worktree failed: %s", self.worker_id, e)
+        try:
+            main_git.delete_branch(self.branch_name, force=True)
+        except Exception as e:
+            logger.warning("Worker %d: delete_branch failed: %s", self.worker_id, e)
         # Clean up the directory if it still exists
         wt_path = Path(self.worktree_dir)
         if wt_path.exists():
             shutil.rmtree(str(wt_path), ignore_errors=True)
-        main_git.prune_worktrees()
+        try:
+            main_git.prune_worktrees()
+        except Exception as e:
+            logger.warning("Worker %d: prune_worktrees failed: %s", self.worker_id, e)
         logger.info("Worker %d: cleaned up worktree and branch", self.worker_id)
 
     def _build_prompt(self, tasks: List[Task], is_batch: bool) -> str:
