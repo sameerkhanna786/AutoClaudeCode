@@ -256,6 +256,11 @@ class StateManager:
                     "Disk full: unable to save cycle history. "
                     "Cycle data will be lost. Free disk space to resume normal operation."
                 )
+                # Invalidate cache so next _load_history() re-reads from
+                # disk rather than trusting stale in-memory data that was
+                # never persisted.
+                self._cache = None
+                self._cache_mtime = 0.0
                 return
             raise
         except Exception:

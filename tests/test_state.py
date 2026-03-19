@@ -718,6 +718,20 @@ class TestSaveHistoryENOSPC:
             with pytest.raises(OSError, match="Permission denied"):
                 state_mgr._save_history([{"test": True}])
 
+    def test_save_history_enospc_invalidates_cache(self, state_mgr):
+        """ENOSPC must invalidate the in-memory cache to prevent stale reads."""
+        # Prime the cache with some data
+        state_mgr._cache = [{"old": "data"}]
+        state_mgr._cache_mtime = 12345.0
+
+        enospc_err = OSError(errno.ENOSPC, "No space left on device")
+        with patch("state.os.replace", side_effect=enospc_err):
+            state_mgr._save_history([{"new": "data"}])
+
+        # Cache must be invalidated so next _load_history re-reads from disk
+        assert state_mgr._cache is None
+        assert state_mgr._cache_mtime == 0.0
+
 
 class TestDiskSpacePreCheck:
     def test_low_disk_space_skips_save(self, state_mgr, caplog):
