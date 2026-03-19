@@ -566,6 +566,19 @@ class TestAtomicMoveFileNotFound:
         done_dir = Path(fb_mgr.done_dir)
         src = fb_dir / "gone.md"
         dst = done_dir / "gone.md"
-        # Source doesn't exist — should raise FileNotFoundError (caught by callers)
-        with pytest.raises((FileNotFoundError, OSError)):
-            fb_mgr._atomic_move(src, dst)
+        # Source doesn't exist — should return gracefully (no exception)
+        fb_mgr._atomic_move(src, dst)
+        # Destination should not have been created
+        assert not dst.exists()
+
+    def test_atomic_move_file_deleted_after_existence_check(self, fb_mgr):
+        """Simulate TOCTOU: file exists at check time but gone at read time."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        done_dir = Path(fb_mgr.done_dir)
+        src = fb_dir / "vanishing.md"
+        dst = done_dir / "vanishing.md"
+        # Create file, then delete it before _atomic_move reads it
+        src.write_text("content")
+        src.unlink()
+        # Should not raise — handles FileNotFoundError gracefully
+        fb_mgr._atomic_move(src, dst)

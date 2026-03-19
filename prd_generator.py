@@ -72,6 +72,19 @@ def import_prd(prd_path: str) -> List[Task]:
         logger.warning("PRD file not found: %s", prd_path)
         return []
 
+    MAX_PRD_FILE_SIZE = 1024 * 1024  # 1 MB
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        logger.warning("Cannot stat PRD file: %s", prd_path)
+        return []
+    if file_size > MAX_PRD_FILE_SIZE:
+        logger.warning(
+            "PRD file too large (%d bytes, limit %d): %s",
+            file_size, MAX_PRD_FILE_SIZE, prd_path,
+        )
+        return []
+
     content = path.read_text()
 
     # Try JSON first

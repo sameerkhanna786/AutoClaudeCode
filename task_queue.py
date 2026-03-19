@@ -192,6 +192,17 @@ class TaskApprovalQueue:
                 continue
         return tasks
 
+    @staticmethod
+    def _is_valid_task_id(task_id: str) -> bool:
+        """Validate task_id to prevent path traversal."""
+        if not task_id:
+            return False
+        if ".." in task_id or "/" in task_id or "\\" in task_id:
+            return False
+        if task_id.startswith("."):
+            return False
+        return True
+
     def approve(self, task_id: str) -> bool:
         """Move a task from pending_approval/ to approved/.
 
@@ -200,6 +211,9 @@ class TaskApprovalQueue:
         moved to the approved directory with a single ``os.replace`` call.
         This eliminates the crash window where both files could exist.
         """
+        if not self._is_valid_task_id(task_id):
+            logger.warning("Invalid task_id rejected: %s", task_id)
+            return False
         pending_path = self._pending_dir / f"{task_id}.json"
         approved_path = self._approved_dir / f"{task_id}.json"
 
@@ -254,6 +268,9 @@ class TaskApprovalQueue:
 
     def decline(self, task_id: str) -> bool:
         """Delete a task from pending_approval/ (declined by user)."""
+        if not self._is_valid_task_id(task_id):
+            logger.warning("Invalid task_id rejected: %s", task_id)
+            return False
         pending_path = self._pending_dir / f"{task_id}.json"
         if not pending_path.exists():
             return False

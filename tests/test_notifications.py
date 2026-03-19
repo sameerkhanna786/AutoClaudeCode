@@ -297,5 +297,27 @@ class TestPeriodicSummaryEvent(unittest.TestCase):
         mock_urlopen.assert_called_once()
 
 
+class TestWebhookThreadPool(unittest.TestCase):
+
+    def test_uses_thread_pool_instead_of_raw_threads(self):
+        """NotificationManager should use a bounded ThreadPoolExecutor."""
+        config = _make_config()
+        mgr = NotificationManager(config)
+        from concurrent.futures import ThreadPoolExecutor
+        self.assertIsInstance(mgr._webhook_pool, ThreadPoolExecutor)
+
+    @patch("notifications.urllib.request.urlopen")
+    def test_thread_pool_sends_webhook(self, mock_urlopen):
+        """Webhooks should still be sent via the thread pool."""
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+        events = NotificationEventsConfig(on_cycle_success=True)
+        config = _make_config(events=events)
+        mgr = NotificationManager(config)
+        mgr.notify("cycle_success", {"test": True})
+        time.sleep(0.3)
+        mock_urlopen.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

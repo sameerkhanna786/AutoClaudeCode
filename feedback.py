@@ -108,7 +108,11 @@ class FeedbackManager:
 
         # Read source content once before the retry loop — the content
         # doesn't change between retries, so re-reading is wasted I/O.
-        content = src.read_text(encoding='utf-8', errors='replace')
+        try:
+            content = src.read_text(encoding='utf-8', errors='replace')
+        except FileNotFoundError:
+            logger.debug("Source file %s already moved by another process", src)
+            return
 
         for attempt in range(max_retries):
             # If the source file no longer exists on a retry, another process

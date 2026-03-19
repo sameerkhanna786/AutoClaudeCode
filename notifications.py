@@ -9,6 +9,7 @@ import threading
 import time
 import urllib.request
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from config_schema import WebhookConfig, NotificationEventsConfig, NotificationsConfig
@@ -105,6 +106,9 @@ class NotificationManager:
         self._config = config
         self._recent: Dict[str, float] = {}  # dedup key -> timestamp
         self._lock = threading.Lock()
+        self._webhook_pool = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="webhook",
+        )
 
     def notify(self, event: str, details: Optional[Dict[str, Any]] = None) -> None:
         """Send a notification for the given event to all configured webhooks.
@@ -145,16 +149,12 @@ class NotificationManager:
             cutoff = now - self.RATE_LIMIT_SECONDS * 2
             self._recent = {k: v for k, v in self._recent.items() if v > cutoff}
 
-        # Send to all webhooks in background threads
+        # Send to all webhooks via a bounded thread pool to prevent
+        # unbounded thread creation under rapid notification bursts.
         for webhook in self._config.webhooks:
             if not webhook.url:
                 continue
-            thread = threading.Thread(
-                target=self._send_webhook,
-                args=(webhook, event, details),
-                daemon=True,
-            )
-            thread.start()
+            self._webhook_pool.submit(self._send_webhook, webhook, event, details)
 
     def _send_webhook(
         self, webhook: WebhookConfig, event: str, details: Dict[str, Any],

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from claude_runner import CircuitBreaker, ClaudeResult, ClaudeRunner
+from claude_runner import CircuitBreaker, ClaudeResult, ClaudeRunner, _sanitize_stderr
 from config_schema import Config
 
 
@@ -838,3 +838,38 @@ class TestProcessCleanupOnException:
         # Verify communicate was called and _current_process was set before it
         assert len(call_order) == 1
         assert call_order[0] == ("communicate", True)
+
+
+class TestSanitizeStderr:
+    def test_scrubs_openai_key(self):
+        msg = "Error: invalid key sk-abc123def456ghi789jkl012mno345"
+        result = _sanitize_stderr(msg)
+        assert "sk-abc123def456ghi789jkl012mno345" not in result
+        assert "***" in result
+
+    def test_scrubs_anthropic_key(self):
+        msg = "Auth failed: sk-ant-api03-abcdefghijklmnopqrstuvwxyz"
+        result = _sanitize_stderr(msg)
+        assert "sk-ant-api03" not in result
+        assert "***" in result
+
+    def test_scrubs_bearer_token(self):
+        msg = "Header: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        result = _sanitize_stderr(msg)
+        assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in result
+
+    def test_scrubs_google_key(self):
+        msg = "API key: AIzaSyB1234567890abcdefghijklmnopqrstuv"
+        result = _sanitize_stderr(msg)
+        assert "AIzaSyB1234567890" not in result
+
+    def test_preserves_normal_message(self):
+        msg = "Error: connection refused on port 8080"
+        result = _sanitize_stderr(msg)
+        assert result == msg
+
+    def test_scrubs_multiple_keys(self):
+        msg = "key1=sk-abc123def456ghi789jkl012mno345 key2=sk-ant-xyz123abc456def789ghi012"
+        result = _sanitize_stderr(msg)
+        assert "sk-abc123" not in result
+        assert "sk-ant-xyz123" not in result

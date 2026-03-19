@@ -466,5 +466,46 @@ class TestSanitizeFilenameCollisions(unittest.TestCase):
         self.assertLessEqual(len(name2), 120)
 
 
+class TestPathTraversalValidation(unittest.TestCase):
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.queue = TaskApprovalQueue(self.tmpdir)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_approve_rejects_dotdot(self):
+        self.assertFalse(self.queue.approve("../../etc/passwd"))
+
+    def test_approve_rejects_slash(self):
+        self.assertFalse(self.queue.approve("foo/bar"))
+
+    def test_approve_rejects_backslash(self):
+        self.assertFalse(self.queue.approve("foo\\bar"))
+
+    def test_approve_rejects_empty(self):
+        self.assertFalse(self.queue.approve(""))
+
+    def test_approve_rejects_dotfile(self):
+        self.assertFalse(self.queue.approve(".hidden"))
+
+    def test_decline_rejects_dotdot(self):
+        self.assertFalse(self.queue.decline("../../etc/shadow"))
+
+    def test_decline_rejects_slash(self):
+        self.assertFalse(self.queue.decline("foo/bar"))
+
+    def test_decline_rejects_empty(self):
+        self.assertFalse(self.queue.decline(""))
+
+    def test_valid_task_id_accepted(self):
+        self.assertTrue(TaskApprovalQueue._is_valid_task_id("fix_bug_abc123"))
+
+    def test_valid_task_id_with_hyphens(self):
+        self.assertTrue(TaskApprovalQueue._is_valid_task_id("lint_foo-py_abcd1234"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -17,6 +18,22 @@ from config_schema import Config
 from process_utils import kill_process_group
 
 logger = logging.getLogger(__name__)
+
+# Patterns for scrubbing sensitive tokens from CLI stderr
+_SENSITIVE_PATTERNS = [
+    re.compile(r'sk-[A-Za-z0-9]{20,}'),               # OpenAI-style keys
+    re.compile(r'Bearer\s+[A-Za-z0-9\-_.=]{20,}'),     # Bearer tokens
+    re.compile(r'AIza[A-Za-z0-9\-_]{30,}'),             # Google API keys
+    re.compile(r'key-[A-Za-z0-9]{20,}'),                # Generic key-prefixed tokens
+    re.compile(r'sk-ant-[A-Za-z0-9\-]{20,}'),           # Anthropic API keys
+]
+
+
+def _sanitize_stderr(message: str) -> str:
+    """Strip sensitive tokens from CLI stderr to prevent leakage in logs/state."""
+    for pattern in _SENSITIVE_PATTERNS:
+        message = pattern.sub("***", message)
+    return message
 
 
 class _ProcResult:
@@ -490,7 +507,7 @@ class ClaudeRunner:
                     self.circuit_breaker.record_failure()
                 return ClaudeResult(
                     success=False,
-                    error=f"Claude CLI exited with code {proc.returncode}: {proc.stderr.strip()}",
+                    error=f"Claude CLI exited with code {proc.returncode}: {_sanitize_stderr(proc.stderr.strip())}",
                 )
 
             # Parse JSON before exiting the loop — retry on truncated output

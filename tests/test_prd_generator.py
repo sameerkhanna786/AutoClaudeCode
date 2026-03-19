@@ -255,5 +255,32 @@ class TestPrdCliAtomicWrite(unittest.TestCase):
             self.assertEqual(len(prd_files), 2)
 
 
+class TestImportPrdSizeLimit(unittest.TestCase):
+
+    def test_rejects_oversized_prd_file(self):
+        """PRD files larger than 1 MB should be rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path = Path(tmpdir) / "huge.prd.yaml"
+            # Write a file slightly over 1 MB
+            prd_path.write_text("x" * (1024 * 1024 + 1))
+            result = import_prd(str(prd_path))
+            self.assertEqual(result, [])
+
+    def test_accepts_normal_prd_file(self):
+        """PRD files under 1 MB should be accepted normally."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path = Path(tmpdir) / "normal.prd.yaml"
+            prd_data = {
+                "version": "1.0",
+                "tasks": [
+                    {"id": "t1", "description": "Fix bug", "priority": 1, "source": "test_failure"}
+                ],
+            }
+            import yaml
+            prd_path.write_text(yaml.dump(prd_data))
+            result = import_prd(str(prd_path))
+            self.assertEqual(len(result), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
