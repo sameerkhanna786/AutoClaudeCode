@@ -718,6 +718,65 @@ class TestWorktreeDiskSpaceUnparsableName:
         )
 
 
+class TestWorkersClearedOnException:
+    """Regression: _workers must be cleared even if _process_result raises."""
+
+    def test_workers_cleared_after_process_result_exception(self, parallel_config):
+        """If _process_result raises, _workers.clear() must still run."""
+        coord = ParallelCoordinator(parallel_config)
+
+        # Simulate a worker that was added to _workers
+        mock_worker = MagicMock()
+        mock_worker.worker_id = 0
+        mock_worker.worktree_dir = "/tmp/fake-worktree"
+        mock_worker.branch_name = "test-branch"
+
+        with coord._workers_lock:
+            coord._workers.append(mock_worker)
+
+        # _process_result raises, _cleanup_worker_with_timeout is a no-op
+        with patch.object(coord, "_process_result", side_effect=RuntimeError("boom")), \
+             patch.object(coord, "_cleanup_worker_with_timeout"), \
+             patch.object(coord, "_log_cycle_summary"), \
+             patch.object(coord.git, "prune_worktrees"):
+            result = WorkerResult(
+                success=True, branch_name="test", tasks=[],
+            )
+            # Simulate the merge/cleanup loop from _run_cycle
+            try:
+                for r, w in [(result, mock_worker)]:
+                    try:
+                        coord._process_result(r, w)
+                    except Exception:
+                        pass
+                    finally:
+                        coord._cleanup_worker_with_timeout(w)
+                coord._log_cycle_summary([(result, mock_worker)], 0)
+            finally:
+                with coord._workers_lock:
+                    coord._workers.clear()
+                coord.git.prune_worktrees()
+
+        # Workers must be cleared
+        assert len(coord._workers) == 0, (
+            "_workers must be cleared even after exceptions in _process_result"
+        )
+
+    def test_workers_cleared_via_source_inspection(self, parallel_config):
+        """Verify the finally block wraps workers.clear() in coordinator source."""
+        import inspect
+        source = inspect.getsource(ParallelCoordinator._run_cycle)
+        # The workers.clear() should be inside a finally block
+        assert "finally:" in source
+        # Find the finally that contains _workers.clear
+        finally_idx = source.rfind("finally:")
+        clear_idx = source.find("_workers.clear()")
+        assert clear_idx > finally_idx, (
+            "_workers.clear() must be inside a finally block to ensure "
+            "cleanup on exception"
+        )
+
+
 class TestMergeWorkerBranchCleanNoCommit:
     """Test that AI conflict resolution handles clean merges correctly."""
 

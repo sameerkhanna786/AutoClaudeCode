@@ -228,21 +228,23 @@ class ParallelCoordinator:
                 results.append((result, worker))
 
         # Merge successful branches and record cycles
-        for result, worker in results:
-            try:
-                self._process_result(result, worker)
-            except Exception:
-                logger.exception(
-                    "Error processing result for worker %d",
-                    worker.worker_id,
-                )
-            finally:
-                self._cleanup_worker_with_timeout(worker)
+        try:
+            for result, worker in results:
+                try:
+                    self._process_result(result, worker)
+                except Exception:
+                    logger.exception(
+                        "Error processing result for worker %d",
+                        worker.worker_id,
+                    )
+                finally:
+                    self._cleanup_worker_with_timeout(worker)
 
-        self._log_cycle_summary(results, cycle_start)
-        with self._workers_lock:
-            self._workers.clear()
-        self.git.prune_worktrees()
+            self._log_cycle_summary(results, cycle_start)
+        finally:
+            with self._workers_lock:
+                self._workers.clear()
+            self.git.prune_worktrees()
 
     def _process_result(self, result: WorkerResult, worker: Worker) -> None:
         """Process a single worker result: merge if successful, record cycle."""
