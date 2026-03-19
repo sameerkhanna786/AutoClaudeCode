@@ -349,17 +349,19 @@ class SafetyGuard:
             changed_path = os.path.join(target_dir, f)
             for p in self.config.safety.protected_files:
                 protected_path = os.path.join(target_dir, p)
-                # Use samefile when both paths exist (avoids unnecessary exceptions)
-                if os.path.exists(changed_path) and os.path.exists(protected_path):
-                    try:
-                        if os.path.samefile(changed_path, protected_path):
-                            violations.append(f)
-                            break
-                    except OSError:
-                        pass
-                    else:
-                        # samefile returned False — paths are definitively different
-                        continue
+                # Try samefile directly — avoids TOCTOU race from
+                # pre-checking existence before calling samefile.
+                try:
+                    if os.path.samefile(changed_path, protected_path):
+                        violations.append(f)
+                        break
+                except (OSError, FileNotFoundError):
+                    # One or both paths don't exist — fall through to
+                    # normpath comparison below.
+                    pass
+                else:
+                    # samefile returned False — paths are definitively different
+                    continue
                 # Fall back to realpath + normpath comparison (e.g. when file doesn't exist yet)
                 if os.path.normpath(os.path.realpath(changed_path)) == os.path.normpath(os.path.realpath(protected_path)):
                     violations.append(f)

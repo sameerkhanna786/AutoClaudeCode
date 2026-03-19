@@ -298,8 +298,15 @@ class FeedbackManager:
         return 1
 
     def _is_within_feedback_dir(self, path: Path) -> bool:
-        """Check that a path is within the feedback directory tree."""
+        """Check that a path is within the feedback directory tree.
+
+        Rejects symlinks to prevent path traversal via symlink targets
+        that resolve outside the feedback directory.
+        """
         try:
+            if path.is_symlink():
+                logger.warning("Rejecting symlink in feedback directory: %s", path)
+                return False
             resolved = path.resolve()
             feedback_resolved = self.feedback_dir.resolve()
             return str(resolved).startswith(str(feedback_resolved) + os.sep) or resolved == feedback_resolved

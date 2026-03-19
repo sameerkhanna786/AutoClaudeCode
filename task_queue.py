@@ -228,7 +228,14 @@ class TaskApprovalQueue:
             # Step 2: Atomically move from pending to approved — single
             # operation that removes the source and creates the destination,
             # so there is no window where both files exist.
-            os.replace(str(pending_path), str(approved_path))
+            try:
+                os.replace(str(pending_path), str(approved_path))
+            except FileNotFoundError:
+                logger.warning("Pending file %s disappeared before approval move", task_id)
+                return False
+            except OSError as e:
+                logger.warning("Failed to move pending task %s to approved: %s", task_id, e)
+                return False
             return True
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to read pending task %s: %s", task_id, e)

@@ -153,6 +153,9 @@ class Validator:
                 errors.append(f"{filepath}:{e.lineno}: {e.msg}")
             except (OSError, UnicodeDecodeError) as e:
                 logger.warning("Could not read %s for syntax check: %s", filepath, e)
+            except Exception as e:
+                logger.warning("Unexpected error parsing %s: %s", filepath, e)
+                errors.append(f"{filepath}: parse error: {e}")
 
         if errors:
             output = "Syntax errors found:\n" + "\n".join(errors)

@@ -348,3 +348,38 @@ class TestFeedbackPathValidation:
         fb_mgr.mark_done(str(task_file))
         assert not task_file.exists()
         assert (Path(fb_mgr.done_dir) / "legit-task.md").exists()
+
+    def test_mark_done_rejects_symlink_in_feedback_dir(self, fb_mgr, tmp_path):
+        """mark_done should reject symlinks within the feedback directory."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        # Create a file outside feedback dir
+        outside_file = tmp_path / "outside" / "secret.md"
+        outside_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.write_text("sensitive data")
+
+        # Create a symlink inside feedback dir pointing outside
+        symlink = fb_dir / "sneaky-link.md"
+        symlink.symlink_to(outside_file)
+
+        fb_mgr.mark_done(str(symlink))
+
+        # Symlink should NOT have been processed
+        assert outside_file.exists()  # Original file untouched
+        done_dir = Path(fb_mgr.done_dir)
+        assert not (done_dir / "sneaky-link.md").exists()
+
+    def test_mark_failed_rejects_symlink_in_feedback_dir(self, fb_mgr, tmp_path):
+        """mark_failed should reject symlinks within the feedback directory."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        outside_file = tmp_path / "outside" / "secret.md"
+        outside_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.write_text("sensitive data")
+
+        symlink = fb_dir / "sneaky-link.md"
+        symlink.symlink_to(outside_file)
+
+        fb_mgr.mark_failed(str(symlink))
+
+        assert outside_file.exists()
+        failed_dir = Path(fb_mgr.failed_dir)
+        assert not (failed_dir / "sneaky-link.md").exists()

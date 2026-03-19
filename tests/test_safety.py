@@ -146,6 +146,34 @@ class TestSafetyGuard:
         with pytest.raises(SafetyError, match="Protected files"):
             guard.check_protected_files(["./main.py"])
 
+    def test_check_protected_files_toctou_race(self, guard, tmp_path):
+        """check_protected_files handles file disappearing between check and samefile."""
+        guard.config.target_dir = str(tmp_path)
+        (tmp_path / "main.py").write_text("# protected\n")
+
+        # Simulate samefile raising OSError (file deleted between calls)
+        original_samefile = os.path.samefile
+
+        def flaky_samefile(a, b):
+            if "vanish.py" in str(a):
+                raise FileNotFoundError("file vanished")
+            return original_samefile(a, b)
+
+        with patch("safety.os.path.samefile", side_effect=flaky_samefile):
+            # vanish.py doesn't match any protected file via normpath either
+            guard.check_protected_files(["vanish.py"])
+
+    def test_check_protected_files_no_existence_precheck(self, guard, tmp_path):
+        """check_protected_files no longer pre-checks existence before samefile."""
+        guard.config.target_dir = str(tmp_path)
+        (tmp_path / "main.py").write_text("# protected\n")
+        (tmp_path / "changed.py").write_text("# changed\n")
+
+        # Verify os.path.exists is NOT called (no TOCTOU)
+        with patch("safety.os.path.exists") as mock_exists:
+            guard.check_protected_files(["changed.py"])
+        mock_exists.assert_not_called()
+
     def test_check_protected_files_samefile_false_skips_realpath(self, guard, tmp_path):
         """When samefile returns False, realpath fallback should be skipped."""
         guard.config.target_dir = str(tmp_path)

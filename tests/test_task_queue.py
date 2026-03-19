@@ -195,6 +195,32 @@ class TestApproveAtomicity(unittest.TestCase):
             approved_path = Path(tmpdir) / "approved" / f"{task_id}.json"
             self.assertFalse(approved_path.exists())
 
+    def test_approve_handles_disappearing_pending_file(self):
+        """If pending file disappears between update and move, approve returns False."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = TaskApprovalQueue(tmpdir)
+            task_id = self._enqueue_task(queue)
+            pending_path = Path(tmpdir) / "pending_approval" / f"{task_id}.json"
+
+            original_replace = os.replace
+            call_count = {"n": 0}
+
+            def intercepting_replace(src, dst):
+                call_count["n"] += 1
+                if call_count["n"] == 2:
+                    # Delete the pending file before the second os.replace
+                    try:
+                        os.unlink(src)
+                    except OSError:
+                        pass
+                    raise FileNotFoundError(f"No such file: {src}")
+                return original_replace(src, dst)
+
+            with patch("task_queue.os.replace", side_effect=intercepting_replace):
+                result = queue.approve(task_id)
+
+            self.assertFalse(result)
+
     def test_approve_data_integrity(self):
         """Approved file must contain all original task fields plus approved_at."""
         with tempfile.TemporaryDirectory() as tmpdir:

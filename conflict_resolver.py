@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -97,9 +99,26 @@ class ConflictResolver:
                 )
                 return False, self._total_cost
 
-            # Write resolved content back
+            # Write resolved content back atomically (temp file + rename)
             try:
-                abs_path.write_text(resolved)
+                tmp_fd, tmp_path = tempfile.mkstemp(
+                    dir=str(abs_path.parent), suffix=".tmp"
+                )
+                try:
+                    f = os.fdopen(tmp_fd, "w")
+                except Exception:
+                    os.close(tmp_fd)
+                    raise
+                try:
+                    with f:
+                        f.write(resolved)
+                    os.replace(tmp_path, str(abs_path))
+                except Exception:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
             except OSError as e:
                 logger.warning("Failed to write resolved file %s: %s", abs_path, e)
                 return False, self._total_cost

@@ -1,5 +1,6 @@
 """Tests for conflict_resolver module and git conflict helpers."""
 
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -402,6 +403,69 @@ class TestGetConflictedFilesRealRepo:
         gm.delete_branch("conflict-branch", force=True)
 
 
+class TestResolveConflictsAtomicWrite:
+    """Test that resolve_conflicts uses atomic writes."""
+
+    def test_write_uses_tempfile_and_replace(self, tmp_path):
+        """Verify resolved content is written atomically via temp file + os.replace."""
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        conflict_file = tmp_path / "atomic.py"
+        conflict_file.write_text("original content")
+
+        mock_result = ClaudeResult(
+            success=True,
+            result_text="```python\nresolved content\n```",
+            cost_usd=0.01,
+        )
+        replace_calls = []
+        original_replace = os.replace
+
+        def tracking_replace(src, dst):
+            replace_calls.append((src, dst))
+            return original_replace(src, dst)
+
+        with patch.object(resolver, "runner") as mock_runner:
+            mock_runner.run.return_value = mock_result
+            with patch("conflict_resolver.os.replace", side_effect=tracking_replace):
+                success, cost = resolver.resolve_conflicts(
+                    str(tmp_path), ["atomic.py"], "feat", "main",
+                )
+
+        assert success is True
+        # os.replace should have been called with a temp file -> target
+        assert len(replace_calls) == 1
+        src_path, dst_path = replace_calls[0]
+        assert dst_path == str(conflict_file)
+        assert ".tmp" in src_path
+
+    def test_write_cleans_up_temp_on_failure(self, tmp_path):
+        """If os.replace fails, the temp file should be cleaned up."""
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        conflict_file = tmp_path / "cleanup.py"
+        conflict_file.write_text("content")
+
+        mock_result = ClaudeResult(
+            success=True,
+            result_text="```python\nresolved\n```",
+            cost_usd=0.01,
+        )
+        with patch.object(resolver, "runner") as mock_runner:
+            mock_runner.run.return_value = mock_result
+            with patch("conflict_resolver.os.replace", side_effect=OSError("disk error")):
+                success, cost = resolver.resolve_conflicts(
+                    str(tmp_path), ["cleanup.py"], "feat", "main",
+                )
+
+        assert success is False
+        # No leftover .tmp files
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert len(tmp_files) == 0
+
+
 class TestResolveConflictsFileErrors:
     """Test error handling for file read/write failures in resolve_conflicts."""
 
@@ -436,7 +500,7 @@ class TestResolveConflictsFileErrors:
         )
         with patch.object(resolver, "runner") as mock_runner:
             mock_runner.run.return_value = mock_result
-            with patch.object(Path, 'write_text', side_effect=OSError("Disk full")):
+            with patch("conflict_resolver.tempfile.mkstemp", side_effect=OSError("Disk full")):
                 success, cost = resolver.resolve_conflicts(
                     str(tmp_path), [filepath], "worker-branch", "main"
                 )

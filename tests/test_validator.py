@@ -410,3 +410,20 @@ class TestValidateSyntaxOnly:
         """Empty file list passes."""
         result = validator.validate_syntax_only([], "/tmp")
         assert result.passed is True
+
+    def test_recursion_error_handled(self, validator, tmp_path):
+        """Files that cause RecursionError in ast.parse are caught gracefully."""
+        # Create a file with deeply nested expressions that triggers RecursionError
+        (tmp_path / "deep.py").write_text("x = 1\n")
+        with patch("validator.ast.parse", side_effect=RecursionError("maximum recursion depth exceeded")):
+            result = validator.validate_syntax_only(["deep.py"], str(tmp_path))
+        assert result.passed is False
+        assert "parse error" in result.steps[0].output
+
+    def test_memory_error_handled(self, validator, tmp_path):
+        """Files that cause MemoryError in ast.parse are caught gracefully."""
+        (tmp_path / "huge.py").write_text("x = 1\n")
+        with patch("validator.ast.parse", side_effect=MemoryError("out of memory")):
+            result = validator.validate_syntax_only(["huge.py"], str(tmp_path))
+        assert result.passed is False
+        assert "parse error" in result.steps[0].output
