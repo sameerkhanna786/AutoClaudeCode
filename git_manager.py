@@ -251,7 +251,10 @@ class GitManager:
             if snapshot:
                 current = self._run("rev-parse", "HEAD").stdout.strip()
                 if current != snapshot.commit_hash:
-                    self._run("reset", "--hard", snapshot.commit_hash)
+                    # Use mixed reset (not --hard) so the working tree is
+                    # untouched.  --hard would destroy allowed_dirty files
+                    # that the targeted revert logic below is meant to keep.
+                    self._run("reset", snapshot.commit_hash)
                     logger.info("Reset HEAD to snapshot %s", snapshot.commit_hash[:8])
 
             if files_to_revert:

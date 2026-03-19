@@ -270,6 +270,21 @@ class TestRollbackSafety:
         assert gm.is_clean() is True
         assert not Path(tmp_git_repo, "anything.txt").exists()
 
+    def test_rollback_preserves_allowed_dirty_when_head_moved(self, tmp_git_repo):
+        """allowed_dirty files must survive rollback even when HEAD has moved."""
+        gm = GitManager(tmp_git_repo)
+        # Pre-existing uncommitted file (should be preserved)
+        Path(tmp_git_repo, "preexisting.txt").write_text("keep me")
+        snap = gm.create_snapshot()
+        # Simulate Claude committing (HEAD moves forward)
+        Path(tmp_git_repo, "claude_file.py").write_text("# claude code\n")
+        gm.commit("claude commit", files=["claude_file.py"])
+        # Now HEAD != snapshot — rollback must reset HEAD but keep preexisting.txt
+        gm.rollback(snap, allowed_dirty={"preexisting.txt"})
+        assert Path(tmp_git_repo, "preexisting.txt").exists(), \
+            "allowed_dirty file was destroyed by rollback reset"
+        assert Path(tmp_git_repo, "preexisting.txt").read_text() == "keep me"
+
 
 @pytest.mark.requires_subprocess
 class TestCommitMessageLengthValidation:
