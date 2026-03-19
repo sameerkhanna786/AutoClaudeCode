@@ -890,7 +890,7 @@ class TaskDiscovery:
             return []
 
         try:
-            data = json.loads(cov_file.read_text())
+            data = json.loads(cov_file.read_text(encoding="utf-8"))
             files = data.get("files", {})
             tasks = []
             for fname, info in files.items():

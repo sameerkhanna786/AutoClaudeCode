@@ -856,7 +856,7 @@ def is_orchestrator_running(lock_path: str) -> Tuple[bool, Optional[int]]:
     if not p.exists():
         return False, None
     try:
-        text = p.read_text().strip()
+        text = p.read_text(encoding="utf-8").strip()
         if not text:
             return False, None
         pid = int(text)
@@ -950,10 +950,10 @@ def get_feedback_files(cfg: Dict[str, Any]) -> Dict[str, List[Dict[str, str]]]:
             try:
                 size = f.stat().st_size
                 if size > MAX_FEEDBACK_CONTENT_SIZE * 2:
-                    content = f.read_text(errors="replace")[:MAX_FEEDBACK_CONTENT_SIZE * 2]
+                    content = f.read_text(encoding="utf-8", errors="replace")[:MAX_FEEDBACK_CONTENT_SIZE * 2]
                     content += "\n\n[truncated]"
                 else:
-                    content = f.read_text()
+                    content = f.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 content = "(unreadable)"
             result[category].append({"name": f.name, "content": content})

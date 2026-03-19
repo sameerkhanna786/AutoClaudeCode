@@ -899,5 +899,34 @@ class TestWorkerDeepCopiesConfig(unittest.TestCase):
         self.assertEqual(config.parallel.max_workers, original_max_workers)
 
 
+class TestSummarizeSameSourceNoFileRefs(unittest.TestCase):
+    """Test _summarize_same_source when tasks have no file references."""
+
+    def test_test_failure_no_files_uses_task_count(self):
+        """When no file names can be extracted, should use task count not '0 files'."""
+        from shared import _summarize_same_source
+        tasks = [
+            Task(description="Test suite is broken", priority=1, source="test_failure"),
+            Task(description="Another test fails", priority=1, source="test_failure"),
+            Task(description="Third test issue", priority=1, source="test_failure"),
+        ]
+        result = _summarize_same_source("test_failure", tasks)
+        # Should NOT say "0 files" — that's misleading
+        self.assertNotIn("0 files", result)
+        # Should mention the count of tasks instead
+        self.assertIn("3", result)
+
+    def test_lint_no_files_uses_task_count(self):
+        """When no file names can be extracted for lint, should use task count."""
+        from shared import _summarize_same_source
+        tasks = [
+            Task(description="Fix whitespace issue", priority=1, source="lint"),
+            Task(description="Fix import order", priority=1, source="lint"),
+        ]
+        result = _summarize_same_source("lint", tasks)
+        self.assertNotIn("0 files", result)
+        self.assertIn("2", result)
+
+
 if __name__ == "__main__":
     unittest.main()

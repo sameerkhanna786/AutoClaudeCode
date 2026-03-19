@@ -797,5 +797,45 @@ class TestReadCycleStateNonAscii(unittest.TestCase):
             self.assertIn("señor", result["task_description"])
 
 
+class TestIsOrchestratorRunningEncoding(unittest.TestCase):
+    """Test that is_orchestrator_running handles non-ASCII lock files."""
+
+    def test_non_ascii_lock_file_content(self):
+        """Lock file with non-ASCII content should not crash."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "auto_claude.lock"
+            # Write non-ASCII content that could cause issues without encoding
+            lock_file.write_text("PID: résumé", encoding="utf-8")
+            running, pid = is_orchestrator_running(str(lock_file))
+            self.assertFalse(running)
+            self.assertIsNone(pid)
+
+
+class TestGetFeedbackFilesEncoding(unittest.TestCase):
+    """Test that get_feedback_files handles non-ASCII content properly."""
+
+    def test_non_ascii_feedback_content(self):
+        """Feedback files with non-ASCII chars should be read correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            feedback_dir = Path(tmpdir) / "feedback"
+            done_dir = Path(tmpdir) / "done"
+            failed_dir = Path(tmpdir) / "failed"
+            for d in (feedback_dir, done_dir, failed_dir):
+                d.mkdir()
+
+            # Write a feedback file with Unicode content
+            test_file = feedback_dir / "test.md"
+            test_file.write_text("Fix über-critical bug in señor.py", encoding="utf-8")
+
+            cfg = {
+                "feedback_dir": str(feedback_dir),
+                "feedback_done_dir": str(done_dir),
+                "feedback_failed_dir": str(failed_dir),
+            }
+            result = get_feedback_files(cfg)
+            self.assertEqual(len(result["pending"]), 1)
+            self.assertIn("über", result["pending"][0]["content"])
+
+
 if __name__ == "__main__":
     unittest.main()

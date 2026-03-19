@@ -460,11 +460,15 @@ def _summarize_same_source(source: str, tasks: List[Task]) -> str:
     if source == "test_failure":
         if files and len(files) <= 2:
             return f"Fix test failures in {' and '.join(files)}"
+        if not files:
+            return f"Fix {count} test failure(s)"
         return f"Fix test failures in {len(files)} files"
 
     if source == "lint":
         if files and len(files) <= 2:
             return f"Fix lint errors in {' and '.join(files)}"
+        if not files:
+            return f"Fix {count} lint error(s)"
         return f"Fix lint errors in {len(files)} files"
 
     if source == "todo":
