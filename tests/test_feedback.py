@@ -680,3 +680,28 @@ class TestIsWithinFeedbackDirResolvesFirst:
         assert min(resolve_indices) < min(relative_indices), (
             "resolve() should be called before relative_to()"
         )
+
+    def test_symlink_checked_before_resolve(self, fb_mgr):
+        """is_symlink() must be called before resolve() to avoid TOCTOU."""
+        import inspect
+        source = inspect.getsource(type(fb_mgr)._is_within_feedback_dir)
+        symlink_pos = source.index("is_symlink()")
+        resolve_pos = source.index("path.resolve()")
+        assert symlink_pos < resolve_pos, (
+            "is_symlink() must be checked before path.resolve() to prevent TOCTOU"
+        )
+
+    def test_no_redundant_double_resolve(self, fb_mgr):
+        """resolve() should only be called once on the path, not compared to itself."""
+        import inspect
+        source = inspect.getsource(type(fb_mgr)._is_within_feedback_dir)
+        # The old bug compared path.resolve() to path.resolve() which was meaningless
+        assert "!= path.resolve()" not in source, (
+            "Should not compare path.resolve() to itself (ineffective TOCTOU check)"
+        )
+
+    def test_fdopen_uses_utf8_encoding(self, fb_mgr):
+        """os.fdopen calls in _atomic_move should specify encoding='utf-8'."""
+        import inspect
+        source = inspect.getsource(type(fb_mgr)._atomic_move)
+        assert 'encoding="utf-8"' in source or "encoding='utf-8'" in source

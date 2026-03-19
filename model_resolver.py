@@ -70,7 +70,7 @@ def _write_cache(model_alias: str, resolved: str, cache_path: str = _CACHE_FILE)
         )
         try:
             try:
-                f = os.fdopen(tmp_fd, "w")
+                f = os.fdopen(tmp_fd, "w", encoding="utf-8")
             except Exception:
                 os.close(tmp_fd)
                 raise

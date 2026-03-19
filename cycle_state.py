@@ -68,14 +68,14 @@ class CycleStateWriter:
                 dir=str(self._path.parent), suffix=".tmp"
             )
             try:
-                f = os.fdopen(tmp_fd, "w")
+                f = os.fdopen(tmp_fd, "w", encoding="utf-8")
             except Exception:
                 os.close(tmp_fd)
                 raise
             with f:
                 json.dump(data, f)
             os.replace(tmp_path, str(self._path))
-        except OSError as e:
+        except Exception as e:
             logger.warning("Failed to write cycle state: %s", e)
             if tmp_path is not None:
                 try:

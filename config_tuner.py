@@ -75,7 +75,7 @@ class ConfigTuner:
                 dir=str(self._state_dir), suffix=".tmp",
             )
             try:
-                f = os.fdopen(tmp_fd, "w")
+                f = os.fdopen(tmp_fd, "w", encoding="utf-8")
             except Exception:
                 os.close(tmp_fd)
                 raise
@@ -86,7 +86,7 @@ class ConfigTuner:
                 "Saved %d tuning recommendations to %s",
                 len(recs), self._recommendations_file,
             )
-        except OSError as e:
+        except Exception as e:
             logger.warning("Failed to save tuning recommendations: %s", e)
             if tmp_path is not None:
                 try:

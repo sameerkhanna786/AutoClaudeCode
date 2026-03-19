@@ -143,3 +143,32 @@ class TestAnalyzeLoopInterval:
         recs = tuner._analyze_loop_interval(records, config)
         # These errors should NOT trigger the "no tasks" recommendation
         assert all("interval" not in r.field.lower() for r in recs)
+
+
+class TestSaveRecommendationsExceptionCleanup:
+    """Temp files must be cleaned up for any exception, not just OSError."""
+
+    def test_non_os_error_cleans_up_temp_file(self, tmp_path):
+        """A TypeError during JSON serialization should not leave temp files."""
+        tuner = ConfigTuner(str(tmp_path))
+        recs = [
+            TuningRecommendation(
+                field="test.field",
+                current_value=1,
+                recommended_value=2,
+                reason="test",
+                confidence=0.9,
+            ),
+        ]
+        import unittest.mock
+        with unittest.mock.patch("config_tuner.json.dump", side_effect=TypeError("bad")):
+            tuner.save_recommendations(recs)  # Should not raise
+
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert tmp_files == [], f"Orphaned temp files: {tmp_files}"
+
+    def test_fdopen_uses_utf8_encoding(self, tmp_path):
+        """os.fdopen calls should specify encoding='utf-8'."""
+        import inspect
+        source = inspect.getsource(ConfigTuner.save_recommendations)
+        assert 'encoding="utf-8"' in source or "encoding='utf-8'" in source

@@ -83,14 +83,14 @@ class TaskApprovalQueue:
                 dir=str(self._state_dir), suffix=".tmp",
             )
             try:
-                f = os.fdopen(tmp_fd, "w")
+                f = os.fdopen(tmp_fd, "w", encoding="utf-8")
             except Exception:
                 os.close(tmp_fd)
                 raise
             with f:
                 json.dump(data, f)
             os.replace(tmp_path, str(self._heartbeat_path))
-        except OSError as e:
+        except Exception as e:
             logger.warning("Failed to write dashboard heartbeat: %s", e)
             if tmp_path is not None:
                 try:
@@ -159,7 +159,7 @@ class TaskApprovalQueue:
                 dir=str(self._pending_dir), suffix=".tmp",
             )
             try:
-                f = os.fdopen(tmp_fd, "w")
+                f = os.fdopen(tmp_fd, "w", encoding="utf-8")
             except Exception:
                 os.close(tmp_fd)
                 raise
@@ -234,7 +234,7 @@ class TaskApprovalQueue:
                     dir=str(self._pending_dir), suffix=".tmp",
                 )
                 try:
-                    f = os.fdopen(tmp_fd, "w")
+                    f = os.fdopen(tmp_fd, "w", encoding="utf-8")
                 except Exception:
                     os.close(tmp_fd)
                     raise

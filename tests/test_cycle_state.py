@@ -219,3 +219,33 @@ class TestCycleStateWriterThreadSafety:
         # Final state should be valid JSON
         result = read_cycle_state(str(tmp_path))
         assert result is not None
+
+
+class TestWriteUnlockedExceptionCleanup:
+    """Temp files must be cleaned up even for non-OSError exceptions."""
+
+    def test_type_error_cleans_up_temp_file(self, tmp_path):
+        """A TypeError from json.dump should not leave orphaned temp files."""
+        writer = CycleStateWriter(str(tmp_path))
+        state = CycleState(phase="test")
+        # Patch json.dump to raise TypeError (simulates non-serializable data)
+        import json as json_mod
+        original_dump = json_mod.dump
+
+        def bad_dump(*args, **kwargs):
+            raise TypeError("Object not serializable")
+
+        import unittest.mock
+        with unittest.mock.patch("cycle_state.json.dump", side_effect=bad_dump):
+            writer.write(state)  # Should not raise, just log warning
+
+        # No orphaned .tmp files should remain
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert tmp_files == [], f"Orphaned temp files found: {tmp_files}"
+
+    def test_fdopen_uses_utf8_encoding(self, tmp_path):
+        """os.fdopen calls should specify encoding='utf-8'."""
+        import inspect
+        from cycle_state import CycleStateWriter
+        source = inspect.getsource(CycleStateWriter._write_unlocked)
+        assert 'encoding="utf-8"' in source or "encoding='utf-8'" in source

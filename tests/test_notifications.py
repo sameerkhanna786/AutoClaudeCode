@@ -339,5 +339,17 @@ class TestNotificationManagerShutdown(unittest.TestCase):
             mgr._webhook_pool.submit(lambda: None)
 
 
+class TestNotificationShutdownWaits(unittest.TestCase):
+    """shutdown() must use wait=True to drain pending notifications."""
+
+    def test_shutdown_waits_for_pending(self):
+        """shutdown() should call pool.shutdown(wait=True)."""
+        import inspect
+        source = inspect.getsource(NotificationManager.shutdown)
+        assert "wait=True" in source, (
+            "shutdown() should use wait=True to drain pending notifications"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

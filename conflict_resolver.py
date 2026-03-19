@@ -105,7 +105,7 @@ class ConflictResolver:
                     dir=str(abs_path.parent), suffix=".tmp"
                 )
                 try:
-                    f = os.fdopen(tmp_fd, "w")
+                    f = os.fdopen(tmp_fd, "w", encoding="utf-8")
                 except Exception:
                     os.close(tmp_fd)
                     raise

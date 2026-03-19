@@ -140,7 +140,7 @@ class FeedbackManager:
             )
             try:
                 try:
-                    f = os.fdopen(tmp_fd, "w")
+                    f = os.fdopen(tmp_fd, "w", encoding="utf-8")
                 except Exception:
                     os.close(tmp_fd)
                     raise
@@ -346,20 +346,14 @@ class FeedbackManager:
         (e.g. /a/feedback vs /a/feedback_evil).
         """
         try:
-            # Resolve first to get the real path, then check containment.
-            # This avoids TOCTOU where a symlink could be swapped in between
-            # an is_symlink() check and the resolve() call.
-            resolved = path.resolve()
-            feedback_resolved = self.feedback_dir.resolve()
-            if resolved != path.resolve():
-                # Path changed between two resolve() calls — reject.
-                logger.warning("Path changed during resolution: %s", path)
-                return False
-            # Reject if the resolved path differs from the original
-            # (indicates a symlink was followed).
+            # Reject symlinks before resolving to prevent following malicious
+            # targets. Checking is_symlink() first avoids the TOCTOU window
+            # that exists when resolve() is called before the symlink check.
             if path.is_symlink():
                 logger.warning("Rejecting symlink in feedback directory: %s", path)
                 return False
+            resolved = path.resolve()
+            feedback_resolved = self.feedback_dir.resolve()
             resolved.relative_to(feedback_resolved)
             return True
         except (OSError, ValueError):

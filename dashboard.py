@@ -1230,7 +1230,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
         except OSError as e:
             logger.warning("Failed to write feedback file %s: %s", target, e)

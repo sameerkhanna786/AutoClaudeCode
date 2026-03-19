@@ -252,7 +252,7 @@ class NotificationManager:
 
     def shutdown(self) -> None:
         """Shut down the webhook thread pool, waiting for pending sends."""
-        self._webhook_pool.shutdown(wait=False)
+        self._webhook_pool.shutdown(wait=True)
 
     @staticmethod
     def _format_generic_payload(

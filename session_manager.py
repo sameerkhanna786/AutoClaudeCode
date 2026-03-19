@@ -66,7 +66,7 @@ class SessionManager:
                 dir=str(self._state_dir), suffix=".tmp",
             )
             try:
-                f = os.fdopen(fd, "w")
+                f = os.fdopen(fd, "w", encoding="utf-8")
             except Exception:
                 os.close(fd)
                 raise

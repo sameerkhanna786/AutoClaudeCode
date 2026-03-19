@@ -67,7 +67,7 @@ def cmd_import(args):
         )
         try:
             try:
-                f = os.fdopen(tmp_fd, "w")
+                f = os.fdopen(tmp_fd, "w", encoding="utf-8")
             except Exception:
                 os.close(tmp_fd)
                 raise
