@@ -413,7 +413,6 @@ class TaskDiscovery:
         # (they typically contain the assertion and location info)
         traceback_text = "\n".join(result_lines)
         if len(result_lines) > 5:
-            last_5 = "\n".join(result_lines[-5:])
             # If assertion lines exist but aren't in last 5 lines, append them
             if assertion_lines:
                 for aline in assertion_lines:

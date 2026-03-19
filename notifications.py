@@ -11,6 +11,7 @@ import urllib.request
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from config_schema import WebhookConfig, NotificationEventsConfig, NotificationsConfig
 
@@ -174,6 +175,14 @@ class NotificationManager:
             payload = self._format_discord_payload(event, details)
         else:
             payload = self._format_generic_payload(event, details)
+
+        parsed_url = urlparse(webhook.url)
+        if parsed_url.scheme not in ("http", "https"):
+            logger.warning(
+                "Rejecting webhook with unsupported scheme %r: %s",
+                parsed_url.scheme, webhook.url,
+            )
+            return
 
         data = json.dumps(payload).encode("utf-8")
 

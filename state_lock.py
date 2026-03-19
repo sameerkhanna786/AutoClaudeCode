@@ -55,13 +55,13 @@ class LockedStateManager(StateManager):
             try:
                 yield
             finally:
-                self._local.held = False
                 try:
                     fcntl.flock(fd, fcntl.LOCK_UN)
                 except OSError:
                     pass
         finally:
             os.close(fd)
+            self._local.held = False
 
     def record_cycle(self, record: CycleRecord) -> None:
         with self._file_lock():

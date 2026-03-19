@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import shutil
 import time
@@ -62,7 +63,7 @@ class Worker:
         main_repo_dir: str,
         baseline_failures: Optional[Set[str]] = None,
     ):
-        self.config = config
+        self.config = copy.deepcopy(config)
         self.tasks = tasks
         self.worker_id = worker_id
         self.state = state

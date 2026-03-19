@@ -792,5 +792,112 @@ class TestSummarizeMixedSourcesEmptyTasks(unittest.TestCase):
         self.assertEqual(result, "Apply changes")
 
 
+class TestSummarizeSameSourceFileCount(unittest.TestCase):
+    """Test that _summarize_same_source uses file count, not task count."""
+
+    def test_test_failure_uses_file_count_not_task_count(self):
+        """When multiple tasks reference same files, count should be unique files."""
+        from shared import _summarize_same_source
+        tasks = [
+            Task(description="Fix test_foo in tests/test_a.py", priority=1, source="test_failure", source_file="tests/test_a.py"),
+            Task(description="Fix test_bar in tests/test_a.py", priority=1, source="test_failure", source_file="tests/test_a.py"),
+            Task(description="Fix test_baz in tests/test_b.py", priority=1, source="test_failure", source_file="tests/test_b.py"),
+            Task(description="Fix test_qux in tests/test_c.py", priority=1, source="test_failure", source_file="tests/test_c.py"),
+        ]
+        result = _summarize_same_source("test_failure", tasks)
+        # Should say "3 files" (unique files), not "4 files" (task count)
+        self.assertIn("3 files", result)
+
+    def test_lint_uses_file_count_not_task_count(self):
+        """Lint summary should also use unique file count."""
+        from shared import _summarize_same_source
+        tasks = [
+            Task(description="Fix lint in src/a.py", priority=1, source="lint", source_file="src/a.py"),
+            Task(description="Fix lint2 in src/a.py", priority=1, source="lint", source_file="src/a.py"),
+            Task(description="Fix lint in src/b.py", priority=1, source="lint", source_file="src/b.py"),
+            Task(description="Fix lint in src/c.py", priority=1, source="lint", source_file="src/c.py"),
+            Task(description="Fix lint in src/d.py", priority=1, source="lint", source_file="src/d.py"),
+        ]
+        result = _summarize_same_source("lint", tasks)
+        # Should say "4 files" (unique files), not "5 files" (task count)
+        self.assertIn("4 files", result)
+
+
+class TestWebhookUrlSchemeValidation(unittest.TestCase):
+    """Test that webhook URLs with non-HTTP schemes are rejected."""
+
+    def test_file_scheme_rejected(self):
+        """file:// URLs must be rejected to prevent SSRF."""
+        from notifications import NotificationManager, WebhookConfig, NotificationsConfig, NotificationEventsConfig
+        config = NotificationsConfig(
+            enabled=True,
+            webhooks=[WebhookConfig(url="file:///etc/passwd", type="generic")],
+            events=NotificationEventsConfig(),
+        )
+        mgr = NotificationManager(config)
+        # _send_webhook should return early without raising
+        mgr._send_webhook(config.webhooks[0], "test_event", {"msg": "hi"})
+        mgr.shutdown()
+
+    def test_https_scheme_allowed(self):
+        """https:// URLs should be allowed (may fail network but not scheme check)."""
+        from notifications import NotificationManager, WebhookConfig, NotificationsConfig, NotificationEventsConfig
+        from unittest.mock import patch, MagicMock
+        config = NotificationsConfig(
+            enabled=True,
+            webhooks=[WebhookConfig(url="https://hooks.example.com/test", type="generic")],
+            events=NotificationEventsConfig(),
+        )
+        mgr = NotificationManager(config)
+        with patch("notifications.urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
+            mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+            mgr._send_webhook(config.webhooks[0], "test_event", {"msg": "hi"})
+            mock_urlopen.assert_called_once()
+        mgr.shutdown()
+
+
+class TestStateLockHeldAfterClose(unittest.TestCase):
+    """Test that _file_lock sets held=False after fd is closed."""
+
+    def test_held_false_after_lock_released(self):
+        """held flag should be False after exiting _file_lock context."""
+        import tempfile
+        from config_schema import Config
+        from state_lock import LockedStateManager
+
+        config = Config()
+        with tempfile.TemporaryDirectory() as tmp:
+            config.paths.state_dir = tmp
+            config.paths.history_file = tmp + "/history.json"
+            mgr = LockedStateManager(config)
+            with mgr._file_lock():
+                assert getattr(mgr._local, 'held', False) is True
+            assert getattr(mgr._local, 'held', False) is False
+
+
+class TestWorkerDeepCopiesConfig(unittest.TestCase):
+    """Test that Worker deep-copies config to avoid shared mutation."""
+
+    def test_worker_config_is_independent_copy(self):
+        """Modifying worker.config should not affect original config."""
+        from config_schema import Config, ParallelConfig
+        from worker import Worker
+        from unittest.mock import MagicMock
+
+        config = Config()
+        config.parallel = ParallelConfig(enabled=True, max_workers=3, worktree_base_dir=".worktrees")
+        original_max_workers = config.parallel.max_workers
+
+        state = MagicMock()
+        tasks = [Task(description="test", priority=1, source="lint")]
+        worker = Worker(config, tasks, state, worker_id=0, main_repo_dir="/tmp/repo")
+
+        # Mutate worker's config
+        worker.config.parallel.max_workers = 99
+        # Original should be unaffected
+        self.assertEqual(config.parallel.max_workers, original_max_workers)
+
+
 if __name__ == "__main__":
     unittest.main()

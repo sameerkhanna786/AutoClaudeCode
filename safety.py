@@ -247,7 +247,7 @@ class SafetyGuard:
         system = platform.system()
         if system == "Linux":
             try:
-                with open("/proc/meminfo", "r") as f:
+                with open("/proc/meminfo", "r", encoding="utf-8") as f:
                     for line in f:
                         if line.startswith("MemAvailable:"):
                             parts = line.split()
