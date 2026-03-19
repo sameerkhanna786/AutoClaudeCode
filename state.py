@@ -78,7 +78,7 @@ class StateManager:
         backups = [p for p, _ in backups_with_mtime]
         for backup in backups:
             try:
-                text = backup.read_text().strip()
+                text = backup.read_text(encoding="utf-8").strip()
                 if text:
                     records = json.loads(text)
                     if isinstance(records, list):
@@ -100,7 +100,7 @@ class StateManager:
             current_mtime = self.history_file.stat().st_mtime
             if self._cache is not None and current_mtime == self._cache_mtime:
                 return self._cache
-            text = self.history_file.read_text().strip()
+            text = self.history_file.read_text(encoding="utf-8").strip()
             if not text:
                 self._cache = []
                 self._cache_mtime = current_mtime

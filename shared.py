@@ -188,6 +188,9 @@ def syntax_check_files(changed_files: List[str], base_dir: str) -> Optional[str]
                     ast.parse(source, filename=f)
                 except SyntaxError as e:
                     return f"Syntax error in {f} at line {e.lineno}: {e.msg}"
+                except (OSError, UnicodeDecodeError):
+                    # Skip files that can't be read (e.g. non-UTF-8 encoded)
+                    continue
     return None
 
 

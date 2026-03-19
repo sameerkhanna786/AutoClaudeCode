@@ -1310,3 +1310,17 @@ class TestLoadHistoryTypeValidation:
         result = state_mgr._load_history()
         assert isinstance(result, list)
         assert len(result) == 1
+
+    def test_history_with_unicode_content(self, state_mgr):
+        """History with non-ASCII content should round-trip correctly."""
+        record = CycleRecord(
+            timestamp=time.time(),
+            task_description="Fix résumé parsing in café.py",
+            success=True,
+        )
+        state_mgr.record_cycle(record)
+        state_mgr._cache = None  # force re-read from disk
+        records = state_mgr._load_history()
+        assert len(records) == 1
+        assert "résumé" in records[0]["task_description"]
+        assert "café" in records[0]["task_description"]

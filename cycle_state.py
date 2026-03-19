@@ -108,7 +108,7 @@ def read_cycle_state(state_dir: str, filename: str = "current_cycle.json") -> Op
     if not path.exists():
         return None
     try:
-        text = path.read_text().strip()
+        text = path.read_text(encoding="utf-8").strip()
         if not text:
             return None
         data = json.loads(text)

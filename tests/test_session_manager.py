@@ -175,6 +175,22 @@ class TestSessionManager(unittest.TestCase):
             mgr = SessionManager(str(nested))
             self.assertTrue(nested.exists())
 
+    def test_save_and_load_with_unicode(self):
+        """Verify load_session reads UTF-8 data written by save_session."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = SessionManager(tmpdir)
+            state = SessionState(
+                session_id="s-unicode",
+                started_at=100.0,
+                tasks=[{"task_id": "t1", "description": "Fix café résumé"}],
+                phase="executing",
+            )
+            mgr.save_session(state)
+            loaded = mgr.load_session()
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.session_id, "s-unicode")
+            self.assertIn("café", loaded.tasks[0]["description"])
+
 
 class TestOrphanedWorktrees(unittest.TestCase):
 

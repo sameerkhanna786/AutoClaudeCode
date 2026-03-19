@@ -507,5 +507,40 @@ class TestPathTraversalValidation(unittest.TestCase):
         self.assertTrue(TaskApprovalQueue._is_valid_task_id("lint_foo-py_abcd1234"))
 
 
+class TestTaskQueueEncoding(unittest.TestCase):
+    """Verify read_text calls use explicit UTF-8 encoding."""
+
+    def test_enqueue_and_list_unicode_task(self):
+        """Task descriptions with non-ASCII chars should round-trip."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = TaskApprovalQueue(tmpdir)
+            task = Task(
+                description="Fix résumé parsing in café.py",
+                priority=2,
+                source="lint",
+            )
+            result = queue.enqueue(task)
+            self.assertIsNotNone(result)
+            pending = queue.list_pending()
+            self.assertEqual(len(pending), 1)
+            self.assertIn("résumé", pending[0]["description"])
+
+    def test_approve_and_consume_unicode_task(self):
+        """Approved tasks with non-ASCII chars should be consumable."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = TaskApprovalQueue(tmpdir)
+            task = Task(
+                description="Améliorer le café.py",
+                priority=1,
+                source="todo",
+            )
+            queue.enqueue(task)
+            pending = queue.list_pending()
+            self.assertTrue(queue.approve(pending[0]["id"]))
+            approved = queue.get_approved()
+            self.assertEqual(len(approved), 1)
+            self.assertIn("Améliorer", approved[0].description)
+
+
 if __name__ == "__main__":
     unittest.main()

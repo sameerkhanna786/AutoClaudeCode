@@ -102,6 +102,29 @@ class TestSyntaxCheckFiles(unittest.TestCase):
             result = syntax_check_files(["unicode.py"], tmpdir)
             self.assertIsNone(result)
 
+    def test_non_utf8_file_skipped(self):
+        """syntax_check_files should skip files with non-UTF-8 encoding instead of crashing."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            py_file = Path(tmpdir) / "latin1.py"
+            # Write bytes that are valid Latin-1 but invalid UTF-8
+            py_file.write_bytes(b"x = '\xe9'\n")
+            result = syntax_check_files(["latin1.py"], tmpdir)
+            # Should return None (skip the file), not crash with UnicodeDecodeError
+            self.assertIsNone(result)
+
+    def test_non_utf8_file_does_not_mask_syntax_errors(self):
+        """A non-UTF-8 file should be skipped but syntax errors in other files still caught."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            latin_file = Path(tmpdir) / "latin1.py"
+            latin_file.write_bytes(b"x = '\xe9'\n")
+            bad_file = Path(tmpdir) / "bad.py"
+            bad_file.write_text("def foo(\n", encoding="utf-8")
+            result = syntax_check_files(["latin1.py", "bad.py"], tmpdir)
+            self.assertIsNotNone(result)
+            self.assertIn("bad.py", result)
+
 
 # ---------------------------------------------------------------------------
 # gather_tasks

@@ -103,7 +103,7 @@ class TaskApprovalQueue:
         if not self._heartbeat_path.exists():
             return False
         try:
-            text = self._heartbeat_path.read_text().strip()
+            text = self._heartbeat_path.read_text(encoding="utf-8").strip()
             if not text:
                 return False
             data = json.loads(text)
@@ -185,7 +185,7 @@ class TaskApprovalQueue:
             if not f.is_file() or f.suffix != ".json":
                 continue
             try:
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
                 data["id"] = f.stem
                 tasks.append(data)
             except (json.JSONDecodeError, OSError):
@@ -222,7 +222,7 @@ class TaskApprovalQueue:
 
         try:
             # Read pending task and add approval timestamp
-            content = pending_path.read_text()
+            content = pending_path.read_text(encoding="utf-8")
             data = json.loads(content)
             data["approved_at"] = time.time()
 
@@ -277,7 +277,7 @@ class TaskApprovalQueue:
 
         try:
             # Read the task key before deleting for cooldown tracking
-            data = json.loads(pending_path.read_text())
+            data = json.loads(pending_path.read_text(encoding="utf-8"))
             task_key = data.get("task_key", task_id)
             with self._declined_lock:
                 self._declined_keys[task_key] = time.time()
@@ -318,7 +318,7 @@ class TaskApprovalQueue:
             if not f.is_file() or f.suffix != ".json":
                 continue
             try:
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
                 task = Task(
                     description=data.get("description", ""),
                     priority=data.get("priority", 5),
@@ -358,7 +358,7 @@ class TaskApprovalQueue:
             if not f.is_file() or f.suffix != ".json":
                 continue
             try:
-                data = json.loads(f.read_text())
+                data = json.loads(f.read_text(encoding="utf-8"))
                 enqueued_at = data.get("enqueued_at", 0)
                 if enqueued_at > 0 and enqueued_at < cutoff:
                     f.unlink()

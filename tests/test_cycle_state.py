@@ -152,6 +152,21 @@ class TestReadCycleState:
                    for r in caplog.records)
 
 
+class TestCycleStateEncoding:
+    def test_unicode_round_trip(self, tmp_path):
+        """Cycle state with non-ASCII chars should round-trip through write+read."""
+        writer = CycleStateWriter(str(tmp_path))
+        state = CycleState(
+            phase="executing",
+            task_description="Fix résumé handling in café.py",
+        )
+        writer.write(state)
+        loaded = read_cycle_state(str(tmp_path))
+        assert loaded is not None
+        assert "résumé" in loaded.task_description
+        assert "café" in loaded.task_description
+
+
 class TestCycleStateWriterThreadSafety:
     """Tests that write() acquires the lock to prevent races with update()."""
 
