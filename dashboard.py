@@ -1020,15 +1020,20 @@ def get_loc_for_commits(
 
 
 def read_log_tail(log_path: str, num_lines: int) -> List[str]:
-    """Read the last N lines from the log file."""
+    """Read the last N lines from the log file.
+
+    Uses collections.deque to stream the file line-by-line, avoiding
+    loading the entire log (up to 5 MB) into memory just to return
+    the last few hundred lines.
+    """
+    from collections import deque
     num_lines = min(num_lines, MAX_LOG_LINES)
     p = Path(log_path)
     if not p.exists():
         return []
     try:
-        text = p.read_text()
-        lines = text.splitlines()
-        return lines[-num_lines:]
+        with open(p, "r", encoding="utf-8", errors="replace") as f:
+            return [line.rstrip("\n") for line in deque(f, maxlen=num_lines)]
     except OSError:
         return []
 

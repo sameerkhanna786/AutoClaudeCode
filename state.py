@@ -272,8 +272,7 @@ class StateManager:
 
     def record_cycle(self, record: CycleRecord) -> None:
         """Append a cycle record to history."""
-        records = list(self._load_history())
-        records.append(asdict(record))
+        records = self._load_history() + [asdict(record)]
         records = self._prune_history(records)
         self._save_history(records)
         logger.info(

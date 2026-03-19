@@ -335,6 +335,7 @@ class ParallelCoordinator:
         """
         strategy = self.config.parallel.merge_strategy
         max_retries = self.config.parallel.max_merge_retries
+        validator = Validator(self.config)
 
         # Remember current branch (should be main)
         original_branch = self.git.get_current_branch()
@@ -360,7 +361,6 @@ class ParallelCoordinator:
                 # 2. Try auto-merge
                 if self.git.merge_branch(worker.branch_name):
                     # Re-validate after non-ff merge (combined changes may conflict semantically)
-                    validator = Validator(self.config)
                     validation = validator.validate(self.config.target_dir)
                     if validation.passed:
                         logger.info(
@@ -396,7 +396,6 @@ class ParallelCoordinator:
                         return False
                     if self.git.merge_ff_only(worker.branch_name):
                         # Re-validate after rebase
-                        validator = Validator(self.config)
                         validation = validator.validate(self.config.target_dir)
                         if validation.passed:
                             logger.info(
@@ -431,7 +430,6 @@ class ParallelCoordinator:
                         continue
                     if self.git.merge_branch(worker.branch_name):
                         # Re-validate after non-ff merge fallback
-                        validator = Validator(self.config)
                         validation = validator.validate(self.config.target_dir)
                         if validation.passed:
                             logger.info(
@@ -476,7 +474,6 @@ class ParallelCoordinator:
                     commit_msg = f"Merge branch '{worker.branch_name}' (AI-resolved conflicts)"
                     commit_hash = self.git.mark_resolved_and_commit(conflicted, commit_msg)
                     if commit_hash:
-                        validator = Validator(self.config)
                         validation = validator.validate(self.config.target_dir)
                         if validation.passed:
                             logger.info("Worker %d: AI conflict resolution succeeded", worker.worker_id)
