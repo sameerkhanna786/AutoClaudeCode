@@ -174,6 +174,32 @@ class TestSaveRecommendationsExceptionCleanup:
         assert 'encoding="utf-8"' in source or "encoding='utf-8'" in source
 
 
+class TestAnalyzeLoopIntervalNoneError:
+    """Regression: _analyze_loop_interval crashes when error is None in JSON."""
+
+    def _make_config(self):
+        from unittest.mock import MagicMock
+        config = MagicMock()
+        config.orchestrator.loop_interval_seconds = 60
+        return config
+
+    def test_none_error_field_does_not_crash(self):
+        """Records with error=None (from JSON null) must not cause TypeError.
+
+        dict.get("error", "") returns None when the key exists with value None,
+        and re.search(pattern, None) raises TypeError.
+        """
+        import time
+        config = self._make_config()
+        tuner = ConfigTuner("/tmp/test")
+        records = [
+            {"timestamp": time.time(), "success": False, "error": None}
+            for _ in range(20)
+        ]
+        # Should not raise TypeError
+        tuner._analyze_loop_interval(records, config)
+
+
 class TestRetryAnalysisNoDeadCode:
     """Ensure _analyze_retries has no unused computed variables."""
 

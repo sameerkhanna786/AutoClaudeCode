@@ -1582,3 +1582,24 @@ class TestClaudeExecutorReuse:
             assert orch._claude_executor is None
             # shutdown(wait=False) should have been called
             mock_executor.shutdown.assert_called_with(wait=False)
+
+
+class TestCycleStateClearedOnWaitingApproval:
+    """Regression: cycle_state left stale when _cycle returns early for pending approval."""
+
+    def test_cycle_state_cleared_after_waiting_approval(self, orch):
+        """When _cycle returns early due to pending approval, cycle_state must be cleared.
+
+        The return at the waiting_approval branch is before the try/finally
+        that calls cycle_state.clear(), leaving stale state on disk.
+        """
+        orch.discovery.discover_all.return_value = []
+        orch._task_queue = MagicMock()
+        orch._task_queue.pending_count.return_value = 3
+        orch._task_queue.clear_stale = MagicMock()
+
+        orch.cycle_state = MagicMock()
+        orch._cycle()
+
+        # cycle_state.clear() must have been called to prevent stale dashboard state
+        orch.cycle_state.clear.assert_called()

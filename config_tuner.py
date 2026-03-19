@@ -189,7 +189,7 @@ class ConfigTuner:
         no_task_count = sum(
             1 for r in recent
             if not r.get("success") and re.search(
-                r'\bno\s+(?:actionable\s+)?tasks?\b', r.get("error", ""), re.IGNORECASE
+                r'\bno\s+(?:actionable\s+)?tasks?\b', r.get("error") or "", re.IGNORECASE
             )
         )
 
