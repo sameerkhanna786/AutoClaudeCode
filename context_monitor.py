@@ -161,7 +161,12 @@ def write_split_tasks_as_feedback(tasks: List[Task], feedback_dir: str) -> int:
                 dir=str(feedback_path), suffix=".tmp"
             )
             try:
-                with os.fdopen(fd, "w") as f:
+                f = os.fdopen(fd, "w")
+            except Exception:
+                os.close(fd)
+                raise
+            try:
+                with f:
                     f.write(content)
                 os.replace(tmp_path, str(filepath))
             except Exception:

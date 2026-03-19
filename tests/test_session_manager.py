@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -296,6 +297,31 @@ class TestRecoverOrphanedWorktreesUsesGroupKill(unittest.TestCase):
         source = inspect.getsource(SessionManager.recover_orphaned_worktrees)
         self.assertIn("run_with_group_kill", source)
         self.assertNotIn("subprocess.run", source)
+
+
+class TestSaveSessionFdCleanup(unittest.TestCase):
+    """Tests that file descriptors are properly cleaned up when os.fdopen fails."""
+
+    def test_fd_closed_when_fdopen_fails(self):
+        """If os.fdopen() raises, the raw fd from mkstemp must still be closed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = SessionManager(tmpdir)
+            state = SessionState(session_id="test", started_at=1.0)
+
+            close_calls = []
+            original_close = os.close
+
+            def tracking_close(fd):
+                close_calls.append(fd)
+                return original_close(fd)
+
+            with patch("session_manager.os.fdopen", side_effect=OSError("fdopen failed")), \
+                 patch("session_manager.os.close", side_effect=tracking_close):
+                # save_session logs a warning on OSError, should not raise
+                mgr.save_session(state)
+
+            # The fd from mkstemp should have been closed
+            self.assertGreaterEqual(len(close_calls), 1)
 
 
 if __name__ == "__main__":

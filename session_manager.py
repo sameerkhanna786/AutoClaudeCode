@@ -66,7 +66,12 @@ class SessionManager:
                 dir=str(self._state_dir), suffix=".tmp",
             )
             try:
-                with os.fdopen(fd, "w") as f:
+                f = os.fdopen(fd, "w")
+            except Exception:
+                os.close(fd)
+                raise
+            try:
+                with f:
                     json.dump(data, f, indent=2)
                 os.replace(tmp_path, str(self._session_path))
             except Exception:

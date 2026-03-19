@@ -267,5 +267,45 @@ class TestGeminiApiKeyNotInUrl(unittest.TestCase):
         self.assertNotIn("key=", req.full_url)
 
 
+class TestOpenAIApiKeySanitization(unittest.TestCase):
+    """Tests for API key sanitization in OpenAI error messages."""
+
+    def test_sanitize_error_strips_api_key(self):
+        config = _make_config(provider="openai")
+        runner = OpenAIRunner(config)
+        runner._api_key = "sk-secret-openai-key-12345"
+        msg = runner._sanitize_error(
+            "OpenAI error: key=sk-secret-openai-key-12345 failed"
+        )
+        self.assertNotIn("sk-secret-openai-key-12345", msg)
+        self.assertIn("***", msg)
+
+    def test_sanitize_error_no_key_returns_unchanged(self):
+        config = _make_config(provider="openai")
+        runner = OpenAIRunner(config)
+        runner._api_key = ""
+        msg = runner._sanitize_error("Some error message")
+        self.assertEqual(msg, "Some error message")
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_http_error_does_not_leak_api_key(self, mock_urlopen):
+        import urllib.error
+        config = _make_config(provider="openai")
+        runner = OpenAIRunner(config)
+        runner._api_key = "sk-secret-openai-key"
+        err = urllib.error.HTTPError(
+            url="https://api.openai.com/v1/chat/completions",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=None,
+        )
+        err.read = lambda: b"invalid api key: sk-secret-openai-key"
+        mock_urlopen.side_effect = err
+        result = runner.run("test prompt")
+        self.assertFalse(result.success)
+        self.assertNotIn("sk-secret-openai-key", result.error)
+
+
 if __name__ == "__main__":
     unittest.main()

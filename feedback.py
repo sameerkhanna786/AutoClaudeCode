@@ -297,10 +297,23 @@ class FeedbackManager:
             return max(1, int(match.group(1)))
         return 1
 
+    def _is_within_feedback_dir(self, path: Path) -> bool:
+        """Check that a path is within the feedback directory tree."""
+        try:
+            resolved = path.resolve()
+            feedback_resolved = self.feedback_dir.resolve()
+            return str(resolved).startswith(str(feedback_resolved) + os.sep) or resolved == feedback_resolved
+        except (OSError, ValueError):
+            return False
+
     def mark_done(self, source_file: str) -> None:
         """Move a processed feedback file to the done/ directory."""
         src = Path(source_file)
         if not src.exists():
+            return
+
+        if not self._is_within_feedback_dir(src):
+            logger.warning("Rejecting mark_done for path outside feedback dir: %s", src)
             return
 
         dst = self.done_dir / src.name
@@ -324,6 +337,10 @@ class FeedbackManager:
         """Move a feedback file to the failed/ directory after exceeding retries."""
         src = Path(source_file)
         if not src.exists():
+            return
+
+        if not self._is_within_feedback_dir(src):
+            logger.warning("Rejecting mark_failed for path outside feedback dir: %s", src)
             return
 
         dst = self.failed_dir / src.name

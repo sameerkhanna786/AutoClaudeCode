@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from claude_runner import ClaudeResult
 from context_monitor import ContextMonitor, ContextSignals, write_split_tasks_as_feedback
@@ -217,6 +218,35 @@ class TestWriteSplitTasksAtomicWrites(unittest.TestCase):
                 self.assertEqual(count, 0)
             finally:
                 os.chmod(tmpdir, stat.S_IRWXU)
+
+
+class TestWriteSplitTasksFdCleanup(unittest.TestCase):
+    """Tests that file descriptors are properly cleaned up when os.fdopen fails."""
+
+    def test_fd_closed_when_fdopen_fails(self):
+        """If os.fdopen() raises, the raw fd from mkstemp must still be closed."""
+        task = Task(
+            description="Test fd cleanup",
+            priority=1,
+            source="test",
+            task_id="fd-cleanup-1",
+            depends_on=["parent"],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            close_calls = []
+            original_close = os.close
+
+            def tracking_close(fd):
+                close_calls.append(fd)
+                return original_close(fd)
+
+            with patch("context_monitor.os.fdopen", side_effect=OSError("fdopen failed")), \
+                 patch("context_monitor.os.close", side_effect=tracking_close):
+                count = write_split_tasks_as_feedback([task], tmpdir)
+
+            self.assertEqual(count, 0)
+            # The fd from mkstemp should have been closed
+            self.assertGreaterEqual(len(close_calls), 1)
 
 
 if __name__ == "__main__":

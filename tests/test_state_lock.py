@@ -1,6 +1,7 @@
 """Tests for state_lock module."""
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -271,3 +272,38 @@ class TestMissingLockedWrappers:
         report = locked_state.get_strategy_performance_report()
         assert "lint" in report
         assert "2/2 succeeded" in report
+
+
+class TestFileLockFdCleanup:
+    """Tests that file descriptors are properly cleaned up even on errors."""
+
+    def test_fd_closed_on_flock_unlock_failure(self, locked_state):
+        """If flock(LOCK_UN) raises, os.close(fd) must still be called."""
+        import fcntl
+        close_calls = []
+        original_close = os.close
+        original_flock = fcntl.flock
+
+        def tracking_close(fd):
+            close_calls.append(fd)
+            return original_close(fd)
+
+        call_count = 0
+
+        def flock_side_effect(fd, operation):
+            nonlocal call_count
+            call_count += 1
+            if operation == fcntl.LOCK_EX:
+                return original_flock(fd, operation)
+            else:
+                # LOCK_UN - simulate failure
+                raise OSError("unlock failed")
+
+        with patch("state_lock.fcntl.flock", side_effect=flock_side_effect), \
+             patch("state_lock.os.close", side_effect=tracking_close):
+            # The context manager should still close fd even if unlock fails
+            with locked_state._file_lock():
+                pass
+
+            # fd must have been closed regardless of flock(LOCK_UN) failure
+            assert len(close_calls) >= 1

@@ -308,3 +308,43 @@ class TestFeedbackCleanup:
         with patch.object(Path, "iterdir", side_effect=OSError("Permission denied")):
             tasks = fb_mgr.get_pending_feedback()
         assert tasks == []
+
+
+class TestFeedbackPathValidation:
+    """Tests that mark_done/mark_failed reject path traversal attempts."""
+
+    def test_mark_done_rejects_path_outside_feedback_dir(self, fb_mgr, tmp_path):
+        """mark_done should not process files outside the feedback directory."""
+        outside_file = tmp_path / "outside" / "secret.md"
+        outside_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.write_text("sensitive data")
+
+        fb_mgr.mark_done(str(outside_file))
+
+        # File should NOT have been moved — it's outside the feedback dir
+        assert outside_file.exists()
+        done_dir = Path(fb_mgr.done_dir)
+        assert not (done_dir / "secret.md").exists()
+
+    def test_mark_failed_rejects_path_outside_feedback_dir(self, fb_mgr, tmp_path):
+        """mark_failed should not process files outside the feedback directory."""
+        outside_file = tmp_path / "outside" / "secret.md"
+        outside_file.parent.mkdir(parents=True, exist_ok=True)
+        outside_file.write_text("sensitive data")
+
+        fb_mgr.mark_failed(str(outside_file))
+
+        # File should NOT have been moved — it's outside the feedback dir
+        assert outside_file.exists()
+        failed_dir = Path(fb_mgr.failed_dir)
+        assert not (failed_dir / "secret.md").exists()
+
+    def test_mark_done_allows_files_in_feedback_dir(self, fb_mgr):
+        """mark_done should work normally for files inside the feedback directory."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        task_file = fb_dir / "legit-task.md"
+        task_file.write_text("Fix the bug")
+
+        fb_mgr.mark_done(str(task_file))
+        assert not task_file.exists()
+        assert (Path(fb_mgr.done_dir) / "legit-task.md").exists()
