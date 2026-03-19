@@ -720,11 +720,15 @@ class TestTopologicalSortTasks(unittest.TestCase):
         result = topological_sort_tasks([])
         self.assertEqual(result, [])
 
-    def test_unknown_dep_ignored(self):
-        """Dependencies on task_ids not in the list should be ignored."""
+    def test_unknown_dep_ignored_with_warning(self):
+        """Dependencies on task_ids not in the list should be ignored with a warning."""
         a = Task(description="A", priority=1, source="feedback", task_id="a", depends_on=["nonexistent"])
-        result = topological_sort_tasks([a])
+        with patch("shared.logger") as mock_logger:
+            result = topological_sort_tasks([a])
         self.assertEqual(len(result), 1)
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        self.assertIn("non-existent", warning_msg)
 
     def test_many_tasks_performance(self):
         """Verify heap-based sort handles larger DAGs correctly."""

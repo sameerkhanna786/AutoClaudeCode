@@ -1324,3 +1324,27 @@ class TestLoadHistoryTypeValidation:
         assert len(records) == 1
         assert "résumé" in records[0]["task_description"]
         assert "café" in records[0]["task_description"]
+
+
+class TestRecursionErrorHandling:
+    """Verify RecursionError during JSON serialization is caught gracefully."""
+
+    def test_recursive_structure_does_not_crash(self, state_mgr):
+        """A self-referencing data structure should be caught by the save guard."""
+        record = CycleRecord(
+            timestamp=time.time(),
+            task_description="Recursive task",
+            success=True,
+        )
+        state_mgr.record_cycle(record)
+        # Now inject a self-referencing structure into the cache
+        evil = []
+        evil.append(evil)
+        state_mgr._cache = [{"task_description": "ok", "extra": evil}]
+        # _save_history should catch RecursionError, not crash
+        state_mgr._save_history(state_mgr._cache)
+        # The file should still contain the original valid record
+        state_mgr._cache = None
+        records = state_mgr._load_history()
+        assert len(records) == 1
+        assert records[0]["task_description"] == "Recursive task"

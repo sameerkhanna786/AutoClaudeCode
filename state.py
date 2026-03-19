@@ -192,7 +192,7 @@ class StateManager:
         # old validation-only json.dumps() and the file-writing json.dump().
         try:
             serialized = json.dumps(records, indent=2)
-        except (TypeError, ValueError) as e:
+        except (TypeError, ValueError, RecursionError) as e:
             logger.error(
                 "Refusing to save history: records are not JSON-serializable: %s", e,
             )

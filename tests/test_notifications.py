@@ -480,5 +480,40 @@ class TestIsPrivateIpFunction(unittest.TestCase):
         self.assertFalse(_is_private_ip("nonexistent.local"))
 
 
+class TestHttpWebhookWarning(unittest.TestCase):
+    """Verify a warning is logged for HTTP (non-HTTPS) webhooks."""
+
+    @patch("notifications.urllib.request.urlopen")
+    @patch("notifications.logger")
+    def test_http_webhook_logs_warning(self, mock_logger, mock_urlopen):
+        mock_urlopen.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(read=MagicMock(return_value=b""))
+        )
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+        config = _make_config(
+            webhooks=[WebhookConfig(url="http://hooks.example.com/test", type="generic", name="test")]
+        )
+        mgr = NotificationManager(config)
+        mgr.notify("cycle_complete", {"task": "test", "success": True})
+        mock_logger.warning.assert_any_call(
+            "Webhook uses insecure HTTP; consider using HTTPS: %s",
+            "http://hooks.example.com/test",
+        )
+
+    @patch("notifications.urllib.request.urlopen")
+    @patch("notifications.logger")
+    def test_https_webhook_no_http_warning(self, mock_logger, mock_urlopen):
+        mock_urlopen.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(read=MagicMock(return_value=b""))
+        )
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+        config = _make_config()  # default uses https
+        mgr = NotificationManager(config)
+        mgr.notify("cycle_complete", {"task": "test", "success": True})
+        # Should NOT have logged the HTTP warning
+        for call_args in mock_logger.warning.call_args_list:
+            self.assertNotIn("insecure HTTP", str(call_args))
+
+
 if __name__ == "__main__":
     unittest.main()

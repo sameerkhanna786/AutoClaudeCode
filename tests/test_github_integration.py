@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -134,6 +135,40 @@ class TestTokenFromEnvVar(unittest.TestCase):
         )
         client = GitHubClient(config)
         self.assertEqual(client._resolved_token, "ghp_plaintext")
+
+
+class TestPlaintextTokenWarning(unittest.TestCase):
+    """Verify a warning is logged when plaintext token is used."""
+
+    @patch("github_integration.logger")
+    def test_plaintext_token_logs_warning(self, mock_logger):
+        config = GitHubConfig(
+            enabled=True, token="ghp_secret123",
+            repo_owner="test", repo_name="repo",
+        )
+        GitHubClient(config)
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        self.assertIn("plaintext", warning_msg)
+
+    @patch("github_integration.logger")
+    def test_env_token_no_warning(self, mock_logger):
+        config = GitHubConfig(
+            enabled=True, token_env="GITHUB_TOKEN",
+            repo_owner="test", repo_name="repo",
+        )
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "ghp_from_env"}):
+            GitHubClient(config)
+        mock_logger.warning.assert_not_called()
+
+    @patch("github_integration.logger")
+    def test_empty_token_no_warning(self, mock_logger):
+        config = GitHubConfig(
+            enabled=True, token="",
+            repo_owner="test", repo_name="repo",
+        )
+        GitHubClient(config)
+        mock_logger.warning.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -27,6 +27,11 @@ class GitHubClient:
             self._resolved_token = os.environ.get(config.token_env, "")
         else:
             self._resolved_token = config.token
+            if config.token:
+                logger.warning(
+                    "GitHub token is set as plaintext in config. "
+                    "Use 'token_env' to reference an environment variable instead."
+                )
 
     def _request(
         self,

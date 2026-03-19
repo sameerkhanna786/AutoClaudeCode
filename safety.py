@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Cached macOS page size (never changes at runtime).
 _darwin_page_size: Optional[int] = None
+_darwin_page_size_lock = threading.Lock()
 
 # Module-level list of SafetyGuard instances that hold locks, for atexit cleanup.
 _active_guards: List[SafetyGuard] = []
@@ -278,7 +279,9 @@ class SafetyGuard:
                     for line in result.stdout.splitlines():
                         if _darwin_page_size is None and "page size of" in line:
                             try:
-                                _darwin_page_size = int(line.split()[-2])
+                                with _darwin_page_size_lock:
+                                    if _darwin_page_size is None:
+                                        _darwin_page_size = int(line.split()[-2])
                             except (ValueError, IndexError):
                                 pass
                         elif "Pages free:" in line:

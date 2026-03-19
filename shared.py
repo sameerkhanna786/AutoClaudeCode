@@ -92,9 +92,14 @@ def topological_sort_tasks(tasks: List[Task]) -> List[Task]:
     dependents: Dict[str, List[str]] = {iid: [] for iid in internal_ids}
     for iid, t in zip(internal_ids, tasks):
         for dep in t.depends_on:
-            if dep in task_map:
-                in_degree[iid] += 1
-                dependents[dep].append(iid)
+            if dep not in task_map:
+                logger.warning(
+                    "Task %r depends on non-existent task %r; ignoring dependency",
+                    iid, dep,
+                )
+                continue
+            in_degree[iid] += 1
+            dependents[dep].append(iid)
     # Use a heap for O(log n) priority extraction instead of repeated sorting
     counter = 0  # tie-breaker for stable ordering
     heap: List[tuple] = []

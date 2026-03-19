@@ -747,3 +747,33 @@ class TestAcquireLockFdLeakAfterPartialAcquire:
 
         assert len(close_calls) >= 1
         assert guard._lock_fd is None
+
+
+class TestDarwinPageSizeThreadSafety:
+    """Verify _darwin_page_size is set with proper locking."""
+
+    def test_darwin_page_size_lock_exists(self):
+        """The module should define a lock for _darwin_page_size."""
+        import safety
+        import threading
+        assert hasattr(safety, "_darwin_page_size_lock")
+        assert isinstance(safety._darwin_page_size_lock, type(threading.Lock()))
+
+    def test_check_memory_sets_page_size_thread_safe(self, guard):
+        """check_memory on Darwin should use the lock when setting page size."""
+        import safety
+        original = safety._darwin_page_size
+        safety._darwin_page_size = None  # force re-detection
+        try:
+            vm_output = "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                            100000.\nPages inactive:                         50000.\n"
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = vm_output
+            mock_platform = MagicMock()
+            mock_platform.system.return_value = "Darwin"
+            with patch.dict("sys.modules", {"platform": mock_platform}), \
+                 patch("subprocess.run", return_value=mock_result):
+                guard.check_memory()
+            assert safety._darwin_page_size == 16384
+        finally:
+            safety._darwin_page_size = original

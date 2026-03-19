@@ -206,6 +206,12 @@ class NotificationManager:
             )
             return
 
+        if parsed_url.scheme == "http":
+            logger.warning(
+                "Webhook uses insecure HTTP; consider using HTTPS: %s",
+                webhook.url,
+            )
+
         hostname = parsed_url.hostname or ""
         if _is_private_ip(hostname):
             logger.warning(
