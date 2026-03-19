@@ -75,6 +75,9 @@ class GitHubClient:
                 error_body = e.read().decode("utf-8")
             except Exception:
                 pass
+            # Sanitize error body to prevent token leakage in logs
+            if self._config.token and self._config.token in error_body:
+                error_body = error_body.replace(self._config.token, "***")
             logger.error(
                 "GitHub API error: %s %s -> %d: %s",
                 method, path, e.code, error_body,

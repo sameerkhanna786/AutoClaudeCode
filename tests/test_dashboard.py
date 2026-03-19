@@ -615,6 +615,79 @@ class TestDashboardSecurityFixes(unittest.TestCase):
             self.assertNotIn("/", data.get("error", ""))
 
 
+class TestServerBindAddress(unittest.TestCase):
+    """Verify dashboard binds to localhost, not all interfaces."""
+
+    def test_main_binds_to_localhost(self):
+        """The server must bind to 127.0.0.1, not 0.0.0.0."""
+        import inspect
+        from dashboard import main
+        source = inspect.getsource(main)
+        self.assertIn("127.0.0.1", source)
+        self.assertNotIn("0.0.0.0", source)
+
+
+class TestFeedbackDeleteSymlinkRejected(unittest.TestCase):
+    """Verify symlink deletion is rejected to prevent TOCTOU attacks."""
+
+    def _make_handler(self, method="DELETE", path="/"):
+        handler = DashboardHandler.__new__(DashboardHandler)
+        handler.wfile = BytesIO()
+        handler.rfile = BytesIO(b"")
+        handler.path = path
+        handler.command = method
+        handler.request_version = "HTTP/1.1"
+        handler.headers = MagicMock()
+        handler.headers.get = lambda key, default="0": default
+        handler.dashboard_cfg = {
+            "target_dir": ".",
+            "history_file": "/nonexistent/history.json",
+            "state_dir": "/nonexistent",
+            "lock_file": "/nonexistent/lock.pid",
+            "log_file": "/nonexistent/log.txt",
+            "feedback_dir": "/tmp",
+            "feedback_done_dir": "/tmp/done",
+            "feedback_failed_dir": "/tmp/failed",
+            "max_consecutive_failures": 5,
+            "max_cycles_per_hour": 30,
+            "max_cost_usd_per_hour": 10.0,
+            "min_disk_space_mb": 500,
+        }
+        handler.loc_cache = {}
+        handler.loc_lock = threading.Lock()
+        handler._headers_buffer = []
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+        return handler
+
+    def test_symlink_in_feedback_dir_rejected(self):
+        """Symlinks should be rejected to prevent TOCTOU path traversal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a real file outside the feedback dir
+            outside = Path(tmpdir) / "outside"
+            outside.mkdir()
+            secret = outside / "secret.txt"
+            secret.write_text("sensitive data")
+
+            # Create a symlink inside the feedback dir pointing to it
+            feedback_dir = Path(tmpdir) / "feedback"
+            feedback_dir.mkdir()
+            symlink = feedback_dir / "evil.md"
+            symlink.symlink_to(secret)
+
+            handler = self._make_handler()
+            handler.dashboard_cfg["feedback_dir"] = str(feedback_dir)
+            handler._api_feedback_delete("evil.md")
+
+            output = handler.wfile.getvalue().decode()
+            data = json.loads(output)
+            self.assertIn("error", data)
+            handler.send_response.assert_called_with(403)
+            # The actual target file should NOT have been deleted
+            self.assertTrue(secret.exists())
+
+
 class TestStaticHtmlBytesCache(unittest.TestCase):
     """Test that STATIC_HTML is pre-encoded to bytes at module level."""
 

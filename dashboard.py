@@ -1241,7 +1241,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_error(404, f"File '{name}' not found")
             return
 
-        # Only allow deleting from the pending directory
+        # Reject symlinks to prevent TOCTOU race where a regular file is
+        # replaced with a symlink between the resolve() check and unlink().
+        if target.is_symlink():
+            self._send_error(403, "Cannot delete symlinks")
+            return
+
+        # Only allow deleting from the feedback directory
         try:
             target.resolve().relative_to(feedback_dir.resolve())
         except ValueError:
@@ -1249,6 +1255,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            # Use os.open with O_NOFOLLOW to avoid following symlinks
+            # that may appear between the check and the delete (TOCTOU).
+            # On systems where O_NOFOLLOW is not available, fall back to
+            # the regular unlink (the symlink check above still helps).
+            fd = None
+            try:
+                nofollow = getattr(os, "O_NOFOLLOW", 0)
+                if nofollow:
+                    fd = os.open(str(target), os.O_RDONLY | nofollow)
+                    os.close(fd)
+                    fd = None
+            except OSError:
+                # O_NOFOLLOW will raise if target is a symlink — reject it
+                if fd is not None:
+                    os.close(fd)
+                self._send_error(403, "Cannot delete symlinks")
+                return
             target.unlink()
         except OSError as e:
             logger.warning("Failed to delete feedback file %s: %s", target, e)
@@ -1408,8 +1431,8 @@ def main() -> None:
     DashboardHandler.loc_lock = threading.Lock()
     DashboardHandler.task_queue = TaskApprovalQueue(cfg["state_dir"])
 
-    server = ThreadingHTTPServer(("0.0.0.0", args.port), DashboardHandler)
-    logger.info("Dashboard running at http://localhost:%d", args.port)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), DashboardHandler)
+    logger.info("Dashboard running at http://127.0.0.1:%d", args.port)
 
     # Graceful shutdown on SIGINT / SIGTERM
     def shutdown_handler(signum: int, frame: Any) -> None:
