@@ -16,6 +16,9 @@ from config_schema import Config
 
 logger = logging.getLogger(__name__)
 
+# HTTP status codes that indicate transient errors worth retrying
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
+
 # Patterns for scrubbing API keys from error messages
 _API_KEY_PATTERNS = [
     re.compile(r'sk-[A-Za-z0-9]{20,}'),               # OpenAI keys
@@ -69,7 +72,7 @@ class OpenAIRunner:
         return _sanitize_error(message, self._api_key)
 
     def run(self, prompt: str, add_dirs: Optional[List[str]] = None) -> ClaudeResult:
-        """Run OpenAI chat completion."""
+        """Run OpenAI chat completion with retry on transient errors."""
         if not self._api_key:
             return ClaudeResult(
                 success=False,
@@ -82,43 +85,55 @@ class OpenAIRunner:
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 4096,
         }
+        data = json.dumps(payload).encode("utf-8")
+        max_attempts = 3
+        last_error = ""
 
-        try:
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                self._base_url,
-                data=data,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self._api_key}",
-                },
-            )
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                response_data = json.loads(resp.read().decode("utf-8"))
-
-        except urllib.error.HTTPError as e:
-            body = ""
+        for attempt in range(max_attempts):
             try:
-                body = e.read().decode("utf-8")[:500]
-            except Exception:
-                pass
-            return ClaudeResult(
-                success=False,
-                error=self._sanitize_error(f"OpenAI API error {e.code}: {body}"),
-                duration_seconds=time.time() - start,
-            )
-        except urllib.error.URLError as e:
-            return ClaudeResult(
-                success=False,
-                error=self._sanitize_error(f"OpenAI connection error: {e.reason}"),
-                duration_seconds=time.time() - start,
-            )
-        except Exception as e:
-            return ClaudeResult(
-                success=False,
-                error=self._sanitize_error(f"OpenAI request failed: {e}"),
-                duration_seconds=time.time() - start,
-            )
+                req = urllib.request.Request(
+                    self._base_url,
+                    data=data,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self._api_key}",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    response_data = json.loads(resp.read().decode("utf-8"))
+                break  # Success
+
+            except urllib.error.HTTPError as e:
+                body = ""
+                try:
+                    body = e.read().decode("utf-8")[:500]
+                except Exception:
+                    pass
+                last_error = self._sanitize_error(f"OpenAI API error {e.code}: {body}")
+                if e.code in _RETRYABLE_STATUS_CODES and attempt < max_attempts - 1:
+                    delay = (2 ** attempt)
+                    logger.debug("OpenAI transient error %d, retrying in %ds", e.code, delay)
+                    time.sleep(delay)
+                    continue
+                return ClaudeResult(
+                    success=False, error=last_error,
+                    duration_seconds=time.time() - start,
+                )
+            except urllib.error.URLError as e:
+                last_error = self._sanitize_error(f"OpenAI connection error: {e.reason}")
+                if attempt < max_attempts - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                return ClaudeResult(
+                    success=False, error=last_error,
+                    duration_seconds=time.time() - start,
+                )
+            except Exception as e:
+                return ClaudeResult(
+                    success=False,
+                    error=self._sanitize_error(f"OpenAI request failed: {e}"),
+                    duration_seconds=time.time() - start,
+                )
 
         duration = time.time() - start
 
@@ -171,7 +186,7 @@ class GeminiRunner:
         return _sanitize_error(message, self._api_key)
 
     def run(self, prompt: str, add_dirs: Optional[List[str]] = None) -> ClaudeResult:
-        """Run Gemini generateContent."""
+        """Run Gemini generateContent with retry on transient errors."""
         if not self._api_key:
             return ClaudeResult(
                 success=False,
@@ -182,43 +197,55 @@ class GeminiRunner:
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
         }
+        data = json.dumps(payload).encode("utf-8")
+        max_attempts = 3
+        last_error = ""
 
-        try:
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                self._build_url(),
-                data=data,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": self._api_key,
-                },
-            )
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                response_data = json.loads(resp.read().decode("utf-8"))
-
-        except urllib.error.HTTPError as e:
-            body = ""
+        for attempt in range(max_attempts):
             try:
-                body = e.read().decode("utf-8")[:500]
-            except Exception:
-                pass
-            return ClaudeResult(
-                success=False,
-                error=self._sanitize_error(f"Gemini API error {e.code}: {body}"),
-                duration_seconds=time.time() - start,
-            )
-        except urllib.error.URLError as e:
-            return ClaudeResult(
-                success=False,
-                error=self._sanitize_error(f"Gemini connection error: {e.reason}"),
-                duration_seconds=time.time() - start,
-            )
-        except Exception as e:
-            return ClaudeResult(
-                success=False,
-                error=self._sanitize_error(f"Gemini request failed: {e}"),
-                duration_seconds=time.time() - start,
-            )
+                req = urllib.request.Request(
+                    self._build_url(),
+                    data=data,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": self._api_key,
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    response_data = json.loads(resp.read().decode("utf-8"))
+                break  # Success
+
+            except urllib.error.HTTPError as e:
+                body = ""
+                try:
+                    body = e.read().decode("utf-8")[:500]
+                except Exception:
+                    pass
+                last_error = self._sanitize_error(f"Gemini API error {e.code}: {body}")
+                if e.code in _RETRYABLE_STATUS_CODES and attempt < max_attempts - 1:
+                    delay = (2 ** attempt)
+                    logger.debug("Gemini transient error %d, retrying in %ds", e.code, delay)
+                    time.sleep(delay)
+                    continue
+                return ClaudeResult(
+                    success=False, error=last_error,
+                    duration_seconds=time.time() - start,
+                )
+            except urllib.error.URLError as e:
+                last_error = self._sanitize_error(f"Gemini connection error: {e.reason}")
+                if attempt < max_attempts - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                return ClaudeResult(
+                    success=False, error=last_error,
+                    duration_seconds=time.time() - start,
+                )
+            except Exception as e:
+                return ClaudeResult(
+                    success=False,
+                    error=self._sanitize_error(f"Gemini request failed: {e}"),
+                    duration_seconds=time.time() - start,
+                )
 
         duration = time.time() - start
 

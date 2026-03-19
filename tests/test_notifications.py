@@ -363,6 +363,23 @@ class TestNotificationShutdownWaits(unittest.TestCase):
         )
 
 
+class TestDisabledManagerNoThreadPool(unittest.TestCase):
+    """When notifications are disabled, no ThreadPoolExecutor should be created."""
+
+    def test_disabled_no_pool_created(self):
+        """A disabled NotificationManager should not allocate a thread pool."""
+        config = _make_config(enabled=False)
+        mgr = NotificationManager(config)
+        # _webhook_pool should be None when disabled
+        self.assertIsNone(mgr._webhook_pool)
+
+    def test_disabled_shutdown_safe(self):
+        """shutdown() on a disabled manager should not raise."""
+        config = _make_config(enabled=False)
+        mgr = NotificationManager(config)
+        mgr.shutdown()  # Should not raise even with no pool
+
+
 class TestSSRFProtection(unittest.TestCase):
     """Webhook URLs targeting private/loopback IPs must be rejected."""
 

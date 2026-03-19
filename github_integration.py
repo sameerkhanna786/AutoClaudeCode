@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
 from config_schema import GitHubConfig
+from process_utils import run_with_group_kill
 
 logger = logging.getLogger(__name__)
 
@@ -191,9 +191,9 @@ class GitHubClient:
             logger.debug("GitHub PR creation is disabled")
             return None
 
-        # Push the branch
+        # Push the branch using run_with_group_kill to prevent orphaned processes
         try:
-            result = subprocess.run(
+            result = run_with_group_kill(
                 ["git", "push", "-u", "origin", branch_name],
                 cwd=target_dir,
                 capture_output=True,
@@ -203,7 +203,7 @@ class GitHubClient:
             if result.returncode != 0:
                 logger.error("Failed to push branch %s: %s", branch_name, result.stderr)
                 return None
-        except (subprocess.TimeoutExpired, OSError) as e:
+        except OSError as e:
             logger.error("Git push failed: %s", e)
             return None
 

@@ -362,5 +362,90 @@ class TestSanitizeErrorModuleFunction(unittest.TestCase):
         )
 
 
+class TestOpenAIRetryOnTransientError(unittest.TestCase):
+    """OpenAIRunner should retry on transient HTTP errors (429, 500, 502, 503)."""
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_retries_on_429(self, mock_urlopen):
+        import urllib.error
+        config = _make_config("openai")
+        runner = OpenAIRunner(config)
+        runner._api_key = "test-key"
+
+        # First call: 429, second call: success
+        err = urllib.error.HTTPError("url", 429, "rate limited", {}, None)
+        err.read = lambda: b"rate limited"
+        response_data = {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(response_data).encode()
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+
+        mock_urlopen.side_effect = [err, mock_response]
+        result = runner.run("Hello")
+        self.assertTrue(result.success)
+        self.assertEqual(mock_urlopen.call_count, 2)
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_no_retry_on_400(self, mock_urlopen):
+        """Client errors (400) should not be retried."""
+        import urllib.error
+        config = _make_config("openai")
+        runner = OpenAIRunner(config)
+        runner._api_key = "test-key"
+
+        err = urllib.error.HTTPError("url", 400, "bad request", {}, None)
+        err.read = lambda: b"bad request"
+        mock_urlopen.side_effect = err
+        result = runner.run("Hello")
+        self.assertFalse(result.success)
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+
+class TestGeminiRetryOnTransientError(unittest.TestCase):
+    """GeminiRunner should retry on transient HTTP errors."""
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_retries_on_503(self, mock_urlopen):
+        import urllib.error
+        config = _make_config("gemini")
+        runner = GeminiRunner(config)
+        runner._api_key = "test-key"
+
+        err = urllib.error.HTTPError("url", 503, "service unavailable", {}, None)
+        err.read = lambda: b"unavailable"
+        response_data = {
+            "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1},
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(response_data).encode()
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+
+        mock_urlopen.side_effect = [err, mock_response]
+        result = runner.run("Hello")
+        self.assertTrue(result.success)
+        self.assertEqual(mock_urlopen.call_count, 2)
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_no_retry_on_401(self, mock_urlopen):
+        """Client errors (401) should not be retried."""
+        import urllib.error
+        config = _make_config("gemini")
+        runner = GeminiRunner(config)
+        runner._api_key = "test-key"
+
+        err = urllib.error.HTTPError("url", 401, "unauthorized", {}, None)
+        err.read = lambda: b"unauthorized"
+        mock_urlopen.side_effect = err
+        result = runner.run("Hello")
+        self.assertFalse(result.success)
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

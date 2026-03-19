@@ -126,8 +126,11 @@ class NotificationManager:
         self._config = config
         self._recent: Dict[str, float] = {}  # dedup key -> timestamp
         self._lock = threading.Lock()
-        self._webhook_pool = ThreadPoolExecutor(
-            max_workers=4, thread_name_prefix="webhook",
+        # Only allocate the thread pool when notifications are actually enabled,
+        # avoiding wasted resources (4 idle threads) when disabled.
+        self._webhook_pool: Optional[ThreadPoolExecutor] = (
+            ThreadPoolExecutor(max_workers=4, thread_name_prefix="webhook")
+            if config.enabled else None
         )
 
     def notify(self, event: str, details: Optional[Dict[str, Any]] = None) -> None:
@@ -288,7 +291,8 @@ class NotificationManager:
 
     def shutdown(self) -> None:
         """Shut down the webhook thread pool, waiting for pending sends."""
-        self._webhook_pool.shutdown(wait=True)
+        if self._webhook_pool is not None:
+            self._webhook_pool.shutdown(wait=True)
 
     @staticmethod
     def _format_generic_payload(

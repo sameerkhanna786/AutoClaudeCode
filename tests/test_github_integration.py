@@ -49,5 +49,30 @@ class TestTokenSanitization(unittest.TestCase):
             self.assertIn("***", log_args)
 
 
+class TestPushAndCreatePrUsesGroupKill(unittest.TestCase):
+    """push_and_create_pr should use run_with_group_kill to prevent orphaned processes."""
+
+    @patch("github_integration.run_with_group_kill")
+    @patch.object(GitHubClient, "create_pull_request", return_value={"number": 1})
+    def test_push_uses_run_with_group_kill(self, mock_create_pr, mock_group_kill):
+        """git push should use run_with_group_kill instead of subprocess.run."""
+        mock_group_kill.return_value = MagicMock(returncode=0, stderr="")
+        config = GitHubConfig(
+            enabled=True, create_prs=True,
+            token="ghp_test", repo_owner="test", repo_name="repo",
+        )
+        client = GitHubClient(config)
+        client.push_and_create_pr(
+            branch_name="feature",
+            title="Test PR",
+            body="body",
+            target_dir="/tmp/test",
+        )
+        mock_group_kill.assert_called_once()
+        args = mock_group_kill.call_args
+        cmd = args[0][0] if args[0] else args[1].get("cmd")
+        self.assertEqual(cmd, ["git", "push", "-u", "origin", "feature"])
+
+
 if __name__ == "__main__":
     unittest.main()

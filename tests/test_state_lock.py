@@ -309,6 +309,36 @@ class TestFileLockFdCleanup:
             assert len(close_calls) >= 1
 
 
+class TestReentrantHeldFlagOnFlockFailure:
+    """When flock(LOCK_EX) fails, the held flag must NOT be set to False
+    if an outer call already holds it."""
+
+    def test_held_flag_not_cleared_on_nested_flock_failure(self, locked_state):
+        """If flock raises in a nested call, the outer held=True must survive."""
+        import fcntl
+
+        original_flock = fcntl.flock
+        call_count = [0]
+
+        def flock_that_fails_second_time(fd, op):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                # Simulate flock failure on the second (nested) call
+                raise OSError("flock failed")
+            return original_flock(fd, op)
+
+        # Manually set held=True to simulate outer lock ownership
+        locked_state._local.held = True
+
+        # Nested call should be a no-op due to re-entrancy
+        with locked_state._file_lock():
+            pass  # Should not touch held flag at all
+
+        # The outer caller's held=True must be preserved
+        assert locked_state._local.held is True
+        locked_state._local.held = False  # cleanup
+
+
 class TestLoadHistoryReturnsCopy:
     """Test that load_history() returns a copy, not a reference to the cache."""
 
