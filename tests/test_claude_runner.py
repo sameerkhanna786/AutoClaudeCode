@@ -873,3 +873,63 @@ class TestSanitizeStderr:
         result = _sanitize_stderr(msg)
         assert "sk-abc123" not in result
         assert "sk-ant-xyz123" not in result
+
+
+class TestCircuitBreakerCallbackRace:
+    """Test that the on_open callback receives values captured inside the lock,
+    not stale values read outside the lock after release."""
+
+    def test_callback_receives_correct_failure_count(self):
+        """The on_open callback should receive the consecutive_failures count
+        as it was inside the lock, not a potentially stale value."""
+        captured = {}
+
+        def on_open(failures, timeout):
+            captured["failures"] = failures
+            captured["timeout"] = timeout
+
+        cb = CircuitBreaker(failure_threshold=3, on_open=on_open, jitter_factor=0)
+        for _ in range(3):
+            cb.record_failure()
+
+        assert captured["failures"] == 3
+        assert captured["timeout"] == cb._base_recovery_timeout
+
+    def test_callback_receives_correct_recovery_timeout(self):
+        """The on_open callback should receive the recovery_timeout computed inside the lock."""
+        captured_values = []
+
+        def on_open(failures, timeout):
+            captured_values.append((failures, timeout))
+
+        base = 100
+        cb = CircuitBreaker(
+            failure_threshold=2, recovery_timeout=base,
+            on_open=on_open, jitter_factor=0,
+            max_recovery_timeout=10000,
+        )
+
+        # First open
+        cb.record_failure()
+        cb.record_failure()
+        assert len(captured_values) == 1
+        assert captured_values[0] == (2, base)
+
+        # Re-open from half-open (should have doubled recovery timeout)
+        cb._state = CircuitBreaker.STATE_HALF_OPEN
+        cb._half_open_calls = 0
+        cb.record_failure()
+        assert len(captured_values) == 2
+        assert captured_values[1] == (3, base * 2)
+
+    def test_callback_values_match_post_lock_state(self):
+        """Values passed to callback should match the instance state after lock release."""
+        def on_open(failures, timeout):
+            # At this point, reading self._consecutive_failures outside the lock
+            # should give the same value as the 'failures' parameter
+            assert failures == cb._consecutive_failures
+            assert timeout == cb.recovery_timeout
+
+        cb = CircuitBreaker(failure_threshold=2, on_open=on_open, jitter_factor=0)
+        cb.record_failure()
+        cb.record_failure()

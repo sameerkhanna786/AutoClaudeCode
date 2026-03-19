@@ -225,3 +225,37 @@ class TestWriteCacheAtomicWrite:
 
         data = json.loads(Path(cache_path).read_text())
         assert data["entries"]["opus"]["resolved"] == "claude-opus-4-20260101"
+
+
+class TestCacheEncodingUtf8:
+    """Tests that _read_cache and _write_cache use utf-8 encoding for read_text/write."""
+
+    def test_read_cache_handles_non_ascii(self, tmp_path):
+        """_read_cache should handle non-ASCII model names when read_text uses utf-8."""
+        cache_path = str(tmp_path / "model_cache.json")
+        data = {
+            "entries": {
+                "modèle": {
+                    "resolved": "claude-résolvé-42",
+                    "timestamp": time.time(),
+                }
+            }
+        }
+        Path(cache_path).write_text(json.dumps(data), encoding="utf-8")
+        result = _read_cache("modèle", cache_path=cache_path)
+        assert result == "claude-résolvé-42"
+
+    def test_write_cache_non_ascii_roundtrip(self, tmp_path):
+        """_write_cache should write non-ASCII content that _read_cache can read back."""
+        cache_path = str(tmp_path / "model_cache.json")
+        _write_cache("日本語モデル", "claude-日本語-v1", cache_path=cache_path)
+        result = _read_cache("日本語モデル", cache_path=cache_path)
+        assert result == "claude-日本語-v1"
+
+    def test_write_cache_produces_utf8_file(self, tmp_path):
+        """Written cache file should be valid UTF-8."""
+        cache_path = str(tmp_path / "model_cache.json")
+        _write_cache("émoji", "claude-🎉-v1", cache_path=cache_path)
+        content = Path(cache_path).read_text(encoding="utf-8")
+        data = json.loads(content)
+        assert data["entries"]["émoji"]["resolved"] == "claude-🎉-v1"

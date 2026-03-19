@@ -791,7 +791,7 @@ def _load_config(config_path: str) -> Dict[str, Any]:
         "min_disk_space_mb": 500,
     }
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
         if not raw or not isinstance(raw, dict):
             return result
@@ -825,7 +825,7 @@ def load_history(history_path: str) -> List[Dict[str, Any]]:
     if not p.exists():
         return []
     try:
-        text = p.read_text().strip()
+        text = p.read_text(encoding="utf-8").strip()
         if not text:
             return []
         records = json.loads(text)
@@ -842,7 +842,7 @@ def _read_cycle_state(state_dir: str) -> Optional[Dict[str, Any]]:
     if not p.exists():
         return None
     try:
-        text = p.read_text().strip()
+        text = p.read_text(encoding="utf-8").strip()
         if not text:
             return None
         return json.loads(text)

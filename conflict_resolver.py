@@ -65,7 +65,7 @@ class ConflictResolver:
                 return False, self._total_cost
 
             try:
-                conflicted_content = abs_path.read_text(errors="replace")
+                conflicted_content = abs_path.read_text(encoding="utf-8", errors="replace")
             except OSError as e:
                 logger.warning("Failed to read conflicted file %s: %s", abs_path, e)
                 return False, self._total_cost

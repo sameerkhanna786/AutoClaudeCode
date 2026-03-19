@@ -317,6 +317,11 @@ class TaskDiscovery:
                 fpath = Path(ref)
                 if not fpath.is_absolute():
                     fpath = Path(self.target_dir) / ref
+                # Containment check: skip refs that escape target_dir
+                try:
+                    fpath.resolve().relative_to(Path(self.target_dir).resolve())
+                except ValueError:
+                    continue
                 if fpath.exists():
                     existing += 1
             if existing > 0:
@@ -451,9 +456,15 @@ class TaskDiscovery:
                 fpath = Path(filepath)
                 if not fpath.is_absolute():
                     fpath = Path(self.target_dir) / filepath
+                # Containment check: ensure resolved path stays within target_dir
+                try:
+                    resolved = fpath.resolve()
+                    resolved.relative_to(Path(self.target_dir).resolve())
+                except ValueError:
+                    return ""
                 if not fpath.exists():
                     return ""
-                content = fpath.read_text(errors="ignore")
+                content = fpath.read_text(encoding="utf-8", errors="ignore")
             lines = content.split("\n")
             start = max(0, line_num - context_lines - 1)
             end = min(len(lines), line_num + context_lines)
@@ -649,7 +660,7 @@ class TaskDiscovery:
                 rel_path = str(fpath.relative_to(target))
 
                 try:
-                    content = fpath.read_text(errors="ignore")
+                    content = fpath.read_text(encoding="utf-8", errors="ignore")
                 except OSError:
                     continue
 
@@ -743,7 +754,7 @@ class TaskDiscovery:
 
         cmd = [
             cc.command, "-p", prompt,
-            "--model", self.config.discovery.discovery_model or self.config.claude.resolved_model,
+            "--model", self.config.discovery.discovery_model or self.config.claude.resolved_model or self.config.claude.model,
             "--max-turns", str(self.config.discovery.discovery_max_turns),
             "--output-format", "json",
         ]
@@ -925,7 +936,7 @@ class TaskDiscovery:
                 rel_path = str(fpath.relative_to(target))
 
                 try:
-                    content = fpath.read_text(errors="ignore")
+                    content = fpath.read_text(encoding="utf-8", errors="ignore")
                 except OSError:
                     continue
 
@@ -1037,7 +1048,7 @@ class TaskDiscovery:
                 rel_path = str(fpath.relative_to(target))
 
                 try:
-                    source = fpath.read_text(errors="ignore")
+                    source = fpath.read_text(encoding="utf-8", errors="ignore")
                     tree = ast.parse(source, filename=rel_path)
                 except (OSError, SyntaxError):
                     continue
@@ -1147,7 +1158,7 @@ class TaskDiscovery:
                 rel_path = str(fpath.relative_to(target))
 
                 try:
-                    source = fpath.read_text(errors="ignore")
+                    source = fpath.read_text(encoding="utf-8", errors="ignore")
                     tree = ast.parse(source, filename=rel_path)
                 except (OSError, SyntaxError):
                     continue
@@ -1201,7 +1212,7 @@ class TaskDiscovery:
                 rel_path = str(fpath.relative_to(target))
 
                 try:
-                    source = fpath.read_text(errors="ignore")
+                    source = fpath.read_text(encoding="utf-8", errors="ignore")
                     tree = ast.parse(source, filename=rel_path)
                 except (OSError, SyntaxError):
                     continue

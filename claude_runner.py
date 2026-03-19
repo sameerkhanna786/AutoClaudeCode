@@ -177,6 +177,8 @@ class CircuitBreaker:
     def record_failure(self) -> None:
         """Record a failed call — may trip the circuit breaker to OPEN."""
         notify = False
+        notify_failures = 0
+        notify_timeout = 0.0
         with self._lock:
             self._consecutive_failures += 1
             if self._state == self.STATE_HALF_OPEN:
@@ -186,6 +188,8 @@ class CircuitBreaker:
                 self._state = self.STATE_OPEN
                 self._opened_at = time.monotonic()
                 notify = True
+                notify_failures = self._consecutive_failures
+                notify_timeout = self.recovery_timeout
                 logger.warning(
                     "Circuit breaker re-opening after failed probe call "
                     "(%d consecutive failures, recovery_timeout=%.0fs)",
@@ -200,6 +204,8 @@ class CircuitBreaker:
                 self._state = self.STATE_OPEN
                 self._opened_at = time.monotonic()
                 notify = True
+                notify_failures = self._consecutive_failures
+                notify_timeout = self.recovery_timeout
                 logger.warning(
                     "Circuit breaker OPEN after %d consecutive failures. "
                     "API calls blocked for %.0fs (backoff level %d).",
@@ -209,7 +215,7 @@ class CircuitBreaker:
         # Fire notification callback outside the lock to avoid deadlocks
         if notify and self._on_open is not None:
             try:
-                self._on_open(self._consecutive_failures, self.recovery_timeout)
+                self._on_open(notify_failures, notify_timeout)
             except Exception:
                 logger.debug("Circuit breaker on_open callback raised", exc_info=True)
 

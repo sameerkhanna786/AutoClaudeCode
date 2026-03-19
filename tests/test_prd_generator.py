@@ -282,5 +282,55 @@ class TestImportPrdSizeLimit(unittest.TestCase):
             self.assertEqual(len(result), 1)
 
 
+class TestPrdNonAsciiEncoding(unittest.TestCase):
+    """Tests that import_prd and export_prd handle non-ASCII content with utf-8 encoding."""
+
+    def test_import_prd_non_ascii_content(self):
+        """import_prd should correctly read files containing non-ASCII characters."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path = str(Path(tmpdir) / "prd.yaml")
+            data = {
+                "tasks": [
+                    {"id": "t1", "description": "Corriger le bogue café ☕", "priority": 1},
+                    {"id": "t2", "description": "日本語のタスク", "priority": 2},
+                ],
+            }
+            Path(prd_path).write_text(yaml.dump(data, allow_unicode=True), encoding="utf-8")
+            tasks = import_prd(prd_path)
+            self.assertEqual(len(tasks), 2)
+            self.assertIn("café", tasks[0].description)
+            self.assertIn("日本語", tasks[1].description)
+
+    def test_export_prd_non_ascii_roundtrip(self):
+        """export_prd should write non-ASCII content that import_prd can read back."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_tasks = [
+                Task(description="Résoudre le problème über", priority=1,
+                     source="feedback", task_id="t1"),
+                Task(description="修复错误 🐛", priority=2,
+                     source="lint", task_id="t2"),
+            ]
+            prd = generate_prd(original_tasks)
+            prd_path = str(Path(tmpdir) / "prd.yaml")
+            export_prd(prd, prd_path)
+            imported = import_prd(prd_path)
+            self.assertEqual(len(imported), 2)
+            self.assertIn("über", imported[0].description)
+            self.assertIn("修复错误", imported[1].description)
+
+    def test_export_json_non_ascii(self):
+        """export_prd in JSON format should handle non-ASCII content."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd = {
+                "version": "1.0",
+                "tasks": [{"id": "t1", "description": "Ñoño señor 🎉"}],
+            }
+            output = str(Path(tmpdir) / "prd.json")
+            export_prd(prd, output, fmt="json")
+            content = Path(output).read_text(encoding="utf-8")
+            loaded = json.loads(content)
+            self.assertIn("Ñoño", loaded["tasks"][0]["description"])
+
+
 if __name__ == "__main__":
     unittest.main()

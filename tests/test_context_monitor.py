@@ -344,5 +344,30 @@ class TestEmptyTaskIdSplitTasks(unittest.TestCase):
         self.assertTrue(split_tasks[0].task_id.startswith("my-task__split"))
 
 
+class TestExtractSignalsNoneResultText(unittest.TestCase):
+    """Tests that extract_signals handles result_text=None without crashing."""
+
+    def test_result_text_none_does_not_crash(self):
+        """extract_signals should not raise AttributeError when result_text is None."""
+        config = _make_config()
+        monitor = ContextMonitor(config)
+        result = ClaudeResult(
+            success=False,
+            result_text=None,  # type: ignore[arg-type]
+            error="some error",
+        )
+        # After the fix, this should not raise AttributeError on None.strip()
+        signals = monitor.extract_signals(result)
+        self.assertTrue(signals.result_text_empty)
+
+    def test_result_text_empty_string(self):
+        """extract_signals should handle empty string result_text normally."""
+        config = _make_config()
+        monitor = ContextMonitor(config)
+        result = ClaudeResult(success=True, result_text="")
+        signals = monitor.extract_signals(result)
+        self.assertTrue(signals.result_text_empty)
+
+
 if __name__ == "__main__":
     unittest.main()

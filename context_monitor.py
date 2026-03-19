@@ -53,7 +53,7 @@ class ContextMonitor:
             output_tokens=result.output_tokens,
             context_window_pct=result.context_window_pct,
             hit_max_turns=hit_max_turns,
-            result_text_empty=not result.result_text.strip(),
+            result_text_empty=not (result.result_text or "").strip(),
         )
 
     def should_split(self, signals: ContextSignals) -> bool:

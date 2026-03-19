@@ -85,7 +85,7 @@ def import_prd(prd_path: str) -> List[Task]:
         )
         return []
 
-    content = path.read_text()
+    content = path.read_text(encoding="utf-8")
 
     # Try JSON first
     data = None
@@ -158,6 +158,6 @@ def export_prd(prd: Dict[str, Any], output_path: str,
     else:
         content = yaml.dump(prd, default_flow_style=False, sort_keys=False)
 
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     logger.info("Exported PRD to %s (%s format, %d tasks)",
                 output_path, fmt, len(prd.get("tasks", [])))

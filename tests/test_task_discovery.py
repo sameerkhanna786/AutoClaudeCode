@@ -963,3 +963,40 @@ class TestCoverageGapsCleanup:
         tasks = discovery._discover_coverage_gaps()
         assert tasks == []
         assert not cov_file.exists(), "coverage.json should be cleaned up even on parse error"
+
+
+class TestReadFileSnippetPathTraversal:
+    """Tests that _read_file_snippet prevents path traversal outside target_dir."""
+
+    def test_dotdot_sequence_blocked(self, tmp_path, default_config):
+        """_read_file_snippet should not read files outside target_dir via '../' sequences."""
+        # Create a target directory and a file outside it
+        target_dir = tmp_path / "project"
+        target_dir.mkdir()
+        (target_dir / "safe.py").write_text("line1\nline2\nline3\n")
+
+        outside_dir = tmp_path / "secrets"
+        outside_dir.mkdir()
+        secret_file = outside_dir / "passwords.txt"
+        secret_file.write_text("supersecret\n")
+
+        default_config.target_dir = str(target_dir)
+        discovery = TaskDiscovery(default_config)
+
+        # Attempt to read a file outside target_dir using path traversal
+        snippet = discovery._read_file_snippet("../secrets/passwords.txt", 1)
+        # After the fix, the snippet should be empty (file outside target_dir)
+        assert "supersecret" not in snippet, \
+            "_read_file_snippet should not allow reading files outside target_dir"
+
+    def test_safe_relative_path_works(self, tmp_path, default_config):
+        """_read_file_snippet should still work for files inside target_dir."""
+        target_dir = tmp_path / "project"
+        target_dir.mkdir()
+        (target_dir / "app.py").write_text("def hello():\n    return 'world'\n")
+
+        default_config.target_dir = str(target_dir)
+        discovery = TaskDiscovery(default_config)
+
+        snippet = discovery._read_file_snippet("app.py", 1)
+        assert "hello" in snippet

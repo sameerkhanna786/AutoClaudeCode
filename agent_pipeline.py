@@ -134,12 +134,12 @@ class AgentWorkspace:
 
     def write(self, name: str, content: str) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
-        self._safe_path(name).write_text(content)
+        self._safe_path(name).write_text(content, encoding="utf-8")
 
     def read(self, name: str) -> Optional[str]:
         path = self._safe_path(name)
         if path.exists():
-            return path.read_text()
+            return path.read_text(encoding="utf-8")
         return None
 
     def exists(self, name: str) -> bool:

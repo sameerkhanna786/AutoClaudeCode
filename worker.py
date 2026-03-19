@@ -155,8 +155,8 @@ class Worker:
                 )
                 # Create a worker-local ClaudeRunner with overridden max_turns
                 import copy
-                plan_config = copy.copy(self.config)
-                plan_config.claude = copy.copy(self.config.claude)
+                plan_config = copy.deepcopy(self.config)
+                plan_config.claude = copy.deepcopy(self.config.claude)
                 plan_config.claude.max_turns = effective_turns
                 from provider_runner import create_runner
                 plan_runner = create_runner(plan_config)

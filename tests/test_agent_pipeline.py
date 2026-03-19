@@ -1107,3 +1107,34 @@ class TestSkipPlanningFor:
         assert result.success is True
         planner_prompts = [p for p in prompts_seen if "PLANNER" in p]
         assert len(planner_prompts) == 1
+
+
+class TestAgentWorkspaceNonAscii:
+    """Tests that AgentWorkspace.write() and .read() handle non-ASCII content with utf-8."""
+
+    def test_write_and_read_non_ascii(self, tmp_path):
+        """write() and read() should preserve non-ASCII characters."""
+        ws = AgentWorkspace(str(tmp_path / "workspace"))
+        ws.clean()
+        content = "Plan: résoudre le problème café ☕\n日本語テスト\n修复 🐛"
+        ws.write("plan.md", content)
+        result = ws.read("plan.md")
+        assert result == content
+
+    def test_write_unicode_emoji(self, tmp_path):
+        """write() should handle emoji and special Unicode characters."""
+        ws = AgentWorkspace(str(tmp_path / "workspace"))
+        ws.clean()
+        content = "Status: ✅ Passed 🎉\nError: ❌ Failed\nÜber: señor"
+        ws.write("status.md", content)
+        result = ws.read("status.md")
+        assert result == content
+
+    def test_write_cjk_characters(self, tmp_path):
+        """write() should handle CJK (Chinese, Japanese, Korean) characters."""
+        ws = AgentWorkspace(str(tmp_path / "workspace"))
+        ws.clean()
+        content = "任务：修复中文编码问题\nタスク：日本語テスト\n작업: 한국어 테스트"
+        ws.write("cjk.md", content)
+        result = ws.read("cjk.md")
+        assert result == content

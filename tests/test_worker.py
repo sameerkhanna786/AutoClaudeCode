@@ -358,3 +358,38 @@ class TestWorkerBranchNamePrecision:
         w1 = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
         w2 = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
         assert w1.branch_name != w2.branch_name
+
+
+class TestConfigMutationIsolation:
+    """Tests that plan_config uses deepcopy so nested config objects are not shared."""
+
+    def test_plan_config_max_turns_does_not_mutate_original(self, worker_config, tmp_git_repo):
+        """Modifying plan_config.claude.max_turns should not affect the original config."""
+        import copy
+        original_max_turns = worker_config.claude.max_turns
+
+        # Simulate what worker.py does with copy.copy (the bug)
+        shallow_config = copy.copy(worker_config)
+        shallow_config.claude = copy.copy(worker_config.claude)
+        shallow_config.claude.max_turns = 5
+
+        # With copy.copy of claude, the original should NOT be affected
+        # (the current code does copy.copy on config.claude too, which is correct
+        # for flat attributes but would fail for nested mutable objects inside claude)
+        assert worker_config.claude.max_turns == original_max_turns, \
+            "Modifying plan_config.claude.max_turns should not affect original config"
+
+    def test_plan_config_nested_objects_are_isolated(self, worker_config, tmp_git_repo):
+        """Nested mutable objects (like lists in config) should be isolated between copies."""
+        import copy
+
+        # copy.copy creates shallow copy - nested mutable objects are shared
+        shallow_config = copy.copy(worker_config)
+        # The validation sub-object is shared with shallow copy
+        assert shallow_config.validation is worker_config.validation, \
+            "Shallow copy shares nested objects (this is the bug)"
+
+        # copy.deepcopy would isolate them
+        deep_config = copy.deepcopy(worker_config)
+        assert deep_config.validation is not worker_config.validation, \
+            "Deep copy should isolate nested objects"

@@ -753,5 +753,49 @@ class TestLocCacheBounds(unittest.TestCase):
         self.assertLessEqual(len(cache), 1000)
 
 
+class TestLoadHistoryNonAscii(unittest.TestCase):
+    """Tests that load_history handles non-ASCII content with utf-8 encoding."""
+
+    def test_non_ascii_task_descriptions(self):
+        """load_history should correctly read JSON containing non-ASCII characters."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json",
+                                         delete=False, encoding="utf-8") as f:
+            records = [
+                {"timestamp": 1.0, "success": True,
+                 "task": "Résoudre le problème café ☕"},
+                {"timestamp": 2.0, "success": True,
+                 "task": "修复中文编码问题 🐛"},
+            ]
+            json.dump(records, f, ensure_ascii=False)
+            path = f.name
+        try:
+            result = load_history(path)
+            self.assertEqual(len(result), 2)
+            self.assertIn("café", result[0]["task"])
+            self.assertIn("修复", result[1]["task"])
+        finally:
+            os.unlink(path)
+
+
+class TestReadCycleStateNonAscii(unittest.TestCase):
+    """Tests that _read_cycle_state handles non-ASCII content with utf-8 encoding."""
+
+    def test_non_ascii_cycle_state(self):
+        """_read_cycle_state should correctly read state with non-ASCII characters."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_file = Path(tmpdir) / "current_cycle.json"
+            state_data = {
+                "phase": "executing",
+                "task_description": "Corriger l'erreur über señor 🎉",
+            }
+            state_file.write_text(
+                json.dumps(state_data, ensure_ascii=False), encoding="utf-8"
+            )
+            result = _read_cycle_state(tmpdir)
+            self.assertIsNotNone(result)
+            self.assertIn("über", result["task_description"])
+            self.assertIn("señor", result["task_description"])
+
+
 if __name__ == "__main__":
     unittest.main()

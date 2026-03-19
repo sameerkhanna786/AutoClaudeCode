@@ -22,7 +22,7 @@ def _read_cache(model_alias: str, cache_path: str = _CACHE_FILE) -> Optional[str
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return None
         # New multi-alias format: {"entries": {"opus": {"resolved": ..., "timestamp": ...}}}
@@ -55,7 +55,7 @@ def _write_cache(model_alias: str, resolved: str, cache_path: str = _CACHE_FILE)
         entries: dict = {}
         if path.exists():
             try:
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
                 if isinstance(data, dict) and isinstance(data.get("entries"), dict):
                     entries = data["entries"]
             except (json.JSONDecodeError, OSError):
