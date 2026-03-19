@@ -825,3 +825,30 @@ class TestAtomicMoveRejectsSymlinks:
         assert "O_NOFOLLOW" in source, (
             "_atomic_move should use O_NOFOLLOW to prevent TOCTOU symlink attacks"
         )
+
+
+class TestAtomicMoveFchmodFdLeak:
+    """Test that _atomic_move closes fd if fchmod raises."""
+
+    def test_fchmod_failure_closes_fd(self, fb_mgr, tmp_path):
+        """If os.fchmod raises, the fd should still be closed (no leak)."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        done_dir = Path(fb_mgr.done_dir)
+        src = fb_dir / "task.md"
+        src.write_text("content")
+        dst = done_dir / "task.md"
+
+        close_calls = []
+        original_close = os.close
+
+        def tracking_close(fd):
+            close_calls.append(fd)
+            return original_close(fd)
+
+        with patch("feedback.os.fchmod", side_effect=OSError("not supported")):
+            with patch("os.close", tracking_close):
+                with pytest.raises(OSError, match="not supported"):
+                    fb_mgr._atomic_move(src, dst)
+
+        # The fd from mkstemp should have been closed
+        assert len(close_calls) >= 1

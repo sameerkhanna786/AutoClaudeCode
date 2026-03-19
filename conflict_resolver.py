@@ -49,6 +49,8 @@ class ConflictResolver:
             resolved without remaining conflict markers.
         """
         max_cost = self.config.parallel.conflict_resolution_max_cost
+        # Reset per-call cost so reused instances don't carry over prior costs
+        self._total_cost = 0.0
 
         for filepath in conflicted_files:
             # Cost guard

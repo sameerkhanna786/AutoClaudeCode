@@ -217,21 +217,26 @@ class TestResolveConflicts:
     def test_cost_limit_enforced(self, tmp_path):
         config = self._make_config(max_cost=0.10)
         resolver = ConflictResolver(config)
-        # Pre-load cost to exceed limit
-        resolver._total_cost = 0.10
 
-        conflict_file = tmp_path / "costly.py"
-        conflict_file.write_text("<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> feat\n")
+        # Create three conflicted files; each resolution costs 0.05
+        for name in ("a.py", "b.py", "c.py"):
+            (tmp_path / name).write_text("<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> feat\n")
 
+        mock_result = ClaudeResult(
+            success=True,
+            result_text="```\ndef merged():\n    pass\n```",
+            cost_usd=0.05,
+        )
         with patch.object(resolver, "runner") as mock_runner:
+            mock_runner.run.return_value = mock_result
             success, cost = resolver.resolve_conflicts(
-                str(tmp_path), ["costly.py"], "feat", "main",
+                str(tmp_path), ["a.py", "b.py", "c.py"], "feat", "main",
             )
-            # Runner should never be called because cost limit is already hit
-            mock_runner.run.assert_not_called()
+            # Third file should be skipped: 0.05 + 0.05 = 0.10 >= max_cost
+            assert mock_runner.run.call_count == 2
 
         assert success is False
-        assert cost == 0.10
+        assert cost == pytest.approx(0.10)
 
     def test_cost_accumulates_across_files(self, tmp_path):
         config = self._make_config(max_cost=0.10)
@@ -519,3 +524,41 @@ class TestResolveConflictsFileErrors:
                     str(tmp_path), [filepath], "worker-branch", "main"
                 )
         assert success is False
+
+
+class TestCostResetOnReuse:
+    """Test that _total_cost resets on each resolve_conflicts call."""
+
+    def test_cost_resets_between_calls(self, tmp_path):
+        """A reused ConflictResolver should not carry cost from prior calls."""
+        config = Config()
+        config.parallel.conflict_resolution_max_cost = 2.0
+        resolver = ConflictResolver(config)
+
+        filepath = "test.py"
+        (tmp_path / filepath).write_text("line 1\nline 2\n")
+
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result_text = "```\nline 1\nline 2\n```"
+        mock_result.cost_usd = 0.05
+        mock_result.error = None
+
+        with patch.object(resolver, "runner") as mock_runner:
+            mock_runner.run.return_value = mock_result
+            # First call
+            success1, cost1 = resolver.resolve_conflicts(
+                str(tmp_path), [filepath], "worker", "main"
+            )
+            # Recreate the file for the second call
+            (tmp_path / filepath).write_text("line 1\nline 2\n")
+            # Second call should start with cost=0, not carry over
+            success2, cost2 = resolver.resolve_conflicts(
+                str(tmp_path), [filepath], "worker", "main"
+            )
+
+        assert success1 is True
+        assert success2 is True
+        # Each call should report only its own cost
+        assert cost1 == pytest.approx(0.05)
+        assert cost2 == pytest.approx(0.05)

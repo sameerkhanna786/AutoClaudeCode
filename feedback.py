@@ -161,8 +161,8 @@ class FeedbackManager:
                 dir=str(dst.parent), suffix=".tmp"
             )
             try:
-                os.fchmod(tmp_fd, 0o600)
                 try:
+                    os.fchmod(tmp_fd, 0o600)
                     f = os.fdopen(tmp_fd, "w", encoding="utf-8")
                 except Exception:
                     os.close(tmp_fd)
