@@ -319,5 +319,25 @@ class TestWebhookThreadPool(unittest.TestCase):
         mock_urlopen.assert_called_once()
 
 
+class TestNotificationManagerShutdown(unittest.TestCase):
+    """Tests for the shutdown method."""
+
+    def test_shutdown_does_not_raise(self):
+        """shutdown() should complete without error."""
+        config = _make_config()
+        mgr = NotificationManager(config)
+        mgr.shutdown()  # Should not raise
+
+    def test_shutdown_prevents_new_sends(self):
+        """After shutdown, the pool should reject new work."""
+        config = _make_config()
+        mgr = NotificationManager(config)
+        mgr.shutdown()
+        # After shutdown, submitting new work should raise RuntimeError
+        import concurrent.futures
+        with self.assertRaises(RuntimeError):
+            mgr._webhook_pool.submit(lambda: None)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -221,8 +221,8 @@ class GitManager:
                                 shutil.rmtree(fpath, ignore_errors=True)
                             else:
                                 fpath.unlink()
-                        except OSError:
-                            pass
+                        except OSError as e:
+                            logger.warning("Failed to remove %s during rollback: %s", f, e)
                     reverted_count += 1
             logger.info("Targeted rollback: reverted %d files", len(files_to_revert))
             return

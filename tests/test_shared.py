@@ -746,5 +746,16 @@ class TestTopologicalSortTasks(unittest.TestCase):
         self.assertEqual(len(result), 3)
 
 
+class TestSummarizeMixedSourcesEmptyTasks(unittest.TestCase):
+    """Test that _summarize_mixed_sources handles empty task lists."""
+
+    def test_empty_tasks_returns_apply_changes(self):
+        """_summarize_mixed_sources with empty tasks should not crash."""
+        from shared import _summarize_mixed_sources
+        # Empty tasks and sources: should not raise TypeError from set().union()
+        result = _summarize_mixed_sources(set(), [])
+        self.assertEqual(result, "Apply changes")
+
+
 if __name__ == "__main__":
     unittest.main()

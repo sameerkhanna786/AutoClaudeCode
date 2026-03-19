@@ -582,3 +582,38 @@ class TestAtomicMoveFileNotFound:
         src.unlink()
         # Should not raise — handles FileNotFoundError gracefully
         fb_mgr._atomic_move(src, dst)
+
+
+class TestCleanupStaleClaims:
+    """Tests for _cleanup_stale_claims method."""
+
+    def test_removes_old_claimed_files(self, fb_mgr):
+        """Stale .claimed files older than max_age_seconds should be removed."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        claimed = fb_dir / "task.md.claimed"
+        claimed.write_text("stale claimed content")
+        # Set mtime to 2 hours ago
+        old_time = time.time() - 7200
+        os.utime(claimed, (old_time, old_time))
+        fb_mgr._cleanup_stale_claims(max_age_seconds=3600)
+        assert not claimed.exists()
+
+    def test_preserves_recent_claimed_files(self, fb_mgr):
+        """Recently claimed files should not be removed."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        claimed = fb_dir / "active.md.claimed"
+        claimed.write_text("active claimed content")
+        fb_mgr._cleanup_stale_claims(max_age_seconds=3600)
+        assert claimed.exists()
+
+    def test_cleanup_stale_claims_called_during_cleanup(self, fb_mgr):
+        """Stale claims should be cleaned up during periodic cleanup cycle."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        claimed = fb_dir / "old-task.md.claimed"
+        claimed.write_text("stale")
+        old_time = time.time() - 7200
+        os.utime(claimed, (old_time, old_time))
+        # Force cleanup by setting last cleanup time far in the past
+        fb_mgr._last_cleanup_time = 0.0
+        fb_mgr.get_pending_feedback()
+        assert not claimed.exists()

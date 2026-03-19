@@ -514,7 +514,7 @@ def _summarize_mixed_sources(sources: set, tasks: List[Task]) -> str:
             parts.append(clean_description(group[0].description).lower())
 
     file_count = len(set().union(*(set(extract_file_names(source_groups[s]))
-                                   for s in source_groups)))
+                                   for s in source_groups))) if source_groups else 0
     subject_parts = " and ".join(parts[:2])
     if len(parts) > 2:
         subject_parts += f" and {len(parts) - 2} more"

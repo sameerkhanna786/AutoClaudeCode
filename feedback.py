@@ -279,11 +279,12 @@ class FeedbackManager:
 
             tasks.append(task)
 
-        # Clean up old done/failed files (at most once per hour)
+        # Clean up old done/failed files and stale claims (at most once per hour)
         now = time.time()
         if now - self._last_cleanup_time > 3600:
             self._cleanup_old_files(self.done_dir)
             self._cleanup_old_files(self.failed_dir)
+            self._cleanup_stale_claims()
             self._last_cleanup_time = now
 
         return tasks
@@ -301,6 +302,28 @@ class FeedbackManager:
             if fpath.is_file() and fpath.name != ".gitkeep":
                 try:
                     if fpath.stat().st_mtime < cutoff:
+                        fpath.unlink()
+                except OSError:
+                    pass
+
+    def _cleanup_stale_claims(self, max_age_seconds: int = 3600) -> None:
+        """Remove .claimed files older than max_age_seconds.
+
+        When a worker crashes after claiming a feedback file, the .claimed
+        file remains forever, preventing the task from being retried.
+        """
+        if not self.feedback_dir.exists():
+            return
+        cutoff = time.time() - max_age_seconds
+        try:
+            entries = list(self.feedback_dir.iterdir())
+        except OSError:
+            return
+        for fpath in entries:
+            if fpath.is_file() and fpath.name.endswith(".claimed"):
+                try:
+                    if fpath.stat().st_mtime < cutoff:
+                        logger.warning("Removing stale claimed file: %s", fpath.name)
                         fpath.unlink()
                 except OSError:
                     pass

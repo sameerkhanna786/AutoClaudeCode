@@ -616,7 +616,7 @@ class ParallelCoordinator:
         # Use pre-computed degradation result to avoid redundant history loading.
         effective_workers = self.max_workers
         if degradation and degradation.get("degraded"):
-            effective_workers = max(1, int(self.max_workers * degradation["batch_size_factor"]))
+            effective_workers = max(1, int(self.max_workers * degradation.get("batch_size_factor", 1.0)))
 
         # Group tasks that reference the same source_file to avoid merge
         # conflicts when different workers modify the same file.

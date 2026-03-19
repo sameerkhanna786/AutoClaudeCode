@@ -525,6 +525,24 @@ class TestMergeCheckoutFailureAfterRebase:
         assert any("checkout" in r.message.lower() for r in caplog.records if r.levelno >= logging.WARNING)
 
 
+class TestDegradationMissingBatchSizeFactor:
+    """Test that _partition_tasks doesn't crash when degradation dict lacks batch_size_factor."""
+
+    def test_degradation_missing_batch_size_factor(self, parallel_config):
+        """Degradation dict with 'degraded' but no 'batch_size_factor' should use default."""
+        parallel_config.parallel.max_workers = 4
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description=f"Task {i}", priority=3, source="lint")
+            for i in range(5)
+        ]
+        # Missing 'batch_size_factor' key — should not raise KeyError
+        degradation = {"degraded": True}
+        groups = coord._partition_tasks(tasks, degradation=degradation)
+        # With default factor 1.0, all 4 workers should be available
+        assert len(groups) == 4
+
+
 class TestSignalHandlerWorkersCopy:
     """Test that the signal handler snapshots _workers to avoid mutation races."""
 

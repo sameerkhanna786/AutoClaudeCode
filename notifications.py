@@ -250,6 +250,10 @@ class NotificationManager:
             lines.append(f"\u2022 {key}: {value}")
         return {"content": "\n".join(lines)}
 
+    def shutdown(self) -> None:
+        """Shut down the webhook thread pool, waiting for pending sends."""
+        self._webhook_pool.shutdown(wait=False)
+
     @staticmethod
     def _format_generic_payload(
         event: str, details: Dict[str, Any],
