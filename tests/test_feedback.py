@@ -705,3 +705,35 @@ class TestIsWithinFeedbackDirResolvesFirst:
         import inspect
         source = inspect.getsource(type(fb_mgr)._atomic_move)
         assert 'encoding="utf-8"' in source or "encoding='utf-8'" in source
+
+
+class TestBacktickSanitization:
+    """Test that backtick command substitution is stripped from feedback."""
+
+    def test_backtick_command_substitution_is_stripped(self):
+        from feedback import sanitize_feedback_content
+        content = "Fix the bug `rm -rf /` in module"
+        result = sanitize_feedback_content(content)
+        assert "`rm -rf /`" not in result
+        # The surrounding text should remain
+        assert "Fix the bug" in result
+        assert "in module" in result
+
+    def test_nested_backticks_are_stripped(self):
+        from feedback import sanitize_feedback_content
+        content = "Run `echo $(whoami)` please"
+        result = sanitize_feedback_content(content)
+        assert "`" not in result or "echo" not in result
+
+
+class TestAtomicMoveTempFilePermissions:
+    """Test that _atomic_move restricts temp file permissions."""
+
+    def test_atomic_move_calls_fchmod(self):
+        """_atomic_move should call os.fchmod(fd, 0o600) on the temp file."""
+        import inspect
+        from feedback import FeedbackManager
+        source = inspect.getsource(FeedbackManager._atomic_move)
+        assert "fchmod" in source, (
+            "_atomic_move should call os.fchmod to restrict temp file permissions"
+        )

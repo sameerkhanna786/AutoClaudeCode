@@ -1348,3 +1348,30 @@ class TestRecursionErrorHandling:
         records = state_mgr._load_history()
         assert len(records) == 1
         assert records[0]["task_description"] == "Recursive task"
+
+
+class TestHistoryFilePermissions:
+    """Test that _save_history restricts temp file permissions to 0o600."""
+
+    def test_save_history_calls_fchmod(self):
+        """_save_history should call os.fchmod to restrict temp file permissions."""
+        import inspect
+        from state import StateManager
+        source = inspect.getsource(StateManager._save_history)
+        assert "fchmod" in source, (
+            "_save_history should call os.fchmod to restrict temp file permissions"
+        )
+
+    def test_history_file_not_world_readable(self, tmp_path, default_config):
+        """After saving, the history file should not be world-readable."""
+        from state import StateManager
+        history_file = tmp_path / "state" / "history.json"
+        default_config.paths.history_file = str(history_file)
+        sm = StateManager(default_config)
+        sm._save_history([{"task_description": "test", "timestamp": "now"}])
+        assert history_file.exists()
+        mode = history_file.stat().st_mode & 0o777
+        # Should not have group or other read/write bits
+        assert mode & 0o077 == 0, (
+            f"History file should not be readable by group/others, got {oct(mode)}"
+        )

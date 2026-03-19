@@ -201,6 +201,9 @@ class StateManager:
             dir=str(self.history_file.parent), suffix=".tmp"
         )
         try:
+            # Restrict temp file permissions to owner-only (0o600) before
+            # writing potentially sensitive data (error messages, cost info).
+            os.fchmod(tmp_fd, 0o600)
             try:
                 f = os.fdopen(tmp_fd, "w", encoding="utf-8")
             except Exception:

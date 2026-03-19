@@ -29,6 +29,7 @@ _DANGEROUS_PATTERNS = [
     # Shell command injection patterns
     re.compile(r'\$\([^)]+\)'),                    # $() command substitution
     re.compile(r'\$\{[^}]+\}'),                    # ${} variable expansion
+    re.compile(r'`[^`]+`'),                        # backtick command substitution
     # Null bytes and control characters (excluding newlines/tabs)
     re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]'),
 ]
@@ -139,6 +140,7 @@ class FeedbackManager:
                 dir=str(dst.parent), suffix=".tmp"
             )
             try:
+                os.fchmod(tmp_fd, 0o600)
                 try:
                     f = os.fdopen(tmp_fd, "w", encoding="utf-8")
                 except Exception:
