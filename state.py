@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import re
 import shutil
 import tempfile
 import time
@@ -453,7 +454,6 @@ class StateManager:
 
     def get_productive_files(self, lookback_seconds: int = 86400) -> List[str]:
         """Return files successfully modified most often, sorted by frequency."""
-        import re
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
         file_counts: Dict[str, int] = {}

@@ -302,6 +302,10 @@ class FeedbackManager:
 
         Rejects symlinks to prevent path traversal via symlink targets
         that resolve outside the feedback directory.
+
+        Uses Path.relative_to() instead of str().startswith() to prevent
+        bypasses where a sibling directory name shares a common prefix
+        (e.g. /a/feedback vs /a/feedback_evil).
         """
         try:
             if path.is_symlink():
@@ -309,7 +313,8 @@ class FeedbackManager:
                 return False
             resolved = path.resolve()
             feedback_resolved = self.feedback_dir.resolve()
-            return str(resolved).startswith(str(feedback_resolved) + os.sep) or resolved == feedback_resolved
+            resolved.relative_to(feedback_resolved)
+            return True
         except (OSError, ValueError):
             return False
 
@@ -402,6 +407,10 @@ class FeedbackManager:
             if src.exists():
                 self.mark_done(source_file)
             return
+
+        if not self._is_within_feedback_dir(claimed):
+            logger.warning("Rejecting mark_done_claimed for path outside feedback dir: %s", claimed)
+            return
         # Move the claimed file to done with the original name
         dst = self.done_dir / src.name
         if dst.exists():
@@ -425,6 +434,10 @@ class FeedbackManager:
         if not claimed.exists():
             if src.exists():
                 self.mark_failed(source_file)
+            return
+
+        if not self._is_within_feedback_dir(claimed):
+            logger.warning("Rejecting mark_failed_claimed for path outside feedback dir: %s", claimed)
             return
         dst = self.failed_dir / src.name
         if dst.exists():

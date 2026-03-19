@@ -8,8 +8,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import List, Optional, Protocol, runtime_checkable
 
 from claude_runner import ClaudeResult, ClaudeRunner
 from config_schema import Config

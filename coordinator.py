@@ -7,7 +7,6 @@ import shutil
 import signal
 import threading
 import time
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
@@ -557,7 +556,7 @@ class ParallelCoordinator:
                     for key in record.get("task_keys", []):
                         completed_keys.add(key)
         except Exception:
-            pass
+            logger.warning("Failed to load history for dependency check; skipping dependency filtering", exc_info=True)
 
         eligible = []
         for t in tasks:

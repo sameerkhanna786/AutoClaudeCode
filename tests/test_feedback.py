@@ -383,3 +383,66 @@ class TestFeedbackPathValidation:
         assert outside_file.exists()
         failed_dir = Path(fb_mgr.failed_dir)
         assert not (failed_dir / "sneaky-link.md").exists()
+
+
+class TestPathTraversalPrefixBypass:
+    """Test that _is_within_feedback_dir rejects sibling dirs with shared prefix."""
+
+    def test_sibling_dir_with_shared_prefix_rejected(self, tmp_path, default_config):
+        """A path like /feedback_evil/file should NOT pass the feedback dir check."""
+        # Create two sibling directories with shared prefix
+        feedback_dir = tmp_path / "feedback"
+        feedback_evil = tmp_path / "feedback_evil"
+        feedback_dir.mkdir()
+        feedback_evil.mkdir()
+
+        default_config.paths.feedback_dir = str(feedback_dir)
+        default_config.paths.feedback_done_dir = str(feedback_dir / "done")
+        default_config.paths.feedback_failed_dir = str(feedback_dir / "failed")
+        mgr = FeedbackManager(default_config)
+
+        evil_file = feedback_evil / "evil.md"
+        evil_file.write_text("malicious content")
+
+        # This should be rejected — it's outside the feedback dir
+        assert mgr._is_within_feedback_dir(evil_file) is False
+
+    def test_valid_file_inside_feedback_accepted(self, fb_mgr):
+        fb_dir = Path(fb_mgr.feedback_dir)
+        fb_dir.mkdir(parents=True, exist_ok=True)
+        valid_file = fb_dir / "valid.md"
+        valid_file.write_text("legit content")
+        assert fb_mgr._is_within_feedback_dir(valid_file) is True
+
+
+class TestMarkClaimedSecurityCheck:
+    """Test that mark_done_claimed and mark_failed_claimed check _is_within_feedback_dir."""
+
+    def test_mark_done_claimed_rejects_outside_path(self, fb_mgr, tmp_path):
+        """mark_done_claimed should reject paths outside the feedback dir."""
+        outside = tmp_path / "outside" / "evil.md"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        # Create the .claimed file
+        claimed = outside.with_suffix(".md.claimed")
+        claimed.write_text("malicious")
+
+        fb_mgr.mark_done_claimed(str(outside))
+
+        # File should NOT have been moved to done/
+        done_dir = Path(fb_mgr.done_dir)
+        assert not (done_dir / "evil.md").exists()
+        # Claimed file should still be where it was
+        assert claimed.exists()
+
+    def test_mark_failed_claimed_rejects_outside_path(self, fb_mgr, tmp_path):
+        """mark_failed_claimed should reject paths outside the feedback dir."""
+        outside = tmp_path / "outside" / "evil.md"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        claimed = outside.with_suffix(".md.claimed")
+        claimed.write_text("malicious")
+
+        fb_mgr.mark_failed_claimed(str(outside))
+
+        failed_dir = Path(fb_mgr.failed_dir)
+        assert not (failed_dir / "evil.md").exists()
+        assert claimed.exists()
