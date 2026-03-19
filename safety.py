@@ -156,46 +156,50 @@ class SafetyGuard:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            # Check if the PID in the lock file is still alive
-            stale = False
-            existing_pid_str = ""
-            try:
-                os.lseek(fd, 0, os.SEEK_SET)
-                existing_pid_bytes = os.read(fd, 64)
-                existing_pid_str = existing_pid_bytes.decode(errors="replace").strip()
-                existing_pid = int(existing_pid_str)
-                os.kill(existing_pid, 0)
-            except (ValueError, ProcessLookupError):
-                stale = True
-            except PermissionError:
-                # Process exists but we can't signal it
-                stale = False
-
-            if not stale:
-                os.close(fd)
-                raise SafetyError("Another instance is already running (lock file held)")
-
-            # Stale lock: the PID is dead. Retry flock on the SAME file
-            # descriptor (same inode) — don't unlink and recreate.
-            logger.warning(
-                "Cleaning up stale lock file from dead process (PID %s)",
-                existing_pid_str,
-            )
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
-                os.close(fd)
-                raise SafetyError("Another instance is already running (lock file held)")
+                # Check if the PID in the lock file is still alive
+                stale = False
+                existing_pid_str = ""
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    existing_pid_bytes = os.read(fd, 64)
+                    existing_pid_str = existing_pid_bytes.decode(errors="replace").strip()
+                    existing_pid = int(existing_pid_str)
+                    os.kill(existing_pid, 0)
+                except (ValueError, ProcessLookupError):
+                    stale = True
+                except PermissionError:
+                    # Process exists but we can't signal it
+                    stale = False
 
-        # Lock acquired — store the fd and write our PID
-        self._lock_fd = fd
-        with _active_guards_lock:
-            _active_guards.append(self)
-        os.ftruncate(self._lock_fd, 0)
-        os.lseek(self._lock_fd, 0, os.SEEK_SET)
-        os.write(self._lock_fd, str(os.getpid()).encode())
+                if not stale:
+                    raise SafetyError("Another instance is already running (lock file held)")
+
+                # Stale lock: the PID is dead. Retry flock on the SAME file
+                # descriptor (same inode) — don't unlink and recreate.
+                logger.warning(
+                    "Cleaning up stale lock file from dead process (PID %s)",
+                    existing_pid_str,
+                )
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    raise SafetyError("Another instance is already running (lock file held)")
+
+            # Lock acquired — store the fd and write our PID
+            self._lock_fd = fd
+            with _active_guards_lock:
+                _active_guards.append(self)
+            os.ftruncate(self._lock_fd, 0)
+            os.lseek(self._lock_fd, 0, os.SEEK_SET)
+            os.write(self._lock_fd, str(os.getpid()).encode())
+        except BaseException:
+            # Ensure fd is always closed if we fail to fully acquire the lock
+            if self._lock_fd != fd:
+                os.close(fd)
+            raise
 
     def release_lock(self) -> None:
         """Release the file lock."""

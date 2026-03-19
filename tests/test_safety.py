@@ -669,3 +669,41 @@ class TestGitGcUsesGroupKill:
                     pass  # May raise SafetyError for size, that's fine
 
         assert any("timed out" in r.message for r in caplog.records)
+
+
+class TestAcquireLockFdCleanup:
+    """File descriptor must be closed if acquire_lock fails unexpectedly."""
+
+    def test_fd_closed_on_unexpected_os_error_during_stale_check(self, tmp_path, default_config, state_mgr):
+        """If os.lseek/os.read raises unexpected OSError during stale lock check,
+        the file descriptor must still be closed."""
+        import fcntl
+
+        default_config.paths.lock_file = str(tmp_path / "lock.pid")
+        guard = SafetyGuard(default_config, state_mgr)
+
+        original_open = os.open
+        original_flock = fcntl.flock
+        close_calls = []
+        original_close = os.close
+
+        def tracking_close(fd):
+            close_calls.append(fd)
+            return original_close(fd)
+
+        def flock_always_busy(fd, op):
+            # Simulate lock already held to trigger stale-check path
+            raise OSError("Resource temporarily unavailable")
+
+        def lseek_explodes(fd, pos, how):
+            # Simulate unexpected failure during PID reading
+            raise OSError("I/O error")
+
+        with patch("safety.fcntl.flock", side_effect=flock_always_busy), \
+             patch("safety.os.lseek", side_effect=lseek_explodes), \
+             patch("safety.os.close", side_effect=tracking_close):
+            with pytest.raises(OSError, match="I/O error"):
+                guard.acquire_lock()
+
+        # The fd must have been closed despite the unexpected exception
+        assert len(close_calls) >= 1
