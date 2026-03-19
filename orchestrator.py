@@ -369,6 +369,18 @@ class Orchestrator:
                     ))
                     return
 
+                if not commit_hash:
+                    # Nothing was staged despite changed files detected earlier
+                    logger.error("Commit failed: no staged changes")
+                    self.git.rollback(snapshot, allowed_dirty=pre_existing_files)
+                    self.state.record_cycle(self._make_cycle_record(
+                        tasks, success=False,
+                        cost_usd=total_cost, duration_seconds=total_duration,
+                        error="Commit failed (no staged changes)",
+                        validation_retry_count=retry_count, **extra,
+                    ))
+                    return
+
                 logger.info("Cycle succeeded: %s", commit_msg.split("\n")[0])
 
                 # Periodic git gc to clean up loose objects

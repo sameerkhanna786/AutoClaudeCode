@@ -234,6 +234,17 @@ class TestOrchestrator:
         assert any("test_failures" in m and "todos" in m and "claude_ideas" in m for m in info_messages)
         assert any("pending feedback: no" in m for m in info_messages)
 
+    def test_empty_commit_hash_treated_as_failure(self, orch):
+        """When git.commit() returns empty string (nothing staged), treat as failure."""
+        orch.git.commit.return_value = ""
+        orch.state.record_cycle = MagicMock()
+        orch._cycle()
+        orch.git.rollback.assert_called_once()
+        # Verify a failure cycle was recorded
+        assert orch.state.record_cycle.call_count == 1
+        record = orch.state.record_cycle.call_args[0][0]
+        assert record.success is False
+
 
 @pytest.fixture
 def batch_config(tmp_path):

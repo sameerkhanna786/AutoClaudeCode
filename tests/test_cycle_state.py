@@ -139,6 +139,18 @@ class TestReadCycleState:
         assert result.accumulated_cost == 0.0
         assert result.batch_size == 1
 
+    def test_invalid_json_logs_warning(self, tmp_path, caplog):
+        """Invalid JSON should log a warning message."""
+        import logging
+        (tmp_path / "current_cycle.json").write_text("{broken json")
+        with caplog.at_level(logging.WARNING):
+            result = read_cycle_state(str(tmp_path))
+        assert result is None
+        # Verify a warning was logged
+        assert len(caplog.records) > 0
+        assert any("current_cycle.json" in r.message.lower() or "json" in r.message.lower()
+                   for r in caplog.records)
+
 
 class TestCycleStateWriterThreadSafety:
     """Tests that write() acquires the lock to prevent races with update()."""

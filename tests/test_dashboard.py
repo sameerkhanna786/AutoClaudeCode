@@ -177,6 +177,33 @@ class TestGetFeedbackFiles(unittest.TestCase):
             self.assertEqual(len(result["done"]), 1)
             self.assertEqual(len(result["failed"]), 1)
 
+    def test_large_feedback_file_truncated(self):
+        """Large feedback files (>100KB) should be truncated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            pending_dir = tmpdir_path / "feedback"
+            pending_dir.mkdir(parents=True)
+
+            # Create a file larger than 100KB
+            large_content = "A" * (150 * 1024)  # 150KB
+            (pending_dir / "large.md").write_text(large_content)
+
+            cfg = {
+                "feedback_dir": str(pending_dir),
+                "feedback_done_dir": str(tmpdir_path / "done"),
+                "feedback_failed_dir": str(tmpdir_path / "failed"),
+            }
+            result = get_feedback_files(cfg)
+            self.assertEqual(len(result["pending"]), 1)
+
+            # After fix, content should be truncated to ~100KB
+            # For now, this will fail because the bug exists
+            content = result["pending"][0]["content"]
+            # The test expects truncation after the fix is implemented
+            # Currently this will show the bug exists
+            self.assertLessEqual(len(content), 110 * 1024,
+                                 "Content should be truncated to prevent DoS")
+
 
 class TestReadLogTail(unittest.TestCase):
 

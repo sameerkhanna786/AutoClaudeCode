@@ -948,7 +948,12 @@ def get_feedback_files(cfg: Dict[str, Any]) -> Dict[str, List[Dict[str, str]]]:
             if not f.is_file() or f.suffix not in (".md", ".txt") or f.name == ".gitkeep":
                 continue
             try:
-                content = f.read_text()
+                size = f.stat().st_size
+                if size > MAX_FEEDBACK_CONTENT_SIZE * 2:
+                    content = f.read_text(errors="replace")[:MAX_FEEDBACK_CONTENT_SIZE * 2]
+                    content += "\n\n[truncated]"
+                else:
+                    content = f.read_text()
             except OSError:
                 content = "(unreadable)"
             result[category].append({"name": f.name, "content": content})

@@ -125,5 +125,6 @@ def read_cycle_state(state_dir: str, filename: str = "current_cycle.json") -> Op
             retry_count=data.get("retry_count", 0),
             pending_approval_count=data.get("pending_approval_count", 0),
         )
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to read cycle state from %s: %s", path, e)
         return None
