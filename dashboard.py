@@ -1365,17 +1365,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     # ---- Helpers ----
 
+    _LOCALHOST_ORIGIN_RE = re.compile(
+        r'^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$'
+    )
+
     def _get_cors_origin(self) -> str:
         """Return the CORS origin header, restricted to localhost."""
         origin = self.headers.get("Origin", "")
-        # Only allow localhost origins to prevent cross-site task injection
-        if origin and any(
-            origin.startswith(prefix) for prefix in (
-                "http://localhost", "http://127.0.0.1",
-                "http://[::1]", "https://localhost",
-                "https://127.0.0.1", "https://[::1]",
-            )
-        ):
+        # Only allow localhost origins to prevent cross-site task injection.
+        # Use a strict regex to reject spoofed origins like localhost.evil.com.
+        if origin and self._LOCALHOST_ORIGIN_RE.match(origin):
             return origin
         return ""
 
@@ -1408,7 +1407,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._send_error(400, "Invalid Content-Length")
             return None
-        if length > MAX_FEEDBACK_CONTENT_SIZE + 1024:  # extra for JSON overhead
+        if length < 0 or length > MAX_FEEDBACK_CONTENT_SIZE + 1024:  # extra for JSON overhead
             self._send_error(413, "Request body too large")
             return None
         try:

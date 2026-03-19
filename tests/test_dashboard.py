@@ -617,6 +617,26 @@ class TestDashboardSecurityFixes(unittest.TestCase):
         origin = handler._get_cors_origin()
         self.assertEqual(origin, "")
 
+    def test_cors_localhost_subdomain_blocked(self):
+        """Regression: localhost.evil.com must not be accepted as localhost."""
+        handler = self._make_handler()
+        handler.headers = MagicMock()
+        handler.headers.get = lambda key, default="": {
+            "Origin": "http://localhost.evil.com",
+        }.get(key, default)
+        origin = handler._get_cors_origin()
+        self.assertEqual(origin, "")
+
+    def test_cors_localhost_no_port_allowed(self):
+        """Bare localhost without port should be allowed."""
+        handler = self._make_handler()
+        handler.headers = MagicMock()
+        handler.headers.get = lambda key, default="": {
+            "Origin": "http://localhost",
+        }.get(key, default)
+        origin = handler._get_cors_origin()
+        self.assertEqual(origin, "http://localhost")
+
     def test_cors_127_origin_allowed(self):
         handler = self._make_handler()
         handler.headers = MagicMock()
@@ -625,6 +645,17 @@ class TestDashboardSecurityFixes(unittest.TestCase):
         }.get(key, default)
         origin = handler._get_cors_origin()
         self.assertEqual(origin, "http://127.0.0.1:3000")
+
+    def test_read_body_negative_content_length_rejected(self):
+        """Regression: negative Content-Length must be rejected to prevent unbounded read."""
+        handler = self._make_handler(method="POST", path="/api/feedback")
+        handler.headers = MagicMock()
+        handler.headers.get = lambda key, default="": {
+            "Content-Length": "-1",
+        }.get(key, default)
+        result = handler._read_body()
+        self.assertIsNone(result)
+        handler.send_response.assert_called_with(413)
 
     def test_error_response_no_os_details(self):
         """Error messages should not leak OS error details."""
