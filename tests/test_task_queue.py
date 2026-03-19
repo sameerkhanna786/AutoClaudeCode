@@ -17,7 +17,10 @@ from task_queue import TaskApprovalQueue, _sanitize_filename
 class TestSanitizeFilename(unittest.TestCase):
 
     def test_simple_key(self):
-        self.assertEqual(_sanitize_filename("lint:foo.py"), "lint_foo.py")
+        result = _sanitize_filename("lint:foo.py")
+        self.assertTrue(result.startswith("lint_foo.py_"))
+        # Should contain an 8-char hex hash suffix
+        self.assertRegex(result, r'^lint_foo\.py_[0-9a-f]{8}$')
 
     def test_special_chars(self):
         result = _sanitize_filename("claude_idea:Add tests for bar/baz.py")
@@ -383,6 +386,26 @@ class TestDeclinedKeysThreadSafety(unittest.TestCase):
                 t.join()
 
             self.assertEqual(errors, [])
+
+
+class TestSanitizeFilenameCollisions(unittest.TestCase):
+    """Test that _sanitize_filename produces distinct names for distinct keys."""
+
+    def test_different_punctuation_produces_different_filenames(self):
+        """Keys that differ only in non-alnum chars should NOT collide."""
+        name1 = _sanitize_filename("fix bug: foo")
+        name2 = _sanitize_filename("fix bug; foo")
+        self.assertNotEqual(name1, name2)
+
+    def test_identical_keys_produce_same_filename(self):
+        name1 = _sanitize_filename("fix_test_foo")
+        name2 = _sanitize_filename("fix_test_foo")
+        self.assertEqual(name1, name2)
+
+    def test_long_key_truncated_with_hash(self):
+        long_key = "a" * 200
+        name = _sanitize_filename(long_key)
+        self.assertLessEqual(len(name), 120)
 
 
 if __name__ == "__main__":

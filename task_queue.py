@@ -12,6 +12,7 @@ File locations:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -33,8 +34,15 @@ MAX_FILENAME_LENGTH = 120
 
 
 def _sanitize_filename(key: str) -> str:
-    """Convert a task key to a safe filename."""
+    """Convert a task key to a safe filename.
+
+    Appends a short hash suffix to prevent collisions when distinct keys
+    differ only in characters replaced by '_' (e.g. "fix: foo" vs "fix; foo").
+    """
     safe = _SAFE_FILENAME_RE.sub('_', key)
+    # Append 8-char hash to distinguish keys that sanitize identically
+    key_hash = hashlib.md5(key.encode()).hexdigest()[:8]
+    safe = f"{safe}_{key_hash}"
     if len(safe) > MAX_FILENAME_LENGTH:
         safe = safe[:MAX_FILENAME_LENGTH]
     return safe

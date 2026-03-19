@@ -375,7 +375,7 @@ class AgentPipeline:
     def run(
         self,
         tasks: list,
-        rollback_fn: Callable[[str], None],
+        rollback_fn: Callable[..., None],
         snapshot,
     ) -> PipelineResult:
         """Execute the full pipeline, returning a PipelineResult."""

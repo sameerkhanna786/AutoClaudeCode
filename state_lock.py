@@ -134,4 +134,5 @@ class LockedStateManager(StateManager):
 
     def load_history(self) -> List[Dict[str, Any]]:
         with self._file_lock():
-            return super().load_history()
+            # Return a shallow copy so callers don't mutate the internal cache
+            return list(super().load_history())

@@ -960,7 +960,8 @@ class Orchestrator:
             return
 
         records = self.state.load_history()
-        metrics = compute_metrics(records, lookback_seconds=interval * 3600)
+        # Use a fixed 1-hour lookback; interval is a cycle count, not hours
+        metrics = compute_metrics(records, lookback_seconds=3600)
 
         summary = {
             "total_cycles": metrics["total_cycles"],

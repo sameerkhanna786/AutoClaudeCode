@@ -307,3 +307,32 @@ class TestFileLockFdCleanup:
 
             # fd must have been closed regardless of flock(LOCK_UN) failure
             assert len(close_calls) >= 1
+
+
+class TestLoadHistoryReturnsCopy:
+    """Test that load_history() returns a copy, not a reference to the cache."""
+
+    def test_returned_list_is_not_cache(self, locked_state):
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="test",
+            success=True,
+        ))
+        result1 = locked_state.load_history()
+        result2 = locked_state.load_history()
+        # Should be equal in content but different list objects
+        assert result1 == result2
+        assert result1 is not result2
+
+    def test_mutating_returned_list_does_not_affect_cache(self, locked_state):
+        locked_state.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="test",
+            success=True,
+        ))
+        result = locked_state.load_history()
+        original_len = len(result)
+        result.append({"fake": "record"})  # mutate the returned list
+        # Next load should return original data, unaffected
+        result2 = locked_state.load_history()
+        assert len(result2) == original_len
