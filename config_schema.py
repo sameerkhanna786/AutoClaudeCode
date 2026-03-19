@@ -7,7 +7,7 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, get_type_hints
+from typing import Dict, List, Optional, get_type_hints
 
 import yaml
 
@@ -212,7 +212,7 @@ class NotificationsConfig:
 @dataclass
 class PricingConfig:
     """Pricing configuration for cost prediction."""
-    cost_per_million_input_tokens: dict = field(default_factory=lambda: {
+    cost_per_million_input_tokens: Dict[str, float] = field(default_factory=lambda: {
         "opus": 15.0,
         "sonnet": 3.0,
         "haiku": 0.25,

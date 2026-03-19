@@ -126,11 +126,11 @@ class NotificationManager:
         self._config = config
         self._recent: Dict[str, float] = {}  # dedup key -> timestamp
         self._lock = threading.Lock()
-        # Only allocate the thread pool when notifications are actually enabled,
-        # avoiding wasted resources (4 idle threads) when disabled.
+        # Only allocate the thread pool when notifications are actually enabled
+        # and webhooks are configured, avoiding wasted resources (4 idle threads).
         self._webhook_pool: Optional[ThreadPoolExecutor] = (
             ThreadPoolExecutor(max_workers=4, thread_name_prefix="webhook")
-            if config.enabled else None
+            if config.enabled and config.webhooks else None
         )
 
     def notify(self, event: str, details: Optional[Dict[str, Any]] = None) -> None:

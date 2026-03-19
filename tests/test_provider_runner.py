@@ -582,5 +582,93 @@ class TestCostEstimation(unittest.TestCase):
         self.assertEqual(cost, 0.0)
 
 
+class TestAddDirsIncludedInPrompt(unittest.TestCase):
+    """Regression: add_dirs must be included in the prompt for non-Claude providers."""
+
+    def test_openai_add_dirs_prepended_to_prompt(self):
+        """OpenAI runner should prepend add_dirs to the prompt text."""
+        config = _make_config("openai")
+        runner = OpenAIRunner(config)
+        runner._api_key = "test-key"
+
+        captured_payloads = []
+        original_prompt = "Fix the bug in main.py"
+
+        def mock_urlopen(req, **kwargs):
+            body = json.loads(req.data.decode("utf-8"))
+            captured_payloads.append(body)
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": "done"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }).encode()
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = MagicMock(return_value=False)
+            return resp
+
+        with patch("provider_runner.urllib.request.urlopen", side_effect=mock_urlopen):
+            runner.run(original_prompt, add_dirs=["/tmp/worktree-0"])
+
+        self.assertEqual(len(captured_payloads), 1)
+        sent_content = captured_payloads[0]["messages"][0]["content"]
+        self.assertIn("/tmp/worktree-0", sent_content)
+        self.assertIn(original_prompt, sent_content)
+
+    def test_gemini_add_dirs_prepended_to_prompt(self):
+        """Gemini runner should prepend add_dirs to the prompt text."""
+        config = _make_config("gemini")
+        runner = GeminiRunner(config)
+        runner._api_key = "test-key"
+
+        captured_payloads = []
+        original_prompt = "Fix the bug"
+
+        def mock_urlopen(req, **kwargs):
+            body = json.loads(req.data.decode("utf-8"))
+            captured_payloads.append(body)
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "candidates": [{"content": {"parts": [{"text": "done"}]}}],
+                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5},
+            }).encode()
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = MagicMock(return_value=False)
+            return resp
+
+        with patch("provider_runner.urllib.request.urlopen", side_effect=mock_urlopen):
+            runner.run(original_prompt, add_dirs=["/workspace/repo"])
+
+        self.assertEqual(len(captured_payloads), 1)
+        sent_text = captured_payloads[0]["contents"][0]["parts"][0]["text"]
+        self.assertIn("/workspace/repo", sent_text)
+        self.assertIn(original_prompt, sent_text)
+
+    def test_openai_no_add_dirs_prompt_unchanged(self):
+        """When add_dirs is None, prompt should not be modified."""
+        config = _make_config("openai")
+        runner = OpenAIRunner(config)
+        runner._api_key = "test-key"
+
+        captured_payloads = []
+
+        def mock_urlopen(req, **kwargs):
+            body = json.loads(req.data.decode("utf-8"))
+            captured_payloads.append(body)
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "choices": [{"message": {"content": "done"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            }).encode()
+            resp.__enter__ = lambda s: s
+            resp.__exit__ = MagicMock(return_value=False)
+            return resp
+
+        with patch("provider_runner.urllib.request.urlopen", side_effect=mock_urlopen):
+            runner.run("Fix bug", add_dirs=None)
+
+        sent_content = captured_payloads[0]["messages"][0]["content"]
+        self.assertEqual(sent_content, "Fix bug")
+
+
 if __name__ == "__main__":
     unittest.main()

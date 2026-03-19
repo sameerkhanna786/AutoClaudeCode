@@ -105,6 +105,10 @@ class OpenAIRunner:
                 error="OpenAI API key not set (check api_key_env config)",
             )
 
+        if add_dirs:
+            dir_context = "Working directories:\n" + "\n".join(f"- {d}" for d in add_dirs)
+            prompt = f"{dir_context}\n\n{prompt}"
+
         start = time.time()
         payload = {
             "model": self._model,
@@ -236,6 +240,10 @@ class GeminiRunner:
                 success=False,
                 error="Gemini API key not set (check api_key_env config)",
             )
+
+        if add_dirs:
+            dir_context = "Working directories:\n" + "\n".join(f"- {d}" for d in add_dirs)
+            prompt = f"{dir_context}\n\n{prompt}"
 
         start = time.time()
         payload = {

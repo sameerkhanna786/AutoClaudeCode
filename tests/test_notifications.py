@@ -565,5 +565,27 @@ class TestNotificationManagerContextManager(unittest.TestCase):
         assert result is False
 
 
+class TestEnabledNoWebhooksNoPool(unittest.TestCase):
+    """Regression: enabled=True but empty webhooks should not create thread pool."""
+
+    def test_no_pool_when_enabled_but_no_webhooks(self):
+        config = _make_config(enabled=True)
+        config.webhooks = []
+        mgr = NotificationManager(config)
+        assert mgr._webhook_pool is None, (
+            "Thread pool should not be created when enabled but no webhooks configured"
+        )
+        mgr.shutdown()
+
+    def test_pool_created_when_enabled_with_webhooks(self):
+        config = _make_config(enabled=True)
+        config.webhooks = [WebhookConfig(url="https://hooks.slack.com/test")]
+        mgr = NotificationManager(config)
+        assert mgr._webhook_pool is not None, (
+            "Thread pool should be created when enabled with webhooks"
+        )
+        mgr.shutdown()
+
+
 if __name__ == "__main__":
     unittest.main()
