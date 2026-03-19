@@ -386,7 +386,14 @@ class ParallelCoordinator:
                 # 3. Rebase the worker branch onto main
                 if self.git.rebase_onto(original_branch, worker.branch_name):
                     # Now try fast-forward merge
-                    self.git.checkout(original_branch)
+                    try:
+                        self.git.checkout(original_branch)
+                    except Exception as e:
+                        logger.error(
+                            "Worker %d: checkout %s failed after rebase: %s",
+                            worker.worker_id, original_branch, e,
+                        )
+                        return False
                     if self.git.merge_ff_only(worker.branch_name):
                         # Re-validate after rebase
                         validator = Validator(self.config)
@@ -492,8 +499,11 @@ class ParallelCoordinator:
         # Ensure we're back on original branch
         try:
             self.git.checkout(original_branch)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "Worker %d: failed to checkout %s after exhausting merge strategies: %s",
+                worker.worker_id, original_branch, e,
+            )
         return False
 
     def _check_worktree_disk_space(self) -> None:

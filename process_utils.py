@@ -106,3 +106,8 @@ def run_with_group_kill(
             stderr=prefix + partial_stderr if partial_stderr else "",
             timed_out=True,
         )
+    except BaseException:
+        # Kill the process group on non-timeout exceptions (KeyboardInterrupt,
+        # SystemExit, etc.) to prevent orphaned processes.
+        kill_process_group(proc)
+        raise

@@ -468,6 +468,63 @@ class TestMergeValidation:
         coord.git.rollback.assert_called()
 
 
+class TestMergeCheckoutFailureAfterRebase:
+    """Tests that checkout failures during merge are handled, not silently ignored."""
+
+    def test_checkout_failure_after_rebase_returns_false(self, parallel_config):
+        """If checkout fails after rebase, merge should return False, not crash."""
+        parallel_config.parallel.merge_strategy = "rebase"
+        coord = ParallelCoordinator(parallel_config)
+
+        worker = MagicMock()
+        worker.branch_name = "auto-claude/test-checkout-fail"
+        worker.worker_id = 0
+
+        worker_result = WorkerResult(success=True, branch_name=worker.branch_name, tasks=[])
+
+        # ff fails, rebase succeeds, but checkout back to main fails
+        coord.git.merge_ff_only = MagicMock(return_value=False)
+        coord.git.rebase_onto = MagicMock(return_value=True)
+        coord.git.checkout = MagicMock(side_effect=Exception("checkout failed"))
+
+        result = coord._merge_worker_branch(worker, worker_result)
+        assert result is False
+
+    def test_final_checkout_failure_logged(self, parallel_config, caplog):
+        """The final 'ensure we're on original branch' logs on checkout failure."""
+        import logging
+
+        parallel_config.parallel.merge_strategy = "merge"
+        parallel_config.parallel.max_merge_retries = 0
+        coord = ParallelCoordinator(parallel_config)
+
+        worker = MagicMock()
+        worker.branch_name = "auto-claude/test-final-checkout"
+        worker.worker_id = 0
+
+        worker_result = WorkerResult(success=True, branch_name=worker.branch_name, tasks=[])
+
+        # ff fails, merge has conflicts, abort succeeds
+        coord.git.merge_ff_only = MagicMock(return_value=False)
+        coord.git.merge_branch = MagicMock(return_value=False)
+        coord.git.abort_merge = MagicMock()
+        # Final checkout fails
+        call_count = [0]
+        def checkout_side_effect(branch):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return  # First checkout succeeds (start of loop)
+            raise Exception("checkout stuck")
+        coord.git.checkout = MagicMock(side_effect=checkout_side_effect)
+        coord.config.parallel.ai_conflict_resolution = False
+
+        with caplog.at_level(logging.WARNING):
+            result = coord._merge_worker_branch(worker, worker_result)
+
+        assert result is False
+        assert any("checkout" in r.message.lower() for r in caplog.records if r.levelno >= logging.WARNING)
+
+
 class TestSignalHandlerWorkersCopy:
     """Test that the signal handler snapshots _workers to avoid mutation races."""
 

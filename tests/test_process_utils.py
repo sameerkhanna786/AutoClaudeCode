@@ -87,6 +87,36 @@ class TestRunWithGroupKill(unittest.TestCase):
         self.assertTrue(call_kwargs.get("start_new_session", False))
 
 
+class TestRunWithGroupKillBaseException(unittest.TestCase):
+    """Tests that BaseException between Popen and communicate kills the process."""
+
+    @patch("process_utils.subprocess.Popen")
+    @patch("process_utils.kill_process_group")
+    def test_keyboard_interrupt_kills_process(self, mock_kill, mock_popen):
+        """KeyboardInterrupt during communicate() must kill the process group."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = KeyboardInterrupt
+        mock_popen.return_value = mock_proc
+
+        with self.assertRaises(KeyboardInterrupt):
+            run_with_group_kill(["sleep", "60"])
+
+        mock_kill.assert_called_once_with(mock_proc)
+
+    @patch("process_utils.subprocess.Popen")
+    @patch("process_utils.kill_process_group")
+    def test_system_exit_kills_process(self, mock_kill, mock_popen):
+        """SystemExit during communicate() must kill the process group."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = SystemExit(1)
+        mock_popen.return_value = mock_proc
+
+        with self.assertRaises(SystemExit):
+            run_with_group_kill(["sleep", "60"])
+
+        mock_kill.assert_called_once_with(mock_proc)
+
+
 class TestKillProcessGroup(unittest.TestCase):
 
     def test_already_dead_process(self):
