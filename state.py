@@ -291,11 +291,11 @@ class StateManager:
         """Check if a task was attempted in the last lookback_seconds."""
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
-        # Scan in reverse (newest first) and stop once records are too old,
-        # since records are appended chronologically.
+        # Scan all records for robustness with unordered timestamps
+        # (parallel workers may record cycles slightly out of order).
         for r in reversed(records):
             if r.get("timestamp", 0) < cutoff:
-                break
+                continue
             if r.get("task_description") == task_description:
                 return True
             if task_description in r.get("task_descriptions", []):
@@ -370,15 +370,15 @@ class StateManager:
         """Return the number of failed attempts for a specific task.
 
         Only considers records within the lookback window (default 24h).
-        Scans in reverse and stops once records are older than the cutoff,
-        since records are appended chronologically.
+        Scans all records for robustness with unordered timestamps
+        (parallel workers may record cycles slightly out of order).
         """
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
         count = 0
         for r in reversed(records):
             if r.get("timestamp", 0) < cutoff:
-                break
+                continue
             if r.get("success", False):
                 continue
             match = (r.get("task_description") == task_description

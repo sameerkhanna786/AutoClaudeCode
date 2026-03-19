@@ -1477,3 +1477,45 @@ class TestHistoryFilePermissions:
         assert mode & 0o077 == 0, (
             f"History file should not be readable by group/others, got {oct(mode)}"
         )
+
+
+class TestOutOfOrderTimestamps:
+    """Verify methods handle out-of-order timestamps from parallel workers."""
+
+    def test_was_recently_attempted_finds_record_after_older_timestamp(self, state_mgr):
+        """was_recently_attempted should not miss records when timestamps are unordered."""
+        now = time.time()
+        # Record A: recent
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 100, task_description="task-A", success=True, cost_usd=0.01,
+        ))
+        # Record B: old timestamp (written by a lagging parallel worker)
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 7200, task_description="task-old", success=True, cost_usd=0.01,
+        ))
+        # Record C: recent, appears after the old record
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 50, task_description="task-C", success=True, cost_usd=0.01,
+        ))
+
+        # task-C should be found even though an old record sits between A and C
+        assert state_mgr.was_recently_attempted("task-C", lookback_seconds=3600)
+
+    def test_get_task_failure_count_with_unordered_timestamps(self, state_mgr):
+        """get_task_failure_count should count all failures within the window."""
+        now = time.time()
+        # Failure 1: recent
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 100, task_description="flaky", success=False, cost_usd=0.01,
+        ))
+        # Old record from a lagging worker
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 90000, task_description="other", success=True, cost_usd=0.01,
+        ))
+        # Failure 2: recent, appears after the old record
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 50, task_description="flaky", success=False, cost_usd=0.01,
+        ))
+
+        # Both failures should be counted
+        assert state_mgr.get_task_failure_count("flaky", lookback_seconds=86400) == 2
