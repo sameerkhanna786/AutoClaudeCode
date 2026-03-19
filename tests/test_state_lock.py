@@ -274,6 +274,35 @@ class TestMissingLockedWrappers:
         assert "2/2 succeeded" in report
 
 
+class TestNoExplicitUnlockBeforeClose:
+    """The file lock must NOT explicitly unlock before close.
+
+    Explicitly calling flock(LOCK_UN) before close(fd) creates a race window
+    where another process can acquire the lock on the same inode, and then
+    close(fd) releases that other process's lock. The correct pattern is to
+    just close the fd, which atomically releases the lock.
+    """
+
+    def test_no_explicit_unlock_call(self, locked_state):
+        """_file_lock should release by closing fd, not by explicit unlock."""
+        import fcntl
+        original_flock = fcntl.flock
+        flock_ops = []
+
+        def tracking_flock(fd, operation):
+            flock_ops.append(operation)
+            return original_flock(fd, operation)
+
+        with patch("state_lock.fcntl.flock", side_effect=tracking_flock):
+            with locked_state._file_lock():
+                pass
+
+        # Should only see LOCK_EX, NOT LOCK_UN
+        assert fcntl.LOCK_EX in flock_ops, "Lock should be acquired with LOCK_EX"
+        assert fcntl.LOCK_UN not in flock_ops, \
+            "Lock should NOT be explicitly unlocked; close(fd) releases it atomically"
+
+
 class TestFileLockFdCleanup:
     """Tests that file descriptors are properly cleaned up even on errors."""
 

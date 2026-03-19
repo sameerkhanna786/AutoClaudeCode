@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
@@ -21,6 +22,11 @@ class GitHubClient:
 
     def __init__(self, config: GitHubConfig):
         self._config = config
+        # Resolve token: prefer env var (token_env) over plaintext (token)
+        if config.token_env:
+            self._resolved_token = os.environ.get(config.token_env, "")
+        else:
+            self._resolved_token = config.token
 
     def _request(
         self,
@@ -45,7 +51,7 @@ class GitHubClient:
             urllib.error.URLError: On network errors.
             ValueError: On JSON parse errors or missing token.
         """
-        if not self._config.token:
+        if not self._resolved_token:
             raise ValueError("GitHub token is not configured")
 
         url = f"{self.API_BASE}{path}"
@@ -56,7 +62,7 @@ class GitHubClient:
             data=data,
             method=method,
             headers={
-                "Authorization": f"token {self._config.token}",
+                "Authorization": f"token {self._resolved_token}",
                 "Accept": "application/vnd.github.v3+json",
                 "Content-Type": "application/json",
                 "User-Agent": "auto-claude-code",
@@ -76,8 +82,8 @@ class GitHubClient:
             except Exception:
                 pass
             # Sanitize error body to prevent token leakage in logs
-            if self._config.token and self._config.token in error_body:
-                error_body = error_body.replace(self._config.token, "***")
+            if self._resolved_token and self._resolved_token in error_body:
+                error_body = error_body.replace(self._resolved_token, "***")
             logger.error(
                 "GitHub API error: %s %s -> %d: %s",
                 method, path, e.code, error_body,
@@ -196,8 +202,6 @@ class GitHubClient:
             result = run_with_group_kill(
                 ["git", "push", "-u", "origin", branch_name],
                 cwd=target_dir,
-                capture_output=True,
-                text=True,
                 timeout=120,
             )
             if result.returncode != 0:

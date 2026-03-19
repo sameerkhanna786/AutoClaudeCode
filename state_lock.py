@@ -55,10 +55,7 @@ class LockedStateManager(StateManager):
             try:
                 yield
             finally:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-                except OSError:
-                    pass
+                pass  # Lock released atomically by os.close() below
         finally:
             os.close(fd)
             self._local.held = False

@@ -396,7 +396,7 @@ class Orchestrator:
                     if recs:
                         tuner.save_recommendations(recs)
                 except Exception as e:
-                    logger.debug("Config tuner failed: %s", e)
+                    logger.warning("Config tuner failed: %s", e)
 
                 if self.config.orchestrator.push_after_commit:
                     push_ok = self.git.push()

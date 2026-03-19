@@ -225,6 +225,7 @@ class GitHubConfig:
     """Configuration for GitHub integration."""
     enabled: bool = False
     token: str = ""
+    token_env: str = ""  # env var name for GitHub token (preferred over plaintext token)
     repo_owner: str = ""
     repo_name: str = ""
     base_branch: str = "main"

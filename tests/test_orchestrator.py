@@ -1468,3 +1468,53 @@ class TestFeedbackDirRace:
 
             # Should not raise — the OSError should be caught
             o._cycle()
+
+
+class TestConfigTunerLogging:
+    """Config tuner failures should be logged at warning level, not debug."""
+
+    def test_config_tuner_error_logged_at_warning(self, config):
+        with patch("orchestrator.GitManager") as MockGit, \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.Validator") as MockVal, \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp:
+
+            mock_sp.return_value = MagicMock(returncode=0)
+            mock_git = MockGit.return_value
+            mock_git.create_snapshot.return_value = Snapshot(commit_hash="a" * 40)
+            mock_git.capture_worktree_state.return_value = set()
+            mock_git.get_new_changed_files.return_value = ["fix.py"]
+            mock_git.commit.return_value = "b" * 40
+
+            mock_val = MockVal.return_value
+            mock_val.validate.return_value = ValidationResult(passed=True, steps=[])
+
+            o = Orchestrator(config)
+            o.git = mock_git
+            o.validator = mock_val
+
+            # Make config tuner raise an exception
+            with patch("orchestrator.logger") as mock_logger:
+                with patch.dict("sys.modules", {"config_tuner": MagicMock()}):
+                    import sys
+                    ct_mod = sys.modules["config_tuner"]
+                    ct_mod.ConfigTuner.return_value.analyze.side_effect = RuntimeError("tuner boom")
+
+                    tasks = [Task(description="Fix thing", priority=2, source="test_failure")]
+                    o._validate_with_retries(
+                        tasks=tasks,
+                        snapshot=Snapshot(commit_hash="a" * 40),
+                        pre_existing_files=set(),
+                        total_cost=0.05, total_duration=10.0,
+                        is_batch=False,
+                    )
+
+                    # Should be logged at warning, not debug
+                    warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+                    debug_calls = [str(c) for c in mock_logger.debug.call_args_list]
+                    tuner_in_warning = any("tuner" in c.lower() or "Config tuner" in c for c in warning_calls)
+                    tuner_in_debug = any("tuner" in c.lower() or "Config tuner" in c for c in debug_calls)
+                    assert tuner_in_warning, "Config tuner failure should be logged at WARNING level"
+                    assert not tuner_in_debug, "Config tuner failure should NOT be logged at DEBUG level"

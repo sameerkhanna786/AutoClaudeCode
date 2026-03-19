@@ -73,6 +73,68 @@ class TestPushAndCreatePrUsesGroupKill(unittest.TestCase):
         cmd = args[0][0] if args[0] else args[1].get("cmd")
         self.assertEqual(cmd, ["git", "push", "-u", "origin", "feature"])
 
+    @patch("github_integration.run_with_group_kill")
+    @patch.object(GitHubClient, "create_pull_request", return_value={"number": 1})
+    def test_push_does_not_pass_capture_output(self, mock_create_pr, mock_group_kill):
+        """run_with_group_kill does not accept capture_output; must not be passed."""
+        mock_group_kill.return_value = MagicMock(returncode=0, stderr="")
+        config = GitHubConfig(
+            enabled=True, create_prs=True,
+            token="ghp_test", repo_owner="test", repo_name="repo",
+        )
+        client = GitHubClient(config)
+        client.push_and_create_pr(
+            branch_name="feature",
+            title="Test PR",
+            body="body",
+            target_dir="/tmp/test",
+        )
+        _, kwargs = mock_group_kill.call_args
+        self.assertNotIn("capture_output", kwargs,
+                         "capture_output is not a valid parameter for run_with_group_kill")
+
+
+class TestTokenFromEnvVar(unittest.TestCase):
+    """GitHub token should be resolvable from an environment variable."""
+
+    def test_token_env_resolves_from_environment(self):
+        """When token_env is set, token should be resolved from the env var."""
+        config = GitHubConfig(
+            enabled=True, token_env="TEST_GH_TOKEN_12345",
+            repo_owner="test", repo_name="repo",
+        )
+        import os
+        os.environ["TEST_GH_TOKEN_12345"] = "ghp_from_env"
+        try:
+            client = GitHubClient(config)
+            self.assertEqual(client._resolved_token, "ghp_from_env")
+        finally:
+            del os.environ["TEST_GH_TOKEN_12345"]
+
+    def test_token_env_takes_precedence_over_token(self):
+        """token_env should take precedence over plaintext token field."""
+        import os
+        os.environ["TEST_GH_TOKEN_PREC"] = "ghp_env_value"
+        try:
+            config = GitHubConfig(
+                enabled=True, token="ghp_plaintext",
+                token_env="TEST_GH_TOKEN_PREC",
+                repo_owner="test", repo_name="repo",
+            )
+            client = GitHubClient(config)
+            self.assertEqual(client._resolved_token, "ghp_env_value")
+        finally:
+            del os.environ["TEST_GH_TOKEN_PREC"]
+
+    def test_falls_back_to_plaintext_token(self):
+        """When token_env is not set, falls back to plaintext token."""
+        config = GitHubConfig(
+            enabled=True, token="ghp_plaintext",
+            repo_owner="test", repo_name="repo",
+        )
+        client = GitHubClient(config)
+        self.assertEqual(client._resolved_token, "ghp_plaintext")
+
 
 if __name__ == "__main__":
     unittest.main()
