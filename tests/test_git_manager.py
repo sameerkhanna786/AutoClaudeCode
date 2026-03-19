@@ -565,6 +565,26 @@ class TestGetChangedFilesCEscapeUnquoting:
             files = gm.get_changed_files()
         assert "normal_file.txt" in files
 
+    def test_octal_escape_multibyte_utf8(self, tmp_git_repo):
+        """Octal escapes for multi-byte UTF-8 (e.g., \\303\\251 -> é) should decode correctly."""
+        gm = GitManager(tmp_git_repo)
+        # Git encodes é (U+00E9, UTF-8 bytes 0xC3 0xA9) as \303\251
+        porcelain_output = '?? "resum\\303\\251.txt"\n'
+        with patch.object(gm, "_run") as mock_run:
+            mock_run.return_value = type("R", (), {"stdout": porcelain_output, "returncode": 0})()
+            files = gm.get_changed_files()
+        assert "resumé.txt" in files
+
+    def test_octal_escape_mixed_with_regular(self, tmp_git_repo):
+        """Mixed octal and regular escapes should both be handled."""
+        gm = GitManager(tmp_git_repo)
+        # Tab + octal-encoded é
+        porcelain_output = '?? "dir\\t\\303\\251file.txt"\n'
+        with patch.object(gm, "_run") as mock_run:
+            mock_run.return_value = type("R", (), {"stdout": porcelain_output, "returncode": 0})()
+            files = gm.get_changed_files()
+        assert "dir\téfile.txt" in files
+
 
 class TestRollbackBatchUntracked:
     """Tests for the batch untracked detection in targeted rollback."""

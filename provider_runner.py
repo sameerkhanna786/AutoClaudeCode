@@ -44,6 +44,32 @@ def _sanitize_error(message: str, api_key: str) -> str:
     return message
 
 
+def _estimate_cost(config: Config, provider: str, input_tokens: int, output_tokens: int) -> float:
+    """Estimate cost in USD based on token usage and pricing config.
+
+    Without this, cost-limit safety checks (check_cost_limit,
+    _cost_limit_exceeded) are completely bypassed for non-Claude providers.
+    """
+    pricing = config.pricing.cost_per_million_input_tokens
+    model = (config.claude.resolved_model or config.claude.model).lower()
+
+    # Map provider models to pricing tiers
+    if provider == "openai":
+        cost_per_m_input = pricing.get(model, pricing.get("sonnet", 3.0))
+    elif provider == "gemini":
+        cost_per_m_input = pricing.get(model, pricing.get("haiku", 0.25))
+    else:
+        cost_per_m_input = pricing.get(model, 0.0)
+
+    if cost_per_m_input <= 0:
+        return 0.0
+
+    output_multiplier = config.pricing.output_cost_multiplier
+    input_cost = (input_tokens / 1_000_000) * cost_per_m_input
+    output_cost = (output_tokens / 1_000_000) * cost_per_m_input * output_multiplier
+    return input_cost + output_cost
+
+
 @runtime_checkable
 class ProviderRunner(Protocol):
     """Protocol for LLM provider runners."""
@@ -166,10 +192,12 @@ class OpenAIRunner:
         context_window = _CONTEXT_WINDOWS.get("openai", 128000)
         context_pct = (total_tokens / context_window) * 100 if total_tokens else 0.0
 
+        cost_usd = _estimate_cost(self.config, "openai", input_tokens, output_tokens)
+
         return ClaudeResult(
             success=True,
             result_text=result_text,
-            cost_usd=0.0,  # Cost calculation not available without pricing config
+            cost_usd=cost_usd,
             duration_seconds=duration,
             raw_json=response_data,
             input_tokens=input_tokens,
@@ -297,10 +325,12 @@ class GeminiRunner:
         context_window = _CONTEXT_WINDOWS.get("gemini", 1000000)
         context_pct = (total_tokens / context_window) * 100 if total_tokens else 0.0
 
+        cost_usd = _estimate_cost(self.config, "gemini", input_tokens, output_tokens)
+
         return ClaudeResult(
             success=True,
             result_text=result_text,
-            cost_usd=0.0,
+            cost_usd=cost_usd,
             duration_seconds=duration,
             raw_json=response_data,
             input_tokens=input_tokens,

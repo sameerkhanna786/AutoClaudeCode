@@ -365,13 +365,15 @@ class StateManager:
         """Return the number of failed attempts for a specific task.
 
         Only considers records within the lookback window (default 24h).
+        Scans in reverse and stops once records are older than the cutoff,
+        since records are appended chronologically.
         """
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
         count = 0
         for r in reversed(records):
             if r.get("timestamp", 0) < cutoff:
-                continue
+                break
             if r.get("success", False):
                 continue
             match = (r.get("task_description") == task_description

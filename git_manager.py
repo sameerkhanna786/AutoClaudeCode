@@ -49,6 +49,69 @@ _TRANSIENT_ERROR_PATTERNS = (
 )
 
 
+import re
+
+# Regex for git C-style escape sequences: \t, \n, \r, \\, \", \a, \b, \f, \v, \OOO (octal)
+_C_ESCAPE_RE = re.compile(r'\\([tnrabfv\\"\\]|[0-3]?[0-7]{1,2})')
+
+_C_ESCAPE_MAP = {
+    't': '\t', 'n': '\n', 'r': '\r', 'a': '\a', 'b': '\b',
+    'f': '\f', 'v': '\v', '\\': '\\', '"': '"',
+}
+
+
+def _git_c_unescape(s: str) -> str:
+    """Unescape a git C-style quoted string.
+
+    Handles \\t, \\n, \\r, \\\\, \\", and \\OOO octal sequences.
+    The previous unicode_escape approach failed on octal sequences
+    (e.g., \\303\\251 for UTF-8 é) and could mangle non-ASCII bytes.
+    """
+    def _replace(m: re.Match) -> str:
+        seq = m.group(1)
+        if seq in _C_ESCAPE_MAP:
+            return _C_ESCAPE_MAP[seq]
+        # Octal sequence -> raw byte
+        return bytes([int(seq, 8)]).decode("utf-8", errors="replace")
+
+    # For multi-byte UTF-8 encoded as consecutive octal escapes (e.g., \303\251),
+    # we need to collect all octal bytes and decode them together.
+    parts = []
+    octal_bytes = bytearray()
+    i = 0
+    while i < len(s):
+        if s[i] == '\\' and i + 1 < len(s):
+            next_char = s[i + 1]
+            if next_char in _C_ESCAPE_MAP:
+                if octal_bytes:
+                    parts.append(octal_bytes.decode("utf-8", errors="replace"))
+                    octal_bytes = bytearray()
+                parts.append(_C_ESCAPE_MAP[next_char])
+                i += 2
+            elif next_char in '01234567':
+                # Collect octal digits (1-3 digits)
+                end = i + 2
+                while end < len(s) and end < i + 4 and s[end] in '01234567':
+                    end += 1
+                octal_bytes.append(int(s[i+1:end], 8))
+                i = end
+            else:
+                if octal_bytes:
+                    parts.append(octal_bytes.decode("utf-8", errors="replace"))
+                    octal_bytes = bytearray()
+                parts.append(s[i])
+                i += 1
+        else:
+            if octal_bytes:
+                parts.append(octal_bytes.decode("utf-8", errors="replace"))
+                octal_bytes = bytearray()
+            parts.append(s[i])
+            i += 1
+    if octal_bytes:
+        parts.append(octal_bytes.decode("utf-8", errors="replace"))
+    return "".join(parts)
+
+
 @dataclass
 class Snapshot:
     commit_hash: str
@@ -330,7 +393,7 @@ class GitManager:
             # Strip the surrounding quotes so downstream git operations
             # receive the actual filesystem path.
             if entry.startswith('"') and entry.endswith('"'):
-                entry = entry[1:-1].encode("utf-8").decode("unicode_escape")
+                entry = _git_c_unescape(entry[1:-1])
             files.add(entry)
 
         return sorted(files)

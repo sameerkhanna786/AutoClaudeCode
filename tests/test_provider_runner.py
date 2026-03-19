@@ -31,6 +31,8 @@ def _make_config(provider="claude"):
     config.claude.api_key_env = ""
     config.target_dir = "/tmp/test"
     config.paths.state_dir = "/tmp/state"
+    config.pricing.cost_per_million_input_tokens = {"opus": 15.0, "sonnet": 3.0, "haiku": 0.25}
+    config.pricing.output_cost_multiplier = 5.0
     return config
 
 
@@ -509,6 +511,75 @@ class TestEmptyResponseHandling(unittest.TestCase):
             result = runner.run("test prompt")
         self.assertFalse(result.success)
         self.assertIn("no content", result.error)
+
+
+class TestCostEstimation(unittest.TestCase):
+    """Test that OpenAI and Gemini runners estimate cost instead of returning 0."""
+
+    @patch("urllib.request.urlopen")
+    def test_openai_returns_nonzero_cost(self, mock_urlopen):
+        """OpenAI runner should estimate cost based on token usage."""
+        config = _make_config("openai")
+        response_data = {
+            "choices": [{"message": {"content": "response"}}],
+            "usage": {"prompt_tokens": 1000, "completion_tokens": 500},
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(response_data).encode()
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        runner = OpenAIRunner(config)
+        runner._api_key = "test-key"
+        result = runner.run("Hello")
+
+        self.assertTrue(result.success)
+        self.assertGreater(result.cost_usd, 0.0)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_returns_nonzero_cost(self, mock_urlopen):
+        """Gemini runner should estimate cost based on token usage."""
+        config = _make_config("gemini")
+        response_data = {
+            "candidates": [{"content": {"parts": [{"text": "response"}]}}],
+            "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 500},
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(response_data).encode()
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        runner = GeminiRunner(config)
+        runner._api_key = "test-key"
+        result = runner.run("Hello")
+
+        self.assertTrue(result.success)
+        self.assertGreater(result.cost_usd, 0.0)
+
+    def test_estimate_cost_function(self):
+        """_estimate_cost should compute cost from tokens and pricing config."""
+        from provider_runner import _estimate_cost
+        config = _make_config("openai")
+        # Config model is "opus" at 15.0 per million input tokens
+        cost = _estimate_cost(config, "openai", 1_000_000, 0)
+        self.assertAlmostEqual(cost, 15.0, places=2)
+
+    def test_estimate_cost_with_output(self):
+        """_estimate_cost should account for output tokens at multiplied rate."""
+        from provider_runner import _estimate_cost
+        config = _make_config("openai")
+        # 1M input + 1M output at 15.0/M input (opus), 5x output multiplier
+        cost = _estimate_cost(config, "openai", 1_000_000, 1_000_000)
+        self.assertAlmostEqual(cost, 15.0 + 75.0, places=2)
+
+    def test_estimate_cost_zero_tokens(self):
+        """_estimate_cost with zero tokens should return 0."""
+        from provider_runner import _estimate_cost
+        config = _make_config("openai")
+        cost = _estimate_cost(config, "openai", 0, 0)
+        self.assertEqual(cost, 0.0)
 
 
 if __name__ == "__main__":

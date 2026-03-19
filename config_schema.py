@@ -508,6 +508,16 @@ def validate_config(config: Config) -> None:
         )
 
     # Validate orchestrator fields
+    if config.orchestrator.max_changed_files <= 0:
+        raise ValueError(
+            f"orchestrator.max_changed_files must be positive, "
+            f"got {config.orchestrator.max_changed_files}"
+        )
+    if config.orchestrator.max_validation_retries < 0:
+        raise ValueError(
+            f"orchestrator.max_validation_retries must be non-negative, "
+            f"got {config.orchestrator.max_validation_retries}"
+        )
     if config.orchestrator.loop_interval_seconds <= 0:
         raise ValueError(
             f"orchestrator.loop_interval_seconds must be positive, "
