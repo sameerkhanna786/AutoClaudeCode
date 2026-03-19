@@ -363,6 +363,69 @@ class TestCleanupWorkerWithTimeout:
         assert any("cleanup timed out" in r.message and "42" in r.message for r in caplog.records)
 
 
+class TestMergeValidation:
+    """Verify that non-fast-forward merges are validated before returning True."""
+
+    def test_merge_strategy_validates_after_merge(self, parallel_config):
+        """Merge strategy must validate after a non-ff merge."""
+        parallel_config.parallel.merge_strategy = "merge"
+        coord = ParallelCoordinator(parallel_config)
+
+        worker = MagicMock()
+        worker.branch_name = "auto-claude/test-merge"
+        worker.worker_id = 0
+
+        worker_result = WorkerResult(success=True, branch_name="auto-claude/test-merge", tasks=[])
+
+        # Simulate: ff fails, auto-merge succeeds, but validation fails
+        coord.git.merge_ff_only = MagicMock(return_value=False)
+        coord.git.merge_branch = MagicMock(return_value=True)
+        coord.git.rollback = MagicMock()
+        coord.git.take_snapshot = MagicMock(return_value="snap")
+
+        mock_validation = MagicMock()
+        mock_validation.passed = False
+        mock_validation.summary = "tests failed"
+
+        with patch("coordinator.Validator") as MockValidator:
+            MockValidator.return_value.validate.return_value = mock_validation
+            result = coord._merge_worker_branch(worker, worker_result)
+
+        assert result is False
+        coord.git.rollback.assert_called()
+
+    def test_rebase_fallback_merge_validates(self, parallel_config):
+        """Rebase fallback to merge must also validate."""
+        parallel_config.parallel.merge_strategy = "rebase"
+        coord = ParallelCoordinator(parallel_config)
+
+        worker = MagicMock()
+        worker.branch_name = "auto-claude/test-rebase"
+        worker.worker_id = 0
+
+        worker_result = WorkerResult(success=True, branch_name="auto-claude/test-rebase", tasks=[])
+
+        # Simulate: ff fails, rebase fails, merge fallback succeeds, validation fails
+        coord.git.merge_ff_only = MagicMock(return_value=False)
+        coord.git.rebase_onto = MagicMock(return_value=False)
+        coord.git.checkout = MagicMock()
+        coord.git.merge_branch = MagicMock(return_value=True)
+        coord.git.abort_merge = MagicMock()
+        coord.git.rollback = MagicMock()
+        coord.git.take_snapshot = MagicMock(return_value="snap")
+
+        mock_validation = MagicMock()
+        mock_validation.passed = False
+        mock_validation.summary = "lint failed"
+
+        with patch("coordinator.Validator") as MockValidator:
+            MockValidator.return_value.validate.return_value = mock_validation
+            result = coord._merge_worker_branch(worker, worker_result)
+
+        assert result is False
+        coord.git.rollback.assert_called()
+
+
 class TestSignalHandlerWorkersCopy:
     """Test that the signal handler snapshots _workers to avoid mutation races."""
 

@@ -359,11 +359,22 @@ class ParallelCoordinator:
             if strategy == "merge":
                 # 2. Try auto-merge
                 if self.git.merge_branch(worker.branch_name):
-                    logger.info(
-                        "Worker %d: auto-merged branch %s into %s",
-                        worker.worker_id, worker.branch_name, original_branch,
-                    )
-                    return True
+                    # Re-validate after non-ff merge (combined changes may conflict semantically)
+                    validator = Validator(self.config)
+                    validation = validator.validate(self.config.target_dir)
+                    if validation.passed:
+                        logger.info(
+                            "Worker %d: auto-merged branch %s into %s",
+                            worker.worker_id, worker.branch_name, original_branch,
+                        )
+                        return True
+                    else:
+                        logger.warning(
+                            "Worker %d: validation failed after merge: %s",
+                            worker.worker_id, validation.summary,
+                        )
+                        self.git.rollback(pre_merge_snapshot)
+                        return False
                 # Merge had conflicts
                 self.git.abort_merge()
                 logger.warning(
@@ -412,11 +423,22 @@ class ParallelCoordinator:
                         logger.error("Failed to checkout %s for merge fallback: %s", original_branch, e)
                         continue
                     if self.git.merge_branch(worker.branch_name):
-                        logger.info(
-                            "Worker %d: merge fallback succeeded for branch %s into %s",
-                            worker.worker_id, worker.branch_name, original_branch,
-                        )
-                        return True
+                        # Re-validate after non-ff merge fallback
+                        validator = Validator(self.config)
+                        validation = validator.validate(self.config.target_dir)
+                        if validation.passed:
+                            logger.info(
+                                "Worker %d: merge fallback succeeded for branch %s into %s",
+                                worker.worker_id, worker.branch_name, original_branch,
+                            )
+                            return True
+                        else:
+                            logger.warning(
+                                "Worker %d: validation failed after merge fallback: %s",
+                                worker.worker_id, validation.summary,
+                            )
+                            self.git.rollback(pre_merge_snapshot)
+                            return False
                     # Merge fallback also had conflicts
                     self.git.abort_merge()
                     logger.warning(
