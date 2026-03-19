@@ -149,7 +149,10 @@ class FeedbackManager:
                 with f:
                     f.write(content)
                 os.replace(tmp_path, str(dst))
-                src.unlink()
+                try:
+                    src.unlink()
+                except FileNotFoundError:
+                    pass  # src already deleted by another process; move succeeded
                 return  # Success
             except (OSError, FileNotFoundError) as e:
                 last_exc = e

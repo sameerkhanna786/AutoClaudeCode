@@ -319,6 +319,13 @@ def _merge_dataclass(dc_instance, overrides: dict):
             continue
         expected = _get_expected_type(dc_class, key)
         if expected is not None and value is not None:
+            # Reject bool masquerading as int/float (bool is subclass of int)
+            if isinstance(value, bool) and expected in (int, float):
+                logger.warning(
+                    "Config field '%s.%s' expects %s but got bool (%r) — skipping",
+                    dc_class.__name__, key, expected.__name__, value,
+                )
+                continue
             # Allow int where float is expected (YAML often produces int for "10.0")
             if expected is float and isinstance(value, int):
                 value = float(value)

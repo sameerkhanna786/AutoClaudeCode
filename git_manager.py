@@ -327,7 +327,7 @@ class GitManager:
             # Strip the surrounding quotes so downstream git operations
             # receive the actual filesystem path.
             if entry.startswith('"') and entry.endswith('"'):
-                entry = entry[1:-1]
+                entry = entry[1:-1].encode("utf-8").decode("unicode_escape")
             files.add(entry)
 
         return sorted(files)

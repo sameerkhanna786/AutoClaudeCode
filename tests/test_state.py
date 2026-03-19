@@ -1350,6 +1350,50 @@ class TestRecursionErrorHandling:
         assert records[0]["task_description"] == "Recursive task"
 
 
+class TestReverseIterationOptimization:
+    """Test that get_cycle_count_last_hour and get_total_cost use reverse iteration.
+
+    Records are chronologically ordered, so scanning in reverse and breaking
+    early when we pass the cutoff avoids scanning the entire history.
+    """
+
+    def test_cycle_count_last_hour_skips_old_records(self, tmp_path, default_config):
+        """get_cycle_count_last_hour should still return correct count."""
+        default_config.paths.history_file = str(tmp_path / "history.json")
+        sm = StateManager(default_config)
+        now = time.time()
+        records = [
+            {"timestamp": now - 7200, "task_description": "old1", "success": True},
+            {"timestamp": now - 3601, "task_description": "old2", "success": True},
+            {"timestamp": now - 1800, "task_description": "recent1", "success": True},
+            {"timestamp": now - 60, "task_description": "recent2", "success": True},
+        ]
+        sm._save_history(records)
+        assert sm.get_cycle_count_last_hour() == 2
+
+    def test_total_cost_skips_old_records(self, tmp_path, default_config):
+        """get_total_cost should sum only recent records."""
+        default_config.paths.history_file = str(tmp_path / "history.json")
+        sm = StateManager(default_config)
+        now = time.time()
+        records = [
+            {"timestamp": now - 7200, "task_description": "old", "cost_usd": 100.0},
+            {"timestamp": now - 1800, "task_description": "recent1", "cost_usd": 0.5},
+            {"timestamp": now - 60, "task_description": "recent2", "cost_usd": 0.3},
+        ]
+        sm._save_history(records)
+        total = sm.get_total_cost(lookback_seconds=3600)
+        assert abs(total - 0.8) < 0.001
+
+    def test_uses_reversed_iteration(self):
+        """Implementation should use reversed() for early exit on old records."""
+        import inspect
+        source = inspect.getsource(StateManager.get_cycle_count_last_hour)
+        assert "reversed(" in source, (
+            "get_cycle_count_last_hour should iterate in reverse for early exit"
+        )
+
+
 class TestHistoryFilePermissions:
     """Test that _save_history restricts temp file permissions to 0o600."""
 

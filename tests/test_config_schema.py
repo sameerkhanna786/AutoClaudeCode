@@ -883,3 +883,36 @@ class TestGetExpectedTypeDictHandling:
         _merge_dataclass(pricing, {"cost_per_million_input_tokens": "not_a_dict"})
         # Should remain unchanged (invalid value skipped)
         assert isinstance(pricing.cost_per_million_input_tokens, dict)
+
+
+class TestBoolIntTypeConfusion:
+    """Test that _merge_dataclass rejects bool values for int fields.
+
+    Python's bool is a subclass of int, so isinstance(True, int) returns True.
+    The merge logic must disambiguate to prevent e.g. max_turns=True (treated as 1).
+    """
+
+    def test_bool_rejected_for_int_field(self):
+        """Bool value should be rejected when an int field is expected."""
+        from config_schema import _merge_dataclass, ClaudeConfig
+        cc = ClaudeConfig()
+        original_max_turns = cc.max_turns
+        _merge_dataclass(cc, {"max_turns": True})
+        # Should remain unchanged — bool should not be accepted as int
+        assert cc.max_turns == original_max_turns
+        assert type(cc.max_turns) is int
+
+    def test_bool_rejected_for_float_field(self):
+        """Bool value should be rejected when a float field is expected."""
+        from config_schema import _merge_dataclass, ClaudeConfig
+        cc = ClaudeConfig()
+        original = cc.timeout_seconds
+        _merge_dataclass(cc, {"timeout_seconds": False})
+        assert cc.timeout_seconds == original
+
+    def test_int_still_accepted_for_int_field(self):
+        """Regular int values should still be accepted for int fields."""
+        from config_schema import _merge_dataclass, ClaudeConfig
+        cc = ClaudeConfig()
+        _merge_dataclass(cc, {"max_turns": 42})
+        assert cc.max_turns == 42

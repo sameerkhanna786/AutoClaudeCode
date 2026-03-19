@@ -522,6 +522,50 @@ class TestGetChangedFilesPortcelain:
 
 
 @pytest.mark.requires_subprocess
+class TestGetChangedFilesCEscapeUnquoting:
+    """Test that get_changed_files properly unescapes C-style quoted filenames.
+
+    Git's --porcelain format uses C-style escaping for filenames with special
+    characters (e.g., tabs become \\t, backslashes become \\\\).
+    """
+
+    def test_tab_in_filename_unescaped(self, tmp_git_repo):
+        """Filenames with \\t escapes should be properly unescaped."""
+        gm = GitManager(tmp_git_repo)
+        porcelain_output = '?? "file\\twith\\ttabs.txt"\n'
+        with patch.object(gm, "_run") as mock_run:
+            mock_run.return_value = type("R", (), {"stdout": porcelain_output, "returncode": 0})()
+            files = gm.get_changed_files()
+        assert "file\twith\ttabs.txt" in files
+
+    def test_backslash_in_filename_unescaped(self, tmp_git_repo):
+        """Filenames with \\\\ escapes should be properly unescaped."""
+        gm = GitManager(tmp_git_repo)
+        porcelain_output = '?? "path\\\\to\\\\file.txt"\n'
+        with patch.object(gm, "_run") as mock_run:
+            mock_run.return_value = type("R", (), {"stdout": porcelain_output, "returncode": 0})()
+            files = gm.get_changed_files()
+        assert "path\\to\\file.txt" in files
+
+    def test_newline_in_filename_unescaped(self, tmp_git_repo):
+        """Filenames with \\n escapes should be properly unescaped."""
+        gm = GitManager(tmp_git_repo)
+        porcelain_output = '?? "file\\nname.txt"\n'
+        with patch.object(gm, "_run") as mock_run:
+            mock_run.return_value = type("R", (), {"stdout": porcelain_output, "returncode": 0})()
+            files = gm.get_changed_files()
+        assert "file\nname.txt" in files
+
+    def test_plain_filename_unchanged(self, tmp_git_repo):
+        """Filenames without special chars should pass through unchanged."""
+        gm = GitManager(tmp_git_repo)
+        porcelain_output = "?? normal_file.txt\n"
+        with patch.object(gm, "_run") as mock_run:
+            mock_run.return_value = type("R", (), {"stdout": porcelain_output, "returncode": 0})()
+            files = gm.get_changed_files()
+        assert "normal_file.txt" in files
+
+
 class TestRollbackBatchUntracked:
     """Tests for the batch untracked detection in targeted rollback."""
 

@@ -737,3 +737,37 @@ class TestAtomicMoveTempFilePermissions:
         assert "fchmod" in source, (
             "_atomic_move should call os.fchmod to restrict temp file permissions"
         )
+
+
+class TestAtomicMoveSrcUnlinkRace:
+    """Test that _atomic_move succeeds even when src.unlink() races with another process."""
+
+    def test_atomic_move_succeeds_when_src_already_deleted(self, fb_mgr):
+        """If src is deleted by another process after os.replace succeeds,
+        _atomic_move should still report success (not retry/raise)."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        done_dir = Path(fb_mgr.done_dir)
+        src = fb_dir / "task.md"
+        src.write_text("task content")
+        dst = done_dir / "task.md"
+
+        original_replace = os.replace
+        call_count = 0
+
+        def replace_then_delete_src(src_path, dst_path):
+            nonlocal call_count
+            call_count += 1
+            result = original_replace(src_path, dst_path)
+            # Simulate another process deleting src between replace and unlink
+            if src.exists():
+                src.unlink()
+            return result
+
+        with patch("os.replace", replace_then_delete_src):
+            # Should NOT raise even though src.unlink() will get FileNotFoundError
+            fb_mgr._atomic_move(src, dst)
+
+        # Destination should contain the content
+        assert dst.read_text() == "task content"
+        # Should have succeeded on the first attempt (no retries)
+        assert call_count == 1
