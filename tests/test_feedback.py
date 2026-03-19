@@ -135,32 +135,66 @@ class TestFeedbackManager:
 
 
 class TestAtomicMoveRetry:
-    def test_atomic_move_retries_on_read_failure(self, fb_mgr, tmp_path):
-        """_atomic_move retries when src.read_text() fails on first attempt."""
+    def test_atomic_move_read_failure_propagates_immediately(self, fb_mgr, tmp_path):
+        """Read failures propagate immediately since content is read once before retries."""
         fb_dir = Path(fb_mgr.feedback_dir)
         done_dir = Path(fb_mgr.done_dir)
         src = fb_dir / "task.md"
         src.write_text("task content")
         dst = done_dir / "task.md"
 
-        call_count = 0
+        read_count = 0
         original_read_text = Path.read_text
 
         def failing_read_text(self_path, *args, **kwargs):
-            nonlocal call_count
+            nonlocal read_count
             if self_path == src:
-                call_count += 1
-                if call_count == 1:
-                    raise OSError("temporary read failure")
+                read_count += 1
+                raise OSError("read failure")
             return original_read_text(self_path, *args, **kwargs)
 
         with patch.object(Path, "read_text", failing_read_text):
-            with patch("feedback.time.sleep"):
+            with pytest.raises(OSError, match="read failure"):
                 fb_mgr._atomic_move(src, dst)
 
-        assert dst.exists()
-        assert dst.read_text() == "task content"
-        assert call_count >= 1
+        # Content is read exactly once (no retries on read failures)
+        assert read_count == 1
+
+    def test_atomic_move_reads_content_only_once(self, fb_mgr, tmp_path):
+        """Content is read once before the retry loop, not on each attempt."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        done_dir = Path(fb_mgr.done_dir)
+        src = fb_dir / "task.md"
+        src.write_text("task content")
+        dst = done_dir / "task.md"
+
+        read_count = 0
+        original_read_text = Path.read_text
+
+        def counting_read_text(self_path, *args, **kwargs):
+            nonlocal read_count
+            if self_path == src:
+                read_count += 1
+            return original_read_text(self_path, *args, **kwargs)
+
+        replace_count = 0
+        original_replace = os.replace
+
+        def failing_replace(src_path, dst_path):
+            nonlocal replace_count
+            replace_count += 1
+            if replace_count <= 2:
+                raise OSError("transient replace failure")
+            return original_replace(src_path, dst_path)
+
+        with patch.object(Path, "read_text", counting_read_text):
+            with patch("os.replace", failing_replace):
+                with patch("feedback.time.sleep"):
+                    fb_mgr._atomic_move(src, dst)
+
+        # Content was read exactly once, even though replace retried
+        assert read_count == 1
+        assert replace_count == 3  # failed twice, succeeded on third
 
     def test_atomic_move_source_already_moved(self, fb_mgr, tmp_path):
         """When src disappears on retry (another process moved it), treat as success."""
@@ -170,34 +204,32 @@ class TestAtomicMoveRetry:
         src.write_text("task content")
         dst = done_dir / "task.md"
 
-        def always_fail_read(self_path, *args, **kwargs):
-            # Fail on first attempt, then src won't exist for retry
-            if self_path == src:
-                # Remove src to simulate another process moving it
-                if src.exists():
-                    src.unlink()
-                raise OSError("file gone")
-            return Path.read_text(self_path, *args, **kwargs)
+        original_replace = os.replace
 
-        with patch.object(Path, "read_text", always_fail_read):
+        def fail_and_remove_src(src_path, dst_path):
+            # Fail the first attempt and also remove the source file
+            # to simulate another process moving it
+            if src.exists():
+                src.unlink()
+            raise OSError("file contention")
+
+        with patch("os.replace", fail_and_remove_src):
             with patch("feedback.time.sleep"):
                 # Should not raise — source disappearing is treated as success
                 fb_mgr._atomic_move(src, dst)
 
     def test_atomic_move_all_retries_exhausted(self, fb_mgr, tmp_path):
-        """When every attempt fails, the last exception is raised."""
+        """When every replace attempt fails, the last exception is raised."""
         fb_dir = Path(fb_mgr.feedback_dir)
         done_dir = Path(fb_mgr.done_dir)
         src = fb_dir / "task.md"
         src.write_text("task content")
         dst = done_dir / "task.md"
 
-        def always_fail_read(self_path, *args, **kwargs):
-            if self_path == src:
-                raise OSError("persistent failure")
-            return Path.read_text(self_path, *args, **kwargs)
+        def always_fail_replace(src_path, dst_path):
+            raise OSError("persistent failure")
 
-        with patch.object(Path, "read_text", always_fail_read):
+        with patch("os.replace", always_fail_replace):
             with patch("feedback.time.sleep"):
                 with pytest.raises(OSError, match="persistent failure"):
                     fb_mgr._atomic_move(src, dst)
@@ -210,18 +242,17 @@ class TestAtomicMoveRetry:
         src.write_text("task content")
         dst = done_dir / "task.md"
 
-        call_count = 0
-        original_read_text = Path.read_text
+        replace_count = 0
+        original_replace = os.replace
 
-        def fail_three_times(self_path, *args, **kwargs):
-            nonlocal call_count
-            if self_path == src:
-                call_count += 1
-                if call_count <= 3:
-                    raise OSError("transient failure")
-            return original_read_text(self_path, *args, **kwargs)
+        def fail_three_times(src_path, dst_path):
+            nonlocal replace_count
+            replace_count += 1
+            if replace_count <= 3:
+                raise OSError("transient failure")
+            return original_replace(src_path, dst_path)
 
-        with patch.object(Path, "read_text", fail_three_times):
+        with patch("os.replace", fail_three_times):
             with patch("feedback.time.sleep") as mock_sleep:
                 with patch("feedback.random.random", return_value=0.5):
                     fb_mgr._atomic_move(src, dst)

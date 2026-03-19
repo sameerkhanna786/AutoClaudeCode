@@ -199,5 +199,61 @@ class TestImportPrdInvalidPriority(unittest.TestCase):
             self.assertEqual(tasks[0].priority, 3)
 
 
+class TestPrdCliAtomicWrite(unittest.TestCase):
+    """Tests that prd_cli.cmd_import writes files atomically."""
+
+    def test_import_writes_files_atomically(self):
+        """cmd_import should use temp+replace instead of write_text."""
+        import os
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path = str(Path(tmpdir) / "prd.yaml")
+            feedback_dir = str(Path(tmpdir) / "feedback")
+            data = {
+                "tasks": [
+                    {"id": "t1", "description": "Fix bug", "priority": 2},
+                ],
+            }
+            Path(prd_path).write_text(yaml.dump(data))
+
+            import argparse
+            from prd_cli import cmd_import
+            args = argparse.Namespace(prd_file=prd_path, feedback_dir=feedback_dir)
+            cmd_import(args)
+
+            # Verify file was created with correct content
+            feedback_path = Path(feedback_dir)
+            files = list(feedback_path.glob("prd-*.md"))
+            self.assertEqual(len(files), 1)
+            content = files[0].read_text()
+            self.assertIn("Fix bug", content)
+            self.assertIn("task_id: t1", content)
+
+    def test_import_no_leftover_temp_files(self):
+        """Atomic write should not leave .tmp files behind."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prd_path = str(Path(tmpdir) / "prd.yaml")
+            feedback_dir = str(Path(tmpdir) / "feedback")
+            data = {
+                "tasks": [
+                    {"id": "t1", "description": "Task 1", "priority": 1},
+                    {"id": "t2", "description": "Task 2", "priority": 2},
+                ],
+            }
+            Path(prd_path).write_text(yaml.dump(data))
+
+            import argparse
+            from prd_cli import cmd_import
+            args = argparse.Namespace(prd_file=prd_path, feedback_dir=feedback_dir)
+            cmd_import(args)
+
+            # No .tmp files should remain
+            feedback_path = Path(feedback_dir)
+            tmp_files = list(feedback_path.glob("*.tmp"))
+            self.assertEqual(len(tmp_files), 0)
+            # Both task files should exist
+            prd_files = list(feedback_path.glob("prd-*.md"))
+            self.assertEqual(len(prd_files), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

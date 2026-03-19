@@ -151,7 +151,7 @@ class ParallelCoordinator:
             )
             return
 
-        groups = self._partition_tasks(tasks)
+        groups = self._partition_tasks(tasks, degradation=degradation)
         if not groups:
             return
 
@@ -560,12 +560,16 @@ class ParallelCoordinator:
             task_approval_queue=self._task_queue,
         )
 
-    def _partition_tasks(self, tasks: List[Task]) -> List[List[Task]]:
+    def _partition_tasks(self, tasks: List[Task], degradation: Optional[dict] = None) -> List[List[Task]]:
         """Assign one task per worker, up to max_workers.
 
         Feedback tasks get priority ordering (appear first), then
         auto-discovered tasks fill remaining worker slots.
         Tasks with unmet dependencies are filtered out.
+
+        Args:
+            degradation: Pre-computed degradation result from _run_cycle.
+                         Avoids redundant history loading and recomputation.
         """
         # Filter out tasks with unmet dependencies
         completed_keys = set()
@@ -601,14 +605,11 @@ class ParallelCoordinator:
         )
         ordered = feedback_tasks + auto_tasks
 
-        # One task per worker, capped at max_workers (reduced by degradation)
+        # One task per worker, capped at max_workers (reduced by degradation).
+        # Use pre-computed degradation result to avoid redundant history loading.
         effective_workers = self.max_workers
-        if self._degradation.is_degraded:
-            deg = self._degradation.check_and_adjust(
-                self.state.get_cycle_count_last_hour(),
-                self.state.get_total_cost(lookback_seconds=3600),
-            )
-            effective_workers = max(1, int(self.max_workers * deg["batch_size_factor"]))
+        if degradation and degradation.get("degraded"):
+            effective_workers = max(1, int(self.max_workers * degradation["batch_size_factor"]))
 
         # Group tasks that reference the same source_file to avoid merge
         # conflicts when different workers modify the same file.

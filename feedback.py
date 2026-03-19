@@ -106,6 +106,10 @@ class FeedbackManager:
         jitter_factor = 0.25  # ±25% randomized jitter
         last_exc: Optional[Exception] = None
 
+        # Read source content once before the retry loop — the content
+        # doesn't change between retries, so re-reading is wasted I/O.
+        content = src.read_text(encoding='utf-8', errors='replace')
+
         for attempt in range(max_retries):
             # If the source file no longer exists on a retry, another process
             # already moved it — treat as success.
@@ -131,13 +135,6 @@ class FeedbackManager:
                 dir=str(dst.parent), suffix=".tmp"
             )
             try:
-                # Read source content first — if this fails, we must
-                # close tmp_fd to avoid leaking the file descriptor.
-                try:
-                    content = src.read_text(encoding='utf-8', errors='replace')
-                except Exception:
-                    os.close(tmp_fd)
-                    raise
                 try:
                     f = os.fdopen(tmp_fd, "w")
                 except Exception:

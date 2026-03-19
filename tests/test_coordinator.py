@@ -178,6 +178,48 @@ class TestPartitionTasks:
         assert len(a_group[0]) == 2  # both a.py tasks grouped
 
 
+    def test_degradation_param_reduces_workers(self, parallel_config):
+        """Pre-computed degradation result reduces effective workers."""
+        parallel_config.parallel.max_workers = 4
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description=f"Task {i}", priority=3, source="lint")
+            for i in range(6)
+        ]
+        degradation = {
+            "degraded": True,
+            "batch_size_factor": 0.5,
+            "level": 1,
+            "reason": "test",
+        }
+        groups = coord._partition_tasks(tasks, degradation=degradation)
+        # 4 workers * 0.5 factor = 2 effective workers
+        assert len(groups) <= 2
+
+    def test_no_degradation_param_uses_max_workers(self, parallel_config):
+        """Without degradation param, all max_workers are available."""
+        parallel_config.parallel.max_workers = 3
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description=f"Task {i}", priority=3, source="lint")
+            for i in range(5)
+        ]
+        groups = coord._partition_tasks(tasks, degradation=None)
+        assert len(groups) == 3
+
+    def test_non_degraded_param_uses_max_workers(self, parallel_config):
+        """A non-degraded result doesn't reduce workers."""
+        parallel_config.parallel.max_workers = 4
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description=f"Task {i}", priority=3, source="lint")
+            for i in range(5)
+        ]
+        degradation = {"degraded": False, "batch_size_factor": 1.0}
+        groups = coord._partition_tasks(tasks, degradation=degradation)
+        assert len(groups) == 4
+
+
 class TestMergeWorkerBranch:
     @pytest.mark.requires_subprocess
     def test_fast_forward_merge(self, tmp_git_repo, parallel_config):

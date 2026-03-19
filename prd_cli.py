@@ -44,6 +44,10 @@ def cmd_import(args):
     feedback_dir = Path(args.feedback_dir)
     feedback_dir.mkdir(parents=True, exist_ok=True)
 
+    import os
+    import re as _re
+    import tempfile
+
     for task in tasks:
         deps_str = ", ".join(f'"{d}"' for d in task.depends_on)
         frontmatter = (
@@ -54,11 +58,28 @@ def cmd_import(args):
         )
         content = frontmatter + task.description
 
-        import re as _re
         safe_id = _re.sub(r'[^a-zA-Z0-9_\-]', '_', task.task_id)
         filename = f"prd-{safe_id}.md"
         filepath = feedback_dir / filename
-        filepath.write_text(content)
+        # Atomic write: temp file + os.replace to prevent corruption on crash
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=str(feedback_dir), suffix=".tmp"
+        )
+        try:
+            try:
+                f = os.fdopen(tmp_fd, "w")
+            except Exception:
+                os.close(tmp_fd)
+                raise
+            with f:
+                f.write(content)
+            os.replace(tmp_path, str(filepath))
+        except OSError:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     print(f"Imported {len(tasks)} tasks -> {args.feedback_dir}/")
 
