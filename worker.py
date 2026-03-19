@@ -557,5 +557,6 @@ class Worker:
                 )
                 return True
         except Exception as e:
-            logger.debug("Worker %d: cost check failed: %s", self.worker_id, e)
+            logger.warning("Worker %d: cost check failed, halting as precaution: %s", self.worker_id, e)
+            return True  # Fail-safe: halt if cost check itself fails
         return False

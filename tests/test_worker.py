@@ -317,12 +317,12 @@ class TestCostLimitExceeded:
         assert worker._cost_limit_exceeded(1.0) is True
 
     def test_handles_get_total_cost_exception(self, worker_config, tmp_git_repo):
-        """Returns False when state.get_total_cost() raises an exception."""
+        """Returns True (fail-safe) when state.get_total_cost() raises an exception."""
         state = MagicMock(spec=LockedStateManager)
         state.get_total_cost.side_effect = RuntimeError("DB connection failed")
         tasks = [Task(description="Fix bug", priority=1, source="lint")]
         worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
-        assert worker._cost_limit_exceeded(5.0) is False
+        assert worker._cost_limit_exceeded(5.0) is True
 
     def test_logs_warning_when_triggered(self, worker_config, tmp_git_repo):
         """Logs a warning message when cost limit is exceeded."""

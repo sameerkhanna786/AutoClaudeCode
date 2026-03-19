@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -468,6 +469,46 @@ class TestResponseDataInitialized(unittest.TestCase):
         loop_pos = source.find("for attempt in range")
         self.assertGreater(init_pos, -1, "response_data should be initialized before loop")
         self.assertLess(init_pos, loop_pos, "response_data init should come before for loop")
+
+
+class TestEmptyResponseHandling(unittest.TestCase):
+    """Test that runners return failure on empty API responses."""
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test12345678901234567890"})
+    def test_openai_empty_response_returns_failure(self):
+        """OpenAI runner should return failure when response has no content."""
+        config = _make_config("openai")
+        config.claude.api_key_env = "OPENAI_API_KEY"
+        runner = OpenAIRunner(config)
+
+        empty_response = json.dumps({"choices": []}).encode("utf-8")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = empty_response
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = runner.run("test prompt")
+        self.assertFalse(result.success)
+        self.assertIn("no content", result.error)
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "AIzaTestKey123456789012345678901"})
+    def test_gemini_empty_response_returns_failure(self):
+        """Gemini runner should return failure when response has no content."""
+        config = _make_config("gemini")
+        config.claude.api_key_env = "GEMINI_API_KEY"
+        runner = GeminiRunner(config)
+
+        empty_response = json.dumps({"candidates": []}).encode("utf-8")
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = empty_response
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = runner.run("test prompt")
+        self.assertFalse(result.success)
+        self.assertIn("no content", result.error)
 
 
 if __name__ == "__main__":

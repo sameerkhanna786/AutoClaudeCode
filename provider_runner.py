@@ -139,10 +139,25 @@ class OpenAIRunner:
         duration = time.time() - start
 
         # Parse response
+        if not response_data:
+            return ClaudeResult(
+                success=False,
+                error="OpenAI returned empty response",
+                duration_seconds=time.time() - start,
+            )
+
         choices = response_data.get("choices", [])
         result_text = ""
         if choices:
             result_text = choices[0].get("message", {}).get("content", "")
+
+        if not result_text:
+            return ClaudeResult(
+                success=False,
+                error="OpenAI returned no content in response",
+                duration_seconds=time.time() - start,
+                raw_json=response_data,
+            )
 
         usage = response_data.get("usage", {})
         input_tokens = usage.get("prompt_tokens", 0)
@@ -252,6 +267,13 @@ class GeminiRunner:
         duration = time.time() - start
 
         # Parse response
+        if not response_data:
+            return ClaudeResult(
+                success=False,
+                error="Gemini returned empty response",
+                duration_seconds=time.time() - start,
+            )
+
         result_text = ""
         candidates = response_data.get("candidates", [])
         if candidates:
@@ -259,6 +281,14 @@ class GeminiRunner:
             parts = content.get("parts", [])
             if parts:
                 result_text = parts[0].get("text", "")
+
+        if not result_text:
+            return ClaudeResult(
+                success=False,
+                error="Gemini returned no content in response",
+                duration_seconds=time.time() - start,
+                raw_json=response_data,
+            )
 
         usage = response_data.get("usageMetadata", {})
         input_tokens = usage.get("promptTokenCount", 0)
