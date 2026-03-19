@@ -101,7 +101,7 @@ class Orchestrator:
             self._session_manager = SessionManager(str(Path(config.paths.state_dir)))
 
         # Clean stale agent workspace from previous runs
-        workspace_dir = Path(self.config.paths.agent_workspace_dir)
+        workspace_dir = Path(self.config.target_dir) / self.config.paths.agent_workspace_dir
         if workspace_dir.exists():
             for child in workspace_dir.iterdir():
                 if child.is_file():

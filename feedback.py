@@ -17,6 +17,9 @@ from task_discovery import Task
 
 logger = logging.getLogger(__name__)
 
+# Regex to strip control characters (keep \n, \r, \t)
+_CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+
 # Maximum allowed length for feedback content after sanitization
 MAX_FEEDBACK_CONTENT_LENGTH = 64 * 1024  # 64 KB
 
@@ -53,7 +56,7 @@ def sanitize_feedback_content(content: str) -> str:
         content = content.replace(seq, '')
 
     # Remove control characters (keep \n, \r, \t)
-    content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', content)
+    content = _CONTROL_CHAR_RE.sub('', content)
 
     # Check for dangerous patterns (shell injection, command substitution)
     for i, pattern in enumerate(_DANGEROUS_PATTERNS):

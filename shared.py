@@ -354,7 +354,8 @@ def _derive_todo_subject(description: str) -> str:
 
 def extract_file_names(tasks: List[Task]) -> List[str]:
     """Extract file names mentioned in task descriptions."""
-    files = []
+    seen: set = set()
+    files: List[str] = []
     for t in tasks:
         m = re.search(
             r'([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json|md|txt))',
@@ -362,7 +363,8 @@ def extract_file_names(tasks: List[Task]) -> List[str]:
         )
         if m:
             fname = m.group(1).split("/")[-1]
-            if fname not in files:
+            if fname not in seen:
+                seen.add(fname)
                 files.append(fname)
     return files
 

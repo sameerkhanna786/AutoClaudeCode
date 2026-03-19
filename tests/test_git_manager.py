@@ -495,3 +495,14 @@ class TestRollbackBatchUntracked:
         allowed = set()  # empty = nothing preserved, everything reverted
         gm.rollback(snap, allowed_dirty=allowed)
         assert not Path(tmp_git_repo, "untracked.txt").exists()
+
+
+class TestRunWithRetryZeroAttempts:
+    """Test that _run_with_retry handles max_attempts=0 safely."""
+
+    def test_zero_attempts_clamps_to_one(self, tmp_git_repo):
+        gm = GitManager(tmp_git_repo)
+        # _run_with_retry with max_attempts=0 should still run at least once
+        result = gm._run_with_retry("status", max_attempts=0)
+        assert result is not None
+        assert result.returncode == 0

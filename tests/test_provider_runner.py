@@ -232,5 +232,40 @@ class TestGeminiApiKeySanitization(unittest.TestCase):
         self.assertNotIn("another-secret-key", result.error)
 
 
+class TestGeminiApiKeyNotInUrl(unittest.TestCase):
+    """Verify API key is sent via header, not URL query parameter."""
+
+    def test_build_url_has_no_key_param(self):
+        config = _make_config(provider="gemini")
+        runner = GeminiRunner(config)
+        runner._api_key = "secret-key-12345"
+        url = runner._build_url()
+        self.assertNotIn("secret-key-12345", url)
+        self.assertNotIn("key=", url)
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_api_key_sent_in_header(self, mock_urlopen):
+        config = _make_config(provider="gemini")
+        response_data = {
+            "candidates": [{"content": {"parts": [{"text": "hi"}]}}],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1},
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(response_data).encode()
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        runner = GeminiRunner(config)
+        runner._api_key = "test-header-key"
+        runner.run("Hello")
+
+        # Verify the request was made with the key in headers, not URL
+        call_args = mock_urlopen.call_args
+        req = call_args[0][0]
+        self.assertEqual(req.get_header("X-goog-api-key"), "test-header-key")
+        self.assertNotIn("key=", req.full_url)
+
+
 if __name__ == "__main__":
     unittest.main()

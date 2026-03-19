@@ -144,7 +144,7 @@ class GeminiRunner:
     def _build_url(self) -> str:
         return (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self._model}:generateContent?key={self._api_key}"
+            f"{self._model}:generateContent"
         )
 
     def _sanitize_error(self, message: str) -> str:
@@ -171,7 +171,10 @@ class GeminiRunner:
             req = urllib.request.Request(
                 self._build_url(),
                 data=data,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self._api_key,
+                },
             )
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                 response_data = json.loads(resp.read().decode("utf-8"))

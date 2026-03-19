@@ -67,12 +67,14 @@ def restore_and_retry(repo_dir: str) -> None:
             cwd=repo_dir,
             capture_output=True,
             check=True,
+            timeout=60,
         )
         subprocess.run(
             ["git", "clean", "-fd"],
             cwd=repo_dir,
             capture_output=True,
             check=True,
+            timeout=60,
         )
         logger.info("Files restored successfully")
     except subprocess.CalledProcessError as e:

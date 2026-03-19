@@ -308,5 +308,56 @@ class TestClearStale(unittest.TestCase):
             self.assertEqual(queue.pending_count(), 1)
 
 
+class TestDeclinedKeysThreadSafety(unittest.TestCase):
+    """Verify _declined_keys is protected by a lock."""
+
+    def test_declined_lock_exists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = TaskApprovalQueue(tmpdir)
+            self.assertTrue(hasattr(queue, '_declined_lock'))
+
+    def test_concurrent_enqueue_decline(self):
+        """Enqueue and decline from multiple threads without errors."""
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = TaskApprovalQueue(tmpdir)
+            errors = []
+
+            def enqueue_task(i):
+                try:
+                    task = Task(description=f"Task {i}", priority=2, source="lint")
+                    queue.enqueue(task, cooldown_seconds=1)
+                except Exception as e:
+                    errors.append(e)
+
+            def decline_task(task_id):
+                try:
+                    queue.decline(task_id)
+                except Exception as e:
+                    errors.append(e)
+
+            # Enqueue several tasks
+            for i in range(10):
+                task = Task(description=f"Task {i}", priority=2, source="lint")
+                queue.enqueue(task)
+
+            pending = queue.list_pending()
+            threads = []
+            for p in pending:
+                t = threading.Thread(target=decline_task, args=(p["id"],))
+                threads.append(t)
+            for i in range(10, 20):
+                t = threading.Thread(target=enqueue_task, args=(i,))
+                threads.append(t)
+
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            self.assertEqual(errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()

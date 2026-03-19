@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -51,6 +52,7 @@ class TaskApprovalQueue:
         self._approved_dir = self._state_dir / "approved"
         self._heartbeat_path = self._state_dir / "dashboard_heartbeat.json"
         self._declined_keys: Dict[str, float] = {}  # task_key -> decline timestamp
+        self._declined_lock = threading.Lock()
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -119,12 +121,13 @@ class TaskApprovalQueue:
             return None
 
         # Skip if recently declined
-        if task_key in self._declined_keys:
-            declined_at = self._declined_keys[task_key]
-            if cooldown_seconds > 0 and (time.time() - declined_at) < cooldown_seconds:
-                return None
-            # Cooldown expired, allow re-enqueue
-            del self._declined_keys[task_key]
+        with self._declined_lock:
+            if task_key in self._declined_keys:
+                declined_at = self._declined_keys[task_key]
+                if cooldown_seconds > 0 and (time.time() - declined_at) < cooldown_seconds:
+                    return None
+                # Cooldown expired, allow re-enqueue
+                del self._declined_keys[task_key]
 
         task_data = {
             "task_key": task_key,
@@ -241,7 +244,8 @@ class TaskApprovalQueue:
             # Read the task key before deleting for cooldown tracking
             data = json.loads(pending_path.read_text())
             task_key = data.get("task_key", task_id)
-            self._declined_keys[task_key] = time.time()
+            with self._declined_lock:
+                self._declined_keys[task_key] = time.time()
             pending_path.unlink()
             return True
         except (json.JSONDecodeError, OSError) as e:

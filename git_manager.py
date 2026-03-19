@@ -121,6 +121,8 @@ class GitManager:
         Non-transient failures (e.g. merge conflicts) are returned immediately.
         """
         last_result = None
+        if max_attempts < 1:
+            max_attempts = 1
         for attempt in range(max_attempts):
             result = self._run(*args, check=False, timeout=timeout)
             if result.returncode == 0:

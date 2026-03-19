@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 # Regex to detect unresolved conflict markers in file content
 CONFLICT_MARKER_RE = re.compile(r'^<{7}\s|^={7}$|^>{7}\s', re.MULTILINE)
 
+# Regex to extract fenced code blocks from Claude responses
+_CODE_BLOCK_RE = re.compile(r'```[^\n]*\n(.*?)```', re.DOTALL)
+
 
 class ConflictResolver:
     """Resolves merge conflicts by invoking Claude to produce clean merged files."""
@@ -59,7 +62,12 @@ class ConflictResolver:
                 logger.warning("Conflicted file not found: %s", abs_path)
                 return False, self._total_cost
 
-            conflicted_content = abs_path.read_text(errors="replace")
+            try:
+                conflicted_content = abs_path.read_text(errors="replace")
+            except OSError as e:
+                logger.warning("Failed to read conflicted file %s: %s", abs_path, e)
+                return False, self._total_cost
+
             prompt = self._build_resolve_prompt(
                 filepath, conflicted_content, worker_branch, main_branch,
             )
@@ -90,7 +98,11 @@ class ConflictResolver:
                 return False, self._total_cost
 
             # Write resolved content back
-            abs_path.write_text(resolved)
+            try:
+                abs_path.write_text(resolved)
+            except OSError as e:
+                logger.warning("Failed to write resolved file %s: %s", abs_path, e)
+                return False, self._total_cost
             logger.info("Resolved conflicts in %s", filepath)
 
         return True, self._total_cost
@@ -127,11 +139,7 @@ class ConflictResolver:
             return None
 
         # Try to find a fenced code block (``` ... ```)
-        # Match opening ``` with optional language tag, then content, then closing ```
-        code_block_re = re.compile(
-            r'```[^\n]*\n(.*?)```', re.DOTALL,
-        )
-        match = code_block_re.search(response_text)
+        match = _CODE_BLOCK_RE.search(response_text)
         if match:
             return match.group(1)
 

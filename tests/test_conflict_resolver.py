@@ -400,3 +400,44 @@ class TestGetConflictedFilesRealRepo:
         gm._run("checkout", ".", check=False)
         gm._run("clean", "-fd", check=False)
         gm.delete_branch("conflict-branch", force=True)
+
+
+class TestResolveConflictsFileErrors:
+    """Test error handling for file read/write failures in resolve_conflicts."""
+
+    def test_read_error_returns_false(self, tmp_path):
+        """Verify resolve_conflicts handles OSError on file read gracefully."""
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        filepath = "test_file.py"
+        test_file = tmp_path / filepath
+        test_file.write_text("content")
+
+        with patch.object(Path, 'read_text', side_effect=OSError("Permission denied")):
+            success, cost = resolver.resolve_conflicts(
+                str(tmp_path), [filepath], "worker-branch", "main"
+            )
+        assert success is False
+
+    def test_write_error_returns_false(self, tmp_path):
+        """Verify resolve_conflicts handles OSError on file write gracefully."""
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        filepath = "test_file.py"
+        test_file = tmp_path / filepath
+        test_file.write_text("content with no conflicts")
+
+        mock_result = ClaudeResult(
+            success=True,
+            result_text="```python\nresolved\n```",
+            cost_usd=0.01,
+        )
+        with patch.object(resolver, "runner") as mock_runner:
+            mock_runner.run.return_value = mock_result
+            with patch.object(Path, 'write_text', side_effect=OSError("Disk full")):
+                success, cost = resolver.resolve_conflicts(
+                    str(tmp_path), [filepath], "worker-branch", "main"
+                )
+        assert success is False
