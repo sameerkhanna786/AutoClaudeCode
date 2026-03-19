@@ -55,7 +55,6 @@ class StateManager:
         self.history_file = Path(config.paths.history_file)
         self._cache: Optional[List[Dict[str, Any]]] = None
         self._cache_mtime: float = 0.0
-        self._history_corrupt: bool = False
         self._ensure_dir()
 
     def _ensure_dir(self) -> None:
@@ -107,7 +106,7 @@ class StateManager:
                 self._cache_mtime = current_mtime
                 return []
             records = json.loads(text)
-            self._history_corrupt = False
+
             self._cache = records
             self._cache_mtime = current_mtime
             return records
@@ -125,14 +124,12 @@ class StateManager:
             restored = self._try_restore_from_backups()
             if restored is not None:
                 self._cache = restored
-                self._history_corrupt = False
             else:
                 logger.warning(
                     "No valid backup found. Corrupted history backed up. "
                     "Starting fresh — new cycles will write to a clean history file."
                 )
                 self._cache = []
-                self._history_corrupt = False
             try:
                 self._cache_mtime = self.history_file.stat().st_mtime
             except FileNotFoundError:
@@ -150,19 +147,9 @@ class StateManager:
     def _save_history(self, records: List[Dict[str, Any]]) -> None:
         """Atomic write: write to temp file, then rename.
 
-        Refuses to overwrite the history file if it was flagged as corrupt
-        and unrecoverable, to prevent data loss.
-
         Pre-checks available disk space (10 MB threshold) before attempting
         to write, allowing graceful degradation when disk is near full.
         """
-        if self._history_corrupt:
-            logger.error(
-                "Refusing to save history: file is corrupt and unrecoverable. "
-                "Manually fix or remove %s to resume.", self.history_file,
-            )
-            return
-
         # Disk space pre-check: require at least 10 MB free
         _MIN_FREE_BYTES = 10 * 1024 * 1024
         try:

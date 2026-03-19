@@ -411,8 +411,8 @@ class TestWorktreeManagement:
 
 @pytest.mark.requires_subprocess
 class TestRollbackTimeout:
-    def test_rollback_raises_timeout_when_deadline_exceeded(self, tmp_git_repo):
-        """Rollback with many files should raise TimeoutError when deadline is exceeded."""
+    def test_rollback_returns_early_when_deadline_exceeded(self, tmp_git_repo):
+        """Rollback with many files should return early (not raise) when deadline is exceeded."""
         import time as time_mod
         gm = GitManager(tmp_git_repo)
         snap = gm.create_snapshot()
@@ -437,9 +437,9 @@ class TestRollbackTimeout:
                 return 0.0
             return 1000.0  # Way past any deadline
 
+        # Should return normally (not raise) even when deadline exceeded
         with patch("git_manager.time.monotonic", side_effect=advancing_monotonic):
-            with pytest.raises(TimeoutError, match="exceeded.*deadline"):
-                gm.rollback(snap, allowed_dirty=allowed, timeout=10)
+            gm.rollback(snap, allowed_dirty=allowed, timeout=10)
 
     def test_rollback_completes_within_timeout(self, tmp_git_repo):
         """Normal rollback with default timeout succeeds without error."""

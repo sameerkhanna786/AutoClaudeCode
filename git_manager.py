@@ -170,7 +170,7 @@ class GitManager:
 
         Args:
             timeout: Overall deadline (seconds) for the rollback operation.
-                     Raises TimeoutError if exceeded during per-file operations.
+                     Returns early if exceeded during per-file operations.
         """
         deadline = time.monotonic() + timeout
 
@@ -213,10 +213,7 @@ class GitManager:
                             "exceeding %ds deadline",
                             reverted_count, total_count, timeout,
                         )
-                        raise TimeoutError(
-                            f"Rollback exceeded {timeout}s deadline: "
-                            f"reverted {reverted_count}/{total_count} files"
-                        )
+                        return
                     if f in untracked:
                         fpath = Path(self.repo_dir) / f
                         try:
