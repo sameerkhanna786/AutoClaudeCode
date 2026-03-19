@@ -368,8 +368,9 @@ class Validator:
             # Can't determine affected tests, fall back to full suite
             return self.validate(working_dir)
 
-        # Phase 1: Run targeted tests
-        targeted_cmd = f"python3 -m pytest {' '.join(shlex.quote(f) for f in test_files)} -x -q"
+        # Phase 1: Run targeted tests using the configured test command
+        base_test_cmd = vc.test_command.strip()
+        targeted_cmd = f"{base_test_cmd} {' '.join(shlex.quote(f) for f in test_files)} -x -q"
         steps: List[ValidationStep] = []
 
         # Run lint first

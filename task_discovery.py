@@ -896,6 +896,17 @@ class TaskDiscovery:
             return tasks[:10]
         except (json.JSONDecodeError, OSError):
             return []
+        finally:
+            # Clean up coverage artifacts to avoid polluting git status
+            try:
+                cov_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            dotcov = Path(self.target_dir) / ".coverage"
+            try:
+                dotcov.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _discover_quality_issues(self) -> List[Task]:
         """Review source files for general quality issues."""

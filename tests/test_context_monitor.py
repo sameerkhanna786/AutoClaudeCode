@@ -287,5 +287,62 @@ class TestTaskIdSanitization(unittest.TestCase):
             self.assertNotIn("\x00", files[0].name)
 
 
+class TestEmptyTaskIdSplitTasks(unittest.TestCase):
+    """Tests that split tasks get valid IDs even when parent task_id is empty."""
+
+    def test_empty_task_id_gets_fallback_id(self):
+        """When task.task_id is empty, split tasks should NOT have empty depends_on."""
+        config = _make_config()
+        monitor = ContextMonitor(config)
+        task = Task(
+            description="Fix all bugs", priority=2, source="feedback",
+            task_id="",  # Empty task_id
+        )
+        result = ClaudeResult(success=True, result_text="")
+        split_tasks = monitor.generate_split_tasks(task, result)
+        self.assertEqual(len(split_tasks), 1)
+        # depends_on should NOT contain an empty string
+        for dep in split_tasks[0].depends_on:
+            self.assertNotEqual(dep, "", "Split task should not depend on empty string")
+        # task_id should NOT start with __split (which would mean parent_id was empty)
+        self.assertFalse(
+            split_tasks[0].task_id.startswith("__split"),
+            "Split task ID should not start with __split (empty parent)",
+        )
+
+    def test_empty_task_id_with_todos_gets_fallback(self):
+        """Split tasks from TODO extraction also get valid IDs with empty parent."""
+        config = _make_config()
+        monitor = ContextMonitor(config)
+        task = Task(
+            description="Refactor module", priority=3, source="quality",
+            task_id="",  # Empty
+        )
+        result = ClaudeResult(
+            success=True,
+            result_text="TODO: Fix the edge case in parser.py\n",
+        )
+        split_tasks = monitor.generate_split_tasks(task, result)
+        self.assertGreater(len(split_tasks), 0)
+        for st in split_tasks:
+            for dep in st.depends_on:
+                self.assertNotEqual(dep, "")
+            self.assertNotEqual(st.task_id, "")
+
+    def test_nonempty_task_id_unchanged(self):
+        """When task_id is set, behavior is unchanged."""
+        config = _make_config()
+        monitor = ContextMonitor(config)
+        task = Task(
+            description="Fix bug", priority=2, source="feedback",
+            task_id="my-task",
+        )
+        result = ClaudeResult(success=True, result_text="")
+        split_tasks = monitor.generate_split_tasks(task, result)
+        self.assertEqual(len(split_tasks), 1)
+        self.assertIn("my-task", split_tasks[0].depends_on)
+        self.assertTrue(split_tasks[0].task_id.startswith("my-task__split"))
+
+
 if __name__ == "__main__":
     unittest.main()

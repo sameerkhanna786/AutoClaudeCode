@@ -78,6 +78,9 @@ class ContextMonitor:
             )
             return []
 
+        # Ensure task has a usable ID for dependency tracking
+        parent_id = task.task_id or f"anon_{id(task)}"
+
         result_text = result.result_text
         if not result_text:
             # No output to parse — create a generic continuation task
@@ -85,8 +88,8 @@ class ContextMonitor:
                 description=f"Continue: {task.description}",
                 priority=task.priority,
                 source=task.source,
-                task_id=f"{task.task_id}__split_{split_depth + 1}",
-                depends_on=[task.task_id],
+                task_id=f"{parent_id}__split_{split_depth + 1}",
+                depends_on=[parent_id],
             )]
 
         split_tasks: List[Task] = []
@@ -114,8 +117,8 @@ class ContextMonitor:
                     description=f"{desc} (from: {task.description[:80]})",
                     priority=task.priority,
                     source=task.source,
-                    task_id=f"{task.task_id}__split_{split_depth + 1}_{len(split_tasks)}",
-                    depends_on=[task.task_id],
+                    task_id=f"{parent_id}__split_{split_depth + 1}_{len(split_tasks)}",
+                    depends_on=[parent_id],
                 ))
 
         # If no specific TODOs found but context was exhausted, create a continuation
@@ -124,8 +127,8 @@ class ContextMonitor:
                 description=f"Continue incomplete work: {task.description}",
                 priority=task.priority,
                 source=task.source,
-                task_id=f"{task.task_id}__split_{split_depth + 1}",
-                depends_on=[task.task_id],
+                task_id=f"{parent_id}__split_{split_depth + 1}",
+                depends_on=[parent_id],
             ))
 
         logger.info(

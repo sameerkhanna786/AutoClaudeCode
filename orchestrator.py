@@ -165,17 +165,17 @@ class Orchestrator:
             logger.warning("Adaptive batch size was %d, clamping to 1", batch_size)
             batch_size = 1
 
-        # Apply graceful degradation factor to batch size
+        # Apply graceful degradation factor to batch size.
+        # Use the already-computed degradation level from _cycle() to avoid
+        # redundant history loads via get_cycle_count_last_hour/get_total_cost.
         if self._degradation.is_degraded:
-            degradation = self._degradation.check_and_adjust(
-                self.state.get_cycle_count_last_hour(),
-                self.state.get_total_cost(lookback_seconds=3600),
-            )
-            adjusted = max(1, int(batch_size * degradation["batch_size_factor"]))
+            level = self._degradation.degradation_level
+            batch_size_factor = {0: 1.0, 1: 0.75, 2: 0.5, 3: 0.25}.get(level, 1.0)
+            adjusted = max(1, int(batch_size * batch_size_factor))
             if adjusted < batch_size:
                 logger.info(
-                    "Degradation reduced batch size: %d -> %d (factor=%.2f)",
-                    batch_size, adjusted, degradation["batch_size_factor"],
+                    "Degradation reduced batch size: %d -> %d (level=%d, factor=%.2f)",
+                    batch_size, adjusted, level, batch_size_factor,
                 )
                 batch_size = adjusted
 

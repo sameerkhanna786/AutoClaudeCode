@@ -596,6 +596,16 @@ class TestAdaptiveBatchSizing:
         tasks = orch_batch._gather_tasks()
         assert len(tasks) == 1
 
+    def test_gather_tasks_degradation_uses_cached_level(self, orch_batch):
+        """When degraded, _gather_tasks should use cached level, not re-call check_and_adjust."""
+        orch_batch.state.compute_adaptive_batch_size = MagicMock(return_value=4)
+        # Simulate degradation already computed by _cycle
+        orch_batch._degradation._degraded = True
+        orch_batch._degradation._degradation_level = 2  # moderate -> factor 0.5
+        tasks = orch_batch._gather_tasks()
+        # 4 * 0.5 = 2 tasks
+        assert len(tasks) == 2
+
 
 class TestValidationRetry:
     """Tests for retry-on-validation-failure behavior."""

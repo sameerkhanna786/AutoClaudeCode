@@ -916,3 +916,50 @@ class TestCoverageTaskKeyDedup:
         )
         # No "for <module>" pattern, should fall back to source_file
         assert t.task_key == "coverage:src/utils.py"
+
+
+class TestCoverageGapsCleanup:
+    """Tests that _discover_coverage_gaps cleans up coverage artifacts."""
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_cleans_up_coverage_json(self, mock_run, tmp_path, default_config):
+        """coverage.json should be removed after discovery to avoid polluting git status."""
+        default_config.target_dir = str(tmp_path)
+        default_config.discovery.enable_coverage = True
+        discovery = TaskDiscovery(default_config)
+
+        # Create a fake coverage.json
+        cov_file = tmp_path / "coverage.json"
+        cov_data = {
+            "files": {
+                "module.py": {"summary": {"percent_covered": 30}}
+            }
+        }
+        import json
+        cov_file.write_text(json.dumps(cov_data))
+        dotcov = tmp_path / ".coverage"
+        dotcov.write_text("dummy")
+
+        mock_run.return_value = _run_result(returncode=1, stdout="1 failed")
+
+        tasks = discovery._discover_coverage_gaps()
+        assert len(tasks) == 1
+        # coverage.json and .coverage should be cleaned up
+        assert not cov_file.exists(), "coverage.json should be removed after discovery"
+        assert not dotcov.exists(), ".coverage should be removed after discovery"
+
+    @patch("task_discovery.run_with_group_kill")
+    def test_cleans_up_even_on_json_error(self, mock_run, tmp_path, default_config):
+        """coverage.json should be cleaned up even if JSON parsing fails."""
+        default_config.target_dir = str(tmp_path)
+        default_config.discovery.enable_coverage = True
+        discovery = TaskDiscovery(default_config)
+
+        cov_file = tmp_path / "coverage.json"
+        cov_file.write_text("not valid json{{{")
+
+        mock_run.return_value = _run_result(returncode=1, stdout="")
+
+        tasks = discovery._discover_coverage_gaps()
+        assert tasks == []
+        assert not cov_file.exists(), "coverage.json should be cleaned up even on parse error"

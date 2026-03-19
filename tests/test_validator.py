@@ -447,3 +447,34 @@ class TestRemoveXFlag:
         result = re.sub(r'(?:^|\s)-x(?=\s|$)', ' ', cmd).strip()
         result = re.sub(r'\s{2,}', ' ', result)
         assert result == expected
+
+
+class TestValidateIncremental:
+    """Tests for validate_incremental using configured test command."""
+
+    @patch("validator.run_with_group_kill")
+    def test_uses_configured_test_command(self, mock_run, default_config, tmp_path):
+        """Targeted test command should use the configured test command, not hardcoded pytest."""
+        default_config.validation.test_command = "python3 -m pytest tests/ -v"
+        default_config.validation.lint_command = ""
+        default_config.validation.build_command = ""
+        default_config.target_dir = str(tmp_path)
+        # Create a test file so mapping succeeds
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_foo.py").write_text("def test_ok(): pass\n")
+        v = Validator(default_config)
+        mock_run.return_value = RunResult(returncode=0, stdout="OK", stderr="", timed_out=False)
+        v.validate_incremental(str(tmp_path), ["foo.py"])
+        # Find the targeted test call
+        targeted_calls = [
+            c for c in mock_run.call_args_list
+            if isinstance(c[0][0], str) and "targeted" not in c[0][0]
+            and "test_foo" in c[0][0]
+        ]
+        assert len(targeted_calls) >= 1
+        # The targeted command should start with the configured test command
+        cmd = targeted_calls[0][0][0]
+        assert cmd.startswith("python3 -m pytest tests/ -v"), (
+            f"Expected command to start with configured test_command, got: {cmd}"
+        )
