@@ -866,3 +866,20 @@ class TestConfigLoadingRobustness:
         with patch("config_schema.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=10)):
             with pytest.raises(ValueError, match="timed out"):
                 validate_config(config)
+
+
+class TestGetExpectedTypeDictHandling:
+    """Test that _get_expected_type handles Dict[K,V] types."""
+
+    def test_dict_type_recognized(self):
+        from config_schema import _get_expected_type, PricingConfig
+        result = _get_expected_type(PricingConfig, "cost_per_million_input_tokens")
+        assert result is dict
+
+    def test_non_dict_value_rejected_by_merge(self):
+        """_merge_dataclass should reject non-dict values for dict fields."""
+        from config_schema import _merge_dataclass, PricingConfig
+        pricing = PricingConfig()
+        _merge_dataclass(pricing, {"cost_per_million_input_tokens": "not_a_dict"})
+        # Should remain unchanged (invalid value skipped)
+        assert isinstance(pricing.cost_per_million_input_tokens, dict)

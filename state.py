@@ -286,14 +286,17 @@ class StateManager:
         """Check if a task was attempted in the last lookback_seconds."""
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
-        for r in records:
-            if r.get("timestamp", 0) >= cutoff:
-                if r.get("task_description") == task_description:
-                    return True
-                if task_description in r.get("task_descriptions", []):
-                    return True
-                if task_key and task_key in r.get("task_keys", []):
-                    return True
+        # Scan in reverse (newest first) and stop once records are too old,
+        # since records are appended chronologically.
+        for r in reversed(records):
+            if r.get("timestamp", 0) < cutoff:
+                break
+            if r.get("task_description") == task_description:
+                return True
+            if task_description in r.get("task_descriptions", []):
+                return True
+            if task_key and task_key in r.get("task_keys", []):
+                return True
         return False
 
     def get_cycle_count_last_hour(self) -> int:

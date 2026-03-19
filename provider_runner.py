@@ -88,6 +88,7 @@ class OpenAIRunner:
         data = json.dumps(payload).encode("utf-8")
         max_attempts = 3
         last_error = ""
+        response_data = {}
 
         for attempt in range(max_attempts):
             try:
@@ -200,6 +201,7 @@ class GeminiRunner:
         data = json.dumps(payload).encode("utf-8")
         max_attempts = 3
         last_error = ""
+        response_data = {}
 
         for attempt in range(max_attempts):
             try:

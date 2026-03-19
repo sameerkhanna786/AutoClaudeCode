@@ -293,9 +293,11 @@ def _get_expected_type(dc_class, field_name: str):
             origin = getattr(hint, "__origin__", None)
         else:
             return None
-    # For List[X], accept list
+    # For List[X], accept list; for Dict[K,V], accept dict
     if origin is list:
         return list
+    if origin is dict:
+        return dict
     # For simple types
     if isinstance(hint, type):
         return hint

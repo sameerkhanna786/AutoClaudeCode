@@ -447,5 +447,28 @@ class TestGeminiRetryOnTransientError(unittest.TestCase):
         self.assertEqual(mock_urlopen.call_count, 1)
 
 
+class TestResponseDataInitialized(unittest.TestCase):
+    """Test that response_data is initialized before the retry loop."""
+
+    def test_openai_response_data_initialized(self):
+        """OpenAIRunner.run should initialize response_data before the loop."""
+        import inspect
+        source = inspect.getsource(OpenAIRunner.run)
+        # response_data should be assigned before the for loop
+        init_pos = source.find("response_data = {}")
+        loop_pos = source.find("for attempt in range")
+        self.assertGreater(init_pos, -1, "response_data should be initialized before loop")
+        self.assertLess(init_pos, loop_pos, "response_data init should come before for loop")
+
+    def test_gemini_response_data_initialized(self):
+        """GeminiRunner.run should initialize response_data before the loop."""
+        import inspect
+        source = inspect.getsource(GeminiRunner.run)
+        init_pos = source.find("response_data = {}")
+        loop_pos = source.find("for attempt in range")
+        self.assertGreater(init_pos, -1, "response_data should be initialized before loop")
+        self.assertLess(init_pos, loop_pos, "response_data init should come before for loop")
+
+
 if __name__ == "__main__":
     unittest.main()

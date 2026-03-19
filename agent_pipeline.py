@@ -450,7 +450,6 @@ class AgentPipeline:
         else:
             # Gather task-type-specific planning instructions
             task_type_guidance = ""
-            task_sources = {getattr(t, "source", "") for t in tasks}
             for src in sorted(task_sources):
                 instructions = TASK_TYPE_INSTRUCTIONS.get(src, "")
                 if instructions:
