@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from claude_runner import ClaudeRunner, ClaudeResult
+from provider_runner import ProviderRunner
 from config_schema import Config
 from cycle_state import CycleState, CycleStateWriter
 from feedback import FeedbackManager
@@ -557,7 +558,7 @@ class Orchestrator:
             except OSError as e:
                 logger.warning("Failed to backup %s: %s", py_file.name, e)
 
-    def _run_claude_with_timeout(self, prompt: str, runner: Optional[ClaudeRunner] = None) -> ClaudeResult:
+    def _run_claude_with_timeout(self, prompt: str, runner: Optional[ProviderRunner] = None) -> ClaudeResult:
         """Run Claude CLI with a cycle-level timeout safety net.
 
         Wraps self.claude.run() in a thread pool with a configurable timeout

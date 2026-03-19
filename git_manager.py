@@ -64,13 +64,6 @@ def _git_c_unescape(s: str) -> str:
     The previous unicode_escape approach failed on octal sequences
     (e.g., \\303\\251 for UTF-8 é) and could mangle non-ASCII bytes.
     """
-    def _replace(m: re.Match) -> str:
-        seq = m.group(1)
-        if seq in _C_ESCAPE_MAP:
-            return _C_ESCAPE_MAP[seq]
-        # Octal sequence -> raw byte
-        return bytes([int(seq, 8)]).decode("utf-8", errors="replace")
-
     # For multi-byte UTF-8 encoded as consecutive octal escapes (e.g., \303\251),
     # we need to collect all octal bytes and decode them together.
     parts = []
