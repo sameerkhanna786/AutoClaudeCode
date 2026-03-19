@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -127,7 +128,6 @@ class NotificationManager:
         # Rate-limit: deduplicate identical events within the window.
         # Hash the details to bound key size — large payloads would otherwise
         # create arbitrarily long dict keys consuming excessive memory.
-        import hashlib
         details_hash = hashlib.md5(
             json.dumps(details, sort_keys=True, default=str).encode()
         ).hexdigest()

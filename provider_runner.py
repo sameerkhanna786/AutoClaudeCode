@@ -32,6 +32,15 @@ _CONTEXT_WINDOWS = {
 }
 
 
+def _sanitize_error(message: str, api_key: str) -> str:
+    """Strip API keys from error messages to prevent leakage in logs."""
+    if api_key:
+        message = message.replace(api_key, "***")
+    for pattern in _API_KEY_PATTERNS:
+        message = pattern.sub("***", message)
+    return message
+
+
 @runtime_checkable
 class ProviderRunner(Protocol):
     """Protocol for LLM provider runners."""
@@ -57,12 +66,7 @@ class OpenAIRunner:
         self._base_url = "https://api.openai.com/v1/chat/completions"
 
     def _sanitize_error(self, message: str) -> str:
-        """Strip API key from error messages to prevent leakage in logs."""
-        if self._api_key:
-            message = message.replace(self._api_key, "***")
-        for pattern in _API_KEY_PATTERNS:
-            message = pattern.sub("***", message)
-        return message
+        return _sanitize_error(message, self._api_key)
 
     def run(self, prompt: str, add_dirs: Optional[List[str]] = None) -> ClaudeResult:
         """Run OpenAI chat completion."""
@@ -164,12 +168,7 @@ class GeminiRunner:
         )
 
     def _sanitize_error(self, message: str) -> str:
-        """Strip API key from error messages to prevent leakage in logs."""
-        if self._api_key:
-            message = message.replace(self._api_key, "***")
-        for pattern in _API_KEY_PATTERNS:
-            message = pattern.sub("***", message)
-        return message
+        return _sanitize_error(message, self._api_key)
 
     def run(self, prompt: str, add_dirs: Optional[List[str]] = None) -> ClaudeResult:
         """Run Gemini generateContent."""

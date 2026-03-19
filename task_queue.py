@@ -261,6 +261,11 @@ class TaskApprovalQueue:
             task_key = data.get("task_key", task_id)
             with self._declined_lock:
                 self._declined_keys[task_key] = time.time()
+                # Evict entries older than 24 hours to prevent unbounded growth
+                cutoff = time.time() - 86400
+                self._declined_keys = {
+                    k: v for k, v in self._declined_keys.items() if v > cutoff
+                }
             pending_path.unlink()
             return True
         except (json.JSONDecodeError, OSError) as e:

@@ -337,6 +337,47 @@ class TestClearStale(unittest.TestCase):
             self.assertEqual(queue.pending_count(), 1)
 
 
+class TestDeclinedKeysCleanup(unittest.TestCase):
+    """Verify _declined_keys doesn't grow unboundedly."""
+
+    def test_old_declined_keys_cleaned_up(self):
+        """Declined keys older than 24h should be evicted on next decline."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = TaskApprovalQueue(tmpdir)
+            # Simulate 50 old declined entries (>24h ago)
+            old_time = time.time() - 90000  # 25 hours ago
+            for i in range(50):
+                queue._declined_keys[f"old_key_{i}"] = old_time
+
+            # Now decline a new task
+            task = Task(description="New task", priority=2, source="lint")
+            queue.enqueue(task)
+            pending = queue.list_pending()
+            queue.decline(pending[0]["id"])
+
+            # Old keys should have been cleaned up
+            old_remaining = sum(
+                1 for k in queue._declined_keys if k.startswith("old_key_")
+            )
+            self.assertEqual(old_remaining, 0)
+
+    def test_recent_declined_keys_preserved(self):
+        """Declined keys younger than 24h should be kept."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = TaskApprovalQueue(tmpdir)
+            # Add a recent declined entry
+            queue._declined_keys["recent_key"] = time.time() - 3600  # 1h ago
+
+            # Decline another task
+            task = Task(description="Another task", priority=2, source="lint")
+            queue.enqueue(task)
+            pending = queue.list_pending()
+            queue.decline(pending[0]["id"])
+
+            # Recent key should still exist
+            self.assertIn("recent_key", queue._declined_keys)
+
+
 class TestDeclinedKeysThreadSafety(unittest.TestCase):
     """Verify _declined_keys is protected by a lock."""
 

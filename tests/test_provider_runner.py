@@ -327,5 +327,40 @@ class TestSanitizeErrorPatterns(unittest.TestCase):
         assert "eyJhbGci" not in sanitized
 
 
+class TestSanitizeErrorModuleFunction(unittest.TestCase):
+    """Tests that the module-level _sanitize_error function works correctly."""
+
+    def test_module_level_function_exists(self):
+        """_sanitize_error should be a module-level function reused by both runners."""
+        from provider_runner import _sanitize_error
+        result = _sanitize_error("no key here", "")
+        self.assertEqual(result, "no key here")
+
+    def test_module_level_strips_api_key(self):
+        from provider_runner import _sanitize_error
+        result = _sanitize_error("error with my-secret-key in it", "my-secret-key")
+        self.assertNotIn("my-secret-key", result)
+        self.assertIn("***", result)
+
+    def test_module_level_strips_patterns(self):
+        from provider_runner import _sanitize_error
+        result = _sanitize_error("key sk-abc123def456ghi789jkl012mno345pqr678", "")
+        self.assertNotIn("sk-abc123", result)
+
+    def test_both_runners_use_same_function(self):
+        """Both OpenAIRunner and GeminiRunner should delegate to the same function."""
+        config_openai = _make_config("openai")
+        config_gemini = _make_config("gemini")
+        runner_openai = OpenAIRunner(config_openai)
+        runner_gemini = GeminiRunner(config_gemini)
+        runner_openai._api_key = "test-key-123"
+        runner_gemini._api_key = "test-key-123"
+        msg = "error test-key-123"
+        self.assertEqual(
+            runner_openai._sanitize_error(msg),
+            runner_gemini._sanitize_error(msg),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
