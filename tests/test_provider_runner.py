@@ -307,5 +307,25 @@ class TestOpenAIApiKeySanitization(unittest.TestCase):
         self.assertNotIn("sk-secret-openai-key", result.error)
 
 
+class TestSanitizeErrorPatterns(unittest.TestCase):
+    def test_openai_key_pattern_scrubbed(self):
+        """OpenAI-style API keys should be scrubbed even if not the configured key."""
+        config = _make_config()
+        runner = OpenAIRunner(config)
+        runner._api_key = "different-key"
+        msg = "Error: invalid key sk-abc123def456ghi789jkl012mno345pqr678"
+        sanitized = runner._sanitize_error(msg)
+        assert "sk-abc123" not in sanitized
+
+    def test_bearer_token_scrubbed(self):
+        """Bearer tokens in error messages should be redacted."""
+        config = _make_config()
+        runner = OpenAIRunner(config)
+        runner._api_key = ""
+        msg = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+        sanitized = runner._sanitize_error(msg)
+        assert "eyJhbGci" not in sanitized
+
+
 if __name__ == "__main__":
     unittest.main()

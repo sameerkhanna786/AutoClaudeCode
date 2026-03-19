@@ -19,6 +19,11 @@ from config_schema import Config
 
 logger = logging.getLogger(__name__)
 
+# Pre-compiled regex for extracting file paths from task descriptions
+_FILE_PATTERN_RE = re.compile(
+    r'([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json))'
+)
+
 
 @dataclass
 class CycleRecord:
@@ -460,11 +465,8 @@ class StateManager:
         for r in records:
             if r.get("timestamp", 0) < cutoff or not r.get("success", False):
                 continue
-            for task_desc in r.get("task_descriptions", [r.get("task_description", "")]):
-                matches = re.findall(
-                    r'([a-zA-Z0-9_/.\-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|rb|sh|yaml|yml|json))',
-                    task_desc,
-                )
+            for task_desc in (r.get("task_descriptions") or [r.get("task_description", "")]):
+                matches = _FILE_PATTERN_RE.findall(task_desc)
                 for m in matches:
                     file_counts[m] = file_counts.get(m, 0) + 1
         return sorted(file_counts.keys(), key=lambda f: file_counts[f], reverse=True)

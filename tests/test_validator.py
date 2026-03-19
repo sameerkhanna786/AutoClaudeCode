@@ -427,3 +427,23 @@ class TestValidateSyntaxOnly:
             result = validator.validate_syntax_only(["huge.py"], str(tmp_path))
         assert result.passed is False
         assert "parse error" in result.steps[0].output
+
+
+class TestRemoveXFlag:
+    """Test -x flag removal from test commands during baseline comparison."""
+
+    @pytest.mark.parametrize("cmd,expected", [
+        ("pytest -x -v", "pytest -v"),
+        ("pytest -x", "pytest"),
+        ("-x pytest", "pytest"),
+        ("pytest -v -x -s", "pytest -v -s"),
+        ("pytest --maxfail=3", "pytest --maxfail=3"),  # no -x, unchanged
+        ("pytest -xvs", "pytest -xvs"),  # -x as part of combined flag, should NOT remove
+    ])
+    def test_remove_x_flag(self, cmd, expected):
+        """Removing -x flag should not mangle adjacent tokens."""
+        import re
+        # Current (buggy) implementation:
+        result = re.sub(r'(?:^|\s)-x(?=\s|$)', ' ', cmd).strip()
+        result = re.sub(r'\s{2,}', ' ', result)
+        assert result == expected

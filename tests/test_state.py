@@ -1226,3 +1226,29 @@ class TestTryRestoreFromBackupsTOCTOU:
 
         # No backups survived stat, so should return None
         assert result is None
+
+
+class TestFilePatternRegex:
+    def test_file_pattern_regex_is_precompiled(self):
+        """The file pattern regex should be pre-compiled at module level for performance."""
+        import state
+        assert hasattr(state, '_FILE_PATTERN_RE'), (
+            "state module should have a _FILE_PATTERN_RE pre-compiled regex"
+        )
+        import re
+        assert isinstance(state._FILE_PATTERN_RE, re.Pattern)
+
+    def test_productive_files_uses_precompiled_regex(self, state_mgr):
+        """get_productive_files should use the pre-compiled regex."""
+        import time
+        from state import CycleRecord
+        record = CycleRecord(
+            timestamp=time.time(),
+            task_description="Fix bug in main.py and config.yaml",
+            success=True,
+            cost_usd=0.01,
+        )
+        state_mgr.record_cycle(record)
+        files = state_mgr.get_productive_files()
+        assert "main.py" in files
+        assert "config.yaml" in files

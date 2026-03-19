@@ -446,3 +446,23 @@ class TestMarkClaimedSecurityCheck:
         failed_dir = Path(fb_mgr.failed_dir)
         assert not (failed_dir / "evil.md").exists()
         assert claimed.exists()
+
+
+class TestGetPendingFeedbackSymlinkSecurity:
+    def test_symlink_in_feedback_dir_is_skipped(self, fb_mgr, tmp_path):
+        """Symlinks in feedback dir should be skipped during get_pending_feedback."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        fb_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a file outside feedback dir
+        secret = tmp_path / "secret.txt"
+        secret.write_text("sensitive data")
+
+        # Create symlink inside feedback dir pointing to it
+        link = fb_dir / "symlink.txt"
+        link.symlink_to(secret)
+
+        tasks = fb_mgr.get_pending_feedback()
+        # The symlink should be skipped - no task with "sensitive data"
+        for t in tasks:
+            assert "sensitive data" not in t.description

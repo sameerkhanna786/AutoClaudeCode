@@ -85,6 +85,7 @@ class FeedbackManager:
         self.feedback_dir = Path(config.paths.feedback_dir)
         self.done_dir = Path(config.paths.feedback_done_dir)
         self.failed_dir = Path(config.paths.feedback_failed_dir)
+        self._last_cleanup_time = 0.0
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -178,6 +179,9 @@ class FeedbackManager:
         for f in all_entries:
             if not f.is_file() or f.name == ".gitkeep":
                 continue
+            if f.is_symlink():
+                logger.warning("Skipping symlink in feedback directory: %s", f)
+                continue
             if (f.name.endswith(".prd.yaml") or f.name.endswith(".prd.json")
                     or f.name.endswith(".prd.yml")):
                 prd_files.append(f)
@@ -267,9 +271,12 @@ class FeedbackManager:
 
             tasks.append(task)
 
-        # Clean up old done/failed files
-        self._cleanup_old_files(self.done_dir)
-        self._cleanup_old_files(self.failed_dir)
+        # Clean up old done/failed files (at most once per hour)
+        now = time.time()
+        if now - self._last_cleanup_time > 3600:
+            self._cleanup_old_files(self.done_dir)
+            self._cleanup_old_files(self.failed_dir)
+            self._last_cleanup_time = now
 
         return tasks
 

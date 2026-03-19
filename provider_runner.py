@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -14,6 +15,14 @@ from claude_runner import ClaudeResult, ClaudeRunner
 from config_schema import Config
 
 logger = logging.getLogger(__name__)
+
+# Patterns for scrubbing API keys from error messages
+_API_KEY_PATTERNS = [
+    re.compile(r'sk-[A-Za-z0-9]{20,}'),               # OpenAI keys
+    re.compile(r'Bearer\s+[A-Za-z0-9\-_.=]{20,}'),     # Bearer tokens
+    re.compile(r'AIza[A-Za-z0-9\-_]{30,}'),             # Google API keys
+    re.compile(r'key-[A-Za-z0-9]{20,}'),                # Generic key- prefixed
+]
 
 # Default context window sizes for token tracking
 _CONTEXT_WINDOWS = {
@@ -50,7 +59,9 @@ class OpenAIRunner:
     def _sanitize_error(self, message: str) -> str:
         """Strip API key from error messages to prevent leakage in logs."""
         if self._api_key:
-            return message.replace(self._api_key, "***")
+            message = message.replace(self._api_key, "***")
+        for pattern in _API_KEY_PATTERNS:
+            message = pattern.sub("***", message)
         return message
 
     def run(self, prompt: str, add_dirs: Optional[List[str]] = None) -> ClaudeResult:
@@ -155,7 +166,9 @@ class GeminiRunner:
     def _sanitize_error(self, message: str) -> str:
         """Strip API key from error messages to prevent leakage in logs."""
         if self._api_key:
-            return message.replace(self._api_key, "***")
+            message = message.replace(self._api_key, "***")
+        for pattern in _API_KEY_PATTERNS:
+            message = pattern.sub("***", message)
         return message
 
     def run(self, prompt: str, add_dirs: Optional[List[str]] = None) -> ClaudeResult:
