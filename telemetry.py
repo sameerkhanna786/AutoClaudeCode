@@ -107,8 +107,11 @@ def _compute_distribution(values: List[float]) -> Dict[str, Any]:
     mean_val = sum(sorted_vals) / n
 
     def percentile(pct: float) -> float:
-        idx = int(pct / 100 * (n - 1))
-        return sorted_vals[min(idx, n - 1)]
+        k = pct / 100 * (n - 1)
+        floor_idx = int(k)
+        ceil_idx = min(floor_idx + 1, n - 1)
+        frac = k - floor_idx
+        return sorted_vals[floor_idx] + frac * (sorted_vals[ceil_idx] - sorted_vals[floor_idx])
 
     return {
         "min": round(sorted_vals[0], 4),

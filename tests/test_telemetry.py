@@ -46,9 +46,9 @@ class TestComputeDistribution:
         assert result["min"] == 1.0
         assert result["max"] == 10.0
         assert result["mean"] == 5.5
-        assert result["median"] == 5.0  # idx = int(0.5 * 9) = 4 -> 5th element = 5.0
-        assert result["p90"] == 9.0     # idx = int(0.9 * 9) = 8 -> 9th element = 9.0
-        assert result["p95"] == 9.0     # idx = int(0.95 * 9) = 8 -> 9th element = 9.0
+        assert result["median"] == 5.5    # interpolated: 5.0 + 0.5*(6.0-5.0) = 5.5
+        assert result["p90"] == 9.1      # interpolated: 9.0 + 0.1*(10.0-9.0) = 9.1
+        assert result["p95"] == 9.55     # interpolated: 9.0 + 0.55*(10.0-9.0) = 9.55
 
     def test_unsorted_input(self):
         values = [10.0, 1.0, 5.0, 3.0, 7.0]

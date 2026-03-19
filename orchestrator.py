@@ -990,7 +990,10 @@ class Orchestrator:
         if self.config.parallel.enabled:
             from coordinator import ParallelCoordinator
             coordinator = ParallelCoordinator(self.config)
-            coordinator.run(once=once)
+            try:
+                coordinator.run(once=once)
+            finally:
+                self.notifier.shutdown()
             return
 
         self._setup_signals()
@@ -1080,4 +1083,5 @@ class Orchestrator:
 
             logger.info("Orchestrator stopped")
         finally:
+            self.notifier.shutdown()
             self.safety.release_lock()
