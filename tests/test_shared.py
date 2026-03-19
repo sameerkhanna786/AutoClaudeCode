@@ -784,6 +784,24 @@ class TestTopologicalSortTasks(unittest.TestCase):
         result = topological_sort_tasks([a, b, c])
         self.assertEqual(len(result), 3)
 
+    def test_duplicate_named_task_ids_no_data_loss(self):
+        """Two tasks with the same task_id must not silently drop one."""
+        a = Task(description="First", priority=1, source="lint", task_id="dup")
+        b = Task(description="Second", priority=2, source="lint", task_id="dup")
+        result = topological_sort_tasks([a, b])
+        self.assertEqual(len(result), 2)
+        descriptions = {t.description for t in result}
+        self.assertEqual(descriptions, {"First", "Second"})
+
+    def test_triple_duplicate_task_ids(self):
+        """Three tasks with the same task_id should all be preserved."""
+        tasks = [
+            Task(description=f"Task {i}", priority=i, source="lint", task_id="same")
+            for i in range(3)
+        ]
+        result = topological_sort_tasks(tasks)
+        self.assertEqual(len(result), 3)
+
 
 class TestSummarizeMixedSourcesEmptyTasks(unittest.TestCase):
     """Test that _summarize_mixed_sources handles empty task lists."""

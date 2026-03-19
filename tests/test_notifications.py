@@ -541,5 +541,29 @@ class TestWebhookPoolNoneGuard(unittest.TestCase):
         mgr.notify("cycle_success", {"tasks": ["test"]})
 
 
+class TestNotificationManagerContextManager(unittest.TestCase):
+    """Tests for NotificationManager __enter__/__exit__ context manager protocol."""
+
+    def test_context_manager_returns_self(self):
+        config = _make_config(enabled=False)
+        mgr = NotificationManager(config)
+        with mgr as ctx:
+            assert ctx is mgr
+
+    def test_context_manager_calls_shutdown(self):
+        config = _make_config(enabled=False)
+        mgr = NotificationManager(config)
+        with unittest.mock.patch.object(mgr, "shutdown") as mock_shutdown:
+            with mgr:
+                pass
+            mock_shutdown.assert_called_once()
+
+    def test_context_manager_exit_returns_false(self):
+        config = _make_config(enabled=False)
+        mgr = NotificationManager(config)
+        result = mgr.__exit__(None, None, None)
+        assert result is False
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -32,7 +32,7 @@ def compute_metrics(
     recent = [r for r in records if r.get("timestamp", 0) >= cutoff]
 
     if not recent:
-        return _empty_metrics()
+        return _empty_metrics(lookback_seconds)
 
     # Duration distribution
     durations = [r.get("duration_seconds", 0.0) for r in recent if r.get("duration_seconds", 0.0) > 0]
@@ -179,11 +179,11 @@ def _compute_type_breakdown(records: List[Dict[str, Any]]) -> Dict[str, Dict[str
     return breakdown
 
 
-def _empty_metrics() -> Dict[str, Any]:
+def _empty_metrics(lookback_seconds: int = 0) -> Dict[str, Any]:
     """Return empty metrics structure when no records are available."""
     empty_dist = {"min": 0, "max": 0, "mean": 0, "median": 0, "p90": 0, "p95": 0, "count": 0}
     return {
-        "lookback_seconds": 0,
+        "lookback_seconds": lookback_seconds,
         "total_cycles": 0,
         "successes": 0,
         "failures": 0,

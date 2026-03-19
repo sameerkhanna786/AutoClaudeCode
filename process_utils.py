@@ -111,7 +111,7 @@ def run_with_group_kill(
         return RunResult(
             returncode=-1,
             stdout=prefix + partial_stdout if partial_stdout else prefix,
-            stderr=prefix + partial_stderr if partial_stderr else "",
+            stderr=prefix + partial_stderr if partial_stderr else prefix,
             timed_out=True,
         )
     except BaseException:

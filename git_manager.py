@@ -51,9 +51,6 @@ _TRANSIENT_ERROR_PATTERNS = (
 
 import re
 
-# Regex for git C-style escape sequences: \t, \n, \r, \\, \", \a, \b, \f, \v, \OOO (octal)
-_C_ESCAPE_RE = re.compile(r'\\([tnrabfv\\"\\]|[0-3]?[0-7]{1,2})')
-
 _C_ESCAPE_MAP = {
     't': '\t', 'n': '\n', 'r': '\r', 'a': '\a', 'b': '\b',
     'f': '\f', 'v': '\v', '\\': '\\', '"': '"',

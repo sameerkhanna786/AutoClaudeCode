@@ -79,10 +79,17 @@ def topological_sort_tasks(tasks: List[Task]) -> List[Task]:
     # to prevent silent collisions in the task_map.
     id_counter = 0
     internal_ids: List[str] = []
+    seen_ids: set = set()
     for t in tasks:
-        if t.task_id:
+        if t.task_id and t.task_id not in seen_ids:
             internal_ids.append(t.task_id)
+            seen_ids.add(t.task_id)
         else:
+            if t.task_id:
+                logger.warning(
+                    "Duplicate task_id %r detected; assigning unique internal ID",
+                    t.task_id,
+                )
             internal_ids.append(f"__anon_{id_counter}")
             id_counter += 1
 

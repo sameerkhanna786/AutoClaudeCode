@@ -49,6 +49,14 @@ class TestRunWithGroupKill(unittest.TestCase):
         self.assertTrue(result.stdout.startswith("[TIMEOUT after 1s]"))
 
     @pytest.mark.requires_subprocess
+    def test_timeout_stderr_has_prefix(self):
+        """Both stdout and stderr should contain the timeout prefix on timeout."""
+        result = run_with_group_kill(["sleep", "60"], timeout=1)
+        self.assertTrue(result.timed_out)
+        self.assertIn("[TIMEOUT after 1s]", result.stdout)
+        self.assertIn("[TIMEOUT after 1s]", result.stderr)
+
+    @pytest.mark.requires_subprocess
     def test_shell_mode(self):
         result = run_with_group_kill("echo hello && echo world", shell=True)
         self.assertEqual(result.returncode, 0)

@@ -189,6 +189,26 @@ class TestEmptyMetrics:
         assert result["type_breakdown"] == {}
         assert result["pipeline_cycles"] == 0
 
+    def test_lookback_seconds_default(self):
+        result = _empty_metrics()
+        assert result["lookback_seconds"] == 0
+
+    def test_lookback_seconds_propagated(self):
+        result = _empty_metrics(3600)
+        assert result["lookback_seconds"] == 3600
+
+    def test_compute_metrics_propagates_lookback_on_empty(self):
+        """compute_metrics should pass lookback_seconds to _empty_metrics."""
+        result = compute_metrics([], lookback_seconds=7200)
+        assert result["lookback_seconds"] == 7200
+
+    def test_compute_metrics_propagates_lookback_no_recent(self):
+        """Records outside lookback window should still report correct lookback."""
+        old_ts = time.time() - 200000
+        records = [{"timestamp": old_ts, "success": True}]
+        result = compute_metrics(records, lookback_seconds=3600)
+        assert result["lookback_seconds"] == 3600
+
 
 class TestComputeMetrics:
     def test_no_records(self):

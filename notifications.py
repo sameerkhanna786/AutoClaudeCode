@@ -302,6 +302,13 @@ class NotificationManager:
         if self._webhook_pool is not None:
             self._webhook_pool.shutdown(wait=True)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.shutdown()
+        return False
+
     @staticmethod
     def _format_generic_payload(
         event: str, details: Dict[str, Any],
