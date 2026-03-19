@@ -107,6 +107,26 @@ class TestComputeHourlyBuckets:
         for i, b in enumerate(buckets):
             assert b["hours_ago"] == i
 
+    def test_record_at_exact_now_is_counted(self):
+        """A record with timestamp exactly equal to now should be included."""
+        now = time.time()
+        records = [
+            {"timestamp": now, "success": True, "cost_usd": 0.1},
+        ]
+        buckets = _compute_hourly_buckets(records, now)
+        assert buckets[0]["cycles"] == 1
+        assert buckets[0]["successes"] == 1
+        assert buckets[0]["cost_usd"] == 0.1
+
+    def test_future_records_excluded(self):
+        """Records with timestamps in the future should be excluded."""
+        now = time.time()
+        records = [
+            {"timestamp": now + 100, "success": True, "cost_usd": 0.5},
+        ]
+        buckets = _compute_hourly_buckets(records, now)
+        assert buckets[0]["cycles"] == 0
+
 
 class TestComputeTypeBreakdown:
     def test_empty_records(self):

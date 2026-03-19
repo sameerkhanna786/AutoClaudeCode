@@ -561,18 +561,19 @@ class Orchestrator:
 
         Wraps self.claude.run() in a thread pool with a configurable timeout
         to prevent indefinite hangs even if the subprocess timeout fails.
-        On timeout, actively terminates the child process so neither the
-        thread nor the subprocess leak.  Uses wait=False on shutdown to
-        avoid blocking the main loop if the thread refuses to die.
+        On timeout, actively terminates the child process and waits for the
+        thread to clean up before shutting down the executor.
         """
         timeout = self.config.orchestrator.cycle_timeout_seconds
         actual_runner = runner or self.claude
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        timed_out = False
         try:
             future = executor.submit(actual_runner.run, prompt)
             try:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
+                timed_out = True
                 logger.warning(
                     "Claude CLI cycle timeout fired after %ds — killing subprocess", timeout,
                 )
@@ -591,7 +592,10 @@ class Orchestrator:
                     error=f"Cycle timeout after {timeout}s (Claude CLI hung)",
                 )
         finally:
-            executor.shutdown(wait=False)
+            # Use wait=True on the normal path so the thread is joined and
+            # its resources are reclaimed.  Only use wait=False when timed
+            # out and the thread may be stuck, to avoid blocking the caller.
+            executor.shutdown(wait=not timed_out)
 
     def _cycle(self) -> None:
         """Run a single orchestration cycle."""
@@ -890,15 +894,16 @@ class Orchestrator:
         # Wrap pipeline.run() in a thread pool with cycle-level timeout
         timeout = self.config.orchestrator.cycle_timeout_seconds
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        timed_out = False
         try:
             future = executor.submit(pipeline.run, tasks, self.git.rollback, snapshot)
             try:
                 pipeline_result = future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
+                timed_out = True
                 logger.warning(
                     "Multi-agent pipeline cycle timeout fired after %ds", timeout,
                 )
-                # Fix 1: Terminate the active agent subprocess
                 pipeline.terminate()
                 future.cancel()
                 # Short secondary wait
@@ -920,7 +925,7 @@ class Orchestrator:
                 ))
                 return
         finally:
-            executor.shutdown(wait=False)
+            executor.shutdown(wait=not timed_out)
             self._active_pipeline = None
 
         total_cost = pipeline_result.total_cost_usd

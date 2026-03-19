@@ -572,6 +572,41 @@ class TestCycleTimeout:
             assert result.success is True
             assert result.result_text == "Done"
 
+    def test_executor_shutdown_wait_true_on_success(self, tmp_path):
+        """On normal completion, executor.shutdown(wait=True) is called to join the thread."""
+        import concurrent.futures
+
+        cfg = Config()
+        cfg.target_dir = str(tmp_path)
+        cfg.paths.history_file = str(tmp_path / "state" / "history.json")
+        cfg.paths.lock_file = str(tmp_path / "state" / "lock.pid")
+        cfg.paths.feedback_dir = str(tmp_path / "feedback")
+        cfg.paths.feedback_done_dir = str(tmp_path / "feedback" / "done")
+        cfg.paths.feedback_failed_dir = str(tmp_path / "feedback" / "failed")
+        cfg.paths.backup_dir = str(tmp_path / "state" / "backups")
+        cfg.orchestrator.cycle_timeout_seconds = 60
+
+        with patch("orchestrator.GitManager"), \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("subprocess.run") as mock_sp, \
+             patch("concurrent.futures.ThreadPoolExecutor") as MockExecutor:
+            mock_sp.return_value = MagicMock(returncode=0)
+            mock_pool = MagicMock()
+            mock_future = MagicMock()
+            mock_future.result.return_value = ClaudeResult(
+                success=True, result_text="Done",
+            )
+            mock_pool.submit.return_value = mock_future
+            MockExecutor.return_value = mock_pool
+            o = Orchestrator(cfg)
+            result = o._run_claude_with_timeout("test prompt")
+            assert result.success is True
+            # On success path, shutdown should be called with wait=True
+            mock_pool.shutdown.assert_called_once_with(wait=True)
+
 
 class TestAdaptiveBatchSizing:
     def test_gather_tasks_uses_adaptive_size(self, orch_batch):

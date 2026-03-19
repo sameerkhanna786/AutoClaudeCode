@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -55,7 +57,10 @@ class ConfigTuner:
         return recs
 
     def save_recommendations(self, recs: List[TuningRecommendation]) -> None:
-        """Save recommendations to a JSON file in the state directory."""
+        """Save recommendations to a JSON file in the state directory.
+
+        Uses atomic temp-file + os.replace to prevent corrupt files on crash.
+        """
         if not recs:
             return
         self._state_dir.mkdir(parents=True, exist_ok=True)
@@ -63,16 +68,30 @@ class ConfigTuner:
             "timestamp": time.time(),
             "recommendations": [asdict(r) for r in recs],
         }
+        tmp_path = None
         try:
-            self._recommendations_file.write_text(
-                json.dumps(data, indent=2, default=str)
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                dir=str(self._state_dir), suffix=".tmp",
             )
+            try:
+                f = os.fdopen(tmp_fd, "w")
+            except Exception:
+                os.close(tmp_fd)
+                raise
+            with f:
+                json.dump(data, f, indent=2, default=str)
+            os.replace(tmp_path, str(self._recommendations_file))
             logger.info(
                 "Saved %d tuning recommendations to %s",
                 len(recs), self._recommendations_file,
             )
         except OSError as e:
             logger.warning("Failed to save tuning recommendations: %s", e)
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def _analyze_max_turns(
         self, records: List[Dict[str, Any]], config: Any,

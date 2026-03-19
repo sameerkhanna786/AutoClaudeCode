@@ -141,7 +141,7 @@ def _compute_hourly_buckets(
     cutoff = now - 24 * 3600
     for r in records:
         ts = r.get("timestamp", 0)
-        if ts < cutoff or ts >= now:
+        if ts < cutoff or ts > now:
             continue
         hours_ago = int((now - ts) / 3600)
         if 0 <= hours_ago < 24:
