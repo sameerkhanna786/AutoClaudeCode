@@ -124,7 +124,7 @@ class LockedStateManager(StateManager):
         task_description: str,
         task_key: str = "",
         max_attempts: int = 5,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         with self._file_lock():
             return super().get_task_success_history(task_description, task_key, max_attempts)
 

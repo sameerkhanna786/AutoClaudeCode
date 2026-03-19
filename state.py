@@ -473,15 +473,15 @@ class StateManager:
         task_description: str,
         task_key: str = "",
         max_attempts: int = 5,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         """Return the last N attempts for a given task, including errors.
 
-        Each entry contains: {"attempt": int, "success": bool, "error": str,
+        Each entry contains: {"success": bool, "error": str,
         "validation_summary": str, "timestamp": float}.
         Matches by task_description or task_key (if provided).
         """
         records = self._load_history()
-        matches: List[Dict[str, str]] = []
+        matches: List[Dict[str, Any]] = []
         for r in records:
             match = r.get("task_description") == task_description
             if not match:
