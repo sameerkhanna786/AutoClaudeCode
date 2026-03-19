@@ -161,6 +161,7 @@ class Worker:
                 plan_config.claude.max_turns = effective_turns
                 from provider_runner import create_runner
                 plan_runner = create_runner(plan_config)
+                self._claude = plan_runner  # expose for signal-based termination
                 plan_result = plan_runner.run(
                     plan_prompt,
                     add_dirs=[str(Path(self.worktree_dir).resolve())],
@@ -180,6 +181,9 @@ class Worker:
                         error=f"Planning failed: {plan_result.error}",
                         tasks=self.tasks,
                     )
+
+                # Restore execution runner for subsequent use and signal handling
+                self._claude = create_runner(self.config)
 
                 # Revert any accidental changes from planning
                 self._git.rollback()

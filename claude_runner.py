@@ -38,7 +38,12 @@ def _sanitize_stderr(message: str) -> str:
 
 class _ProcResult:
     """Lightweight CompletedProcess-like object for downstream code."""
-    pass
+    __slots__ = ("returncode", "stdout", "stderr")
+
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = ""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 # Circuit breaker defaults
@@ -453,10 +458,11 @@ class ClaudeRunner:
                     self._kill_process(popen_proc)
                     raise
 
-                proc = _ProcResult()
-                proc.returncode = popen_proc.returncode
-                proc.stdout = stdout
-                proc.stderr = stderr
+                proc = _ProcResult(
+                    returncode=popen_proc.returncode,
+                    stdout=stdout,
+                    stderr=stderr,
+                )
             except subprocess.TimeoutExpired:
                 if attempt < self.max_retries:
                     delay = self.retry_delays[min(attempt, len(self.retry_delays) - 1)]

@@ -172,3 +172,15 @@ class TestSaveRecommendationsExceptionCleanup:
         import inspect
         source = inspect.getsource(ConfigTuner.save_recommendations)
         assert 'encoding="utf-8"' in source or "encoding='utf-8'" in source
+
+
+class TestRetryAnalysisNoDeadCode:
+    """Ensure _analyze_retries has no unused computed variables."""
+
+    def test_no_unused_avg_retries_variable(self):
+        """avg_retries was computed but never used — it should be removed."""
+        import inspect
+        source = inspect.getsource(ConfigTuner._analyze_retries)
+        assert "avg_retries" not in source, (
+            "avg_retries was dead code and should have been removed"
+        )

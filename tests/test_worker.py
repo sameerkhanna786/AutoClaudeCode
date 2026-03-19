@@ -393,3 +393,31 @@ class TestConfigMutationIsolation:
         deep_config = copy.deepcopy(worker_config)
         assert deep_config.validation is not worker_config.validation, \
             "Deep copy should isolate nested objects"
+
+
+class TestPlanRunnerExposedForTermination:
+    """Plan-phase runner must be assigned to self._claude for signal-based termination."""
+
+    def test_plan_runner_assigned_to_self_claude(self, worker_config, tmp_git_repo):
+        """When plan_changes is enabled, the plan runner should be assigned to
+        self._claude so the coordinator can terminate it via signal handler."""
+        import inspect
+        from worker import Worker
+        source = inspect.getsource(Worker.execute)
+        # The fix assigns plan_runner to self._claude before calling run()
+        assert "self._claude = plan_runner" in source, (
+            "plan_runner must be assigned to self._claude for termination support"
+        )
+
+    def test_execution_runner_restored_after_planning(self, worker_config, tmp_git_repo):
+        """After planning completes, self._claude should be restored to the
+        execution-phase runner."""
+        import inspect
+        from worker import Worker
+        source = inspect.getsource(Worker.execute)
+        # After plan_runner.run(), a new execution runner must be created
+        idx_plan = source.index("self._claude = plan_runner")
+        idx_restore = source.index("self._claude = create_runner", idx_plan + 1)
+        assert idx_restore > idx_plan, (
+            "Execution runner must be restored after plan_runner completes"
+        )

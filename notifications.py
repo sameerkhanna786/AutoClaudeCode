@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
+import socket
 import threading
 import time
 import urllib.request
@@ -16,6 +18,23 @@ from urllib.parse import urlparse
 from config_schema import WebhookConfig, NotificationEventsConfig, NotificationsConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _is_private_ip(hostname: str) -> bool:
+    """Check if a hostname resolves to a private/loopback/link-local IP address."""
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, OSError):
+        return False
+    for family, _type, _proto, _canonname, sockaddr in addr_infos:
+        ip_str = sockaddr[0]
+        try:
+            addr = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            return True
+    return False
 
 
 # Map event names to NotificationEventsConfig field names
@@ -181,6 +200,14 @@ class NotificationManager:
             logger.warning(
                 "Rejecting webhook with unsupported scheme %r: %s",
                 parsed_url.scheme, webhook.url,
+            )
+            return
+
+        hostname = parsed_url.hostname or ""
+        if _is_private_ip(hostname):
+            logger.warning(
+                "Rejecting webhook targeting private/loopback address: %s",
+                webhook.url,
             )
             return
 

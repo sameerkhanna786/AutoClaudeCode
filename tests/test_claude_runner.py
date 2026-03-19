@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from claude_runner import CircuitBreaker, ClaudeResult, ClaudeRunner, _sanitize_stderr
+from claude_runner import CircuitBreaker, ClaudeResult, ClaudeRunner, _ProcResult, _sanitize_stderr
 from config_schema import Config
 
 
@@ -933,3 +933,24 @@ class TestCircuitBreakerCallbackRace:
         cb = CircuitBreaker(failure_threshold=2, on_open=on_open, jitter_factor=0)
         cb.record_failure()
         cb.record_failure()
+
+
+class TestProcResult:
+    """Tests for _ProcResult lightweight result object."""
+
+    def test_defaults(self):
+        proc = _ProcResult()
+        assert proc.returncode == 0
+        assert proc.stdout == ""
+        assert proc.stderr == ""
+
+    def test_keyword_arguments(self):
+        proc = _ProcResult(returncode=1, stdout="out", stderr="err")
+        assert proc.returncode == 1
+        assert proc.stdout == "out"
+        assert proc.stderr == "err"
+
+    def test_slots_prevent_arbitrary_attrs(self):
+        proc = _ProcResult()
+        with pytest.raises(AttributeError):
+            proc.unexpected = "should fail"

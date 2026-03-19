@@ -227,7 +227,6 @@ class ConfigTuner:
             return recs
 
         retry_counts = [r.get("validation_retry_count", 0) for r in recent]
-        avg_retries = sum(retry_counts) / len(retry_counts)
         max_retries_seen = max(retry_counts)
 
         current_max_retries = config.orchestrator.max_validation_retries
