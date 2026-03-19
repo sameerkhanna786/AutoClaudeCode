@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import re
 import threading
 from dataclasses import dataclass, field
@@ -121,18 +122,26 @@ class AgentWorkspace:
                     logger.warning("Could not remove workspace entry %s: %s", child, e)
         self._root.mkdir(parents=True, exist_ok=True)
 
+    def _safe_path(self, name: str) -> Path:
+        """Resolve a filename within the workspace, preventing path traversal."""
+        target = (self._root / name).resolve()
+        root_resolved = self._root.resolve()
+        if not str(target).startswith(str(root_resolved) + os.sep) and target != root_resolved:
+            raise ValueError(f"Path traversal blocked: {name!r} escapes workspace root")
+        return target
+
     def write(self, name: str, content: str) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
-        (self._root / name).write_text(content)
+        self._safe_path(name).write_text(content)
 
     def read(self, name: str) -> Optional[str]:
-        path = self._root / name
+        path = self._safe_path(name)
         if path.exists():
             return path.read_text()
         return None
 
     def exists(self, name: str) -> bool:
-        return (self._root / name).exists()
+        return self._safe_path(name).exists()
 
 
 class AgentPipeline:

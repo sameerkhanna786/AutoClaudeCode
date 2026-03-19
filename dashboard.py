@@ -1005,6 +1005,13 @@ def get_loc_for_commits(
             }
             result[h] = loc_data
             with lock:
+                # Cap cache size to prevent unbounded memory growth
+                _MAX_LOC_CACHE = 1000
+                if len(cache) >= _MAX_LOC_CACHE:
+                    # Evict oldest entries (arbitrary subset)
+                    evict_keys = list(cache.keys())[:_MAX_LOC_CACHE // 4]
+                    for k in evict_keys:
+                        del cache[k]
                 cache[h] = loc_data
         except (subprocess.TimeoutExpired, OSError):
             result[h] = {"error": "git failed"}
@@ -1199,12 +1206,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         feedback_dir.mkdir(parents=True, exist_ok=True)
         target = feedback_dir / filename
 
-        if target.exists():
+        # Atomic create-or-fail: O_CREAT | O_EXCL ensures the file is created
+        # only if it doesn't already exist, eliminating the TOCTOU race between
+        # exists() check and write().
+        try:
+            fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
             self._send_error(409, f"File '{filename}' already exists")
+            return
+        except OSError as e:
+            logger.warning("Failed to create feedback file %s: %s", target, e)
+            self._send_error(500, "Failed to write file")
             return
 
         try:
-            target.write_text(content)
+            with os.fdopen(fd, "w") as f:
+                f.write(content)
         except OSError as e:
             logger.warning("Failed to write feedback file %s: %s", target, e)
             self._send_error(500, "Failed to write file")

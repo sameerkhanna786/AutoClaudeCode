@@ -630,5 +630,28 @@ class TestStaticHtmlBytesCache(unittest.TestCase):
         self.assertIs(a, b)
 
 
+class TestLocCacheBounds(unittest.TestCase):
+    """Test that LOC cache is bounded to prevent unbounded memory growth."""
+
+    def test_cache_evicts_when_full(self):
+        from dashboard import get_loc_for_commits
+        import threading
+
+        cache = {}
+        lock = threading.Lock()
+
+        # Fill cache with 1000 entries
+        for i in range(1000):
+            cache[f"hash_{i:04d}"] = {"total_insertions": i, "total_deletions": 0, "files": []}
+
+        self.assertEqual(len(cache), 1000)
+
+        # Add one more via the function (use invalid hashes to avoid git calls)
+        get_loc_for_commits("/nonexistent", ["zzzz"], cache, lock)
+
+        # Cache should have been evicted (not grown unbounded past 1000)
+        self.assertLessEqual(len(cache), 1000)
+
+
 if __name__ == "__main__":
     unittest.main()

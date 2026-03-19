@@ -54,6 +54,32 @@ class TestAgentWorkspace:
         ws.write("test.md", "content")
         assert ws.read("test.md") == "content"
 
+    def test_path_traversal_write_blocked(self, tmp_path):
+        ws = AgentWorkspace(str(tmp_path / "workspace"))
+        ws.clean()
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            ws.write("../../etc/evil.txt", "malicious")
+
+    def test_path_traversal_read_blocked(self, tmp_path):
+        ws = AgentWorkspace(str(tmp_path / "workspace"))
+        ws.clean()
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            ws.read("../../../etc/passwd")
+
+    def test_path_traversal_exists_blocked(self, tmp_path):
+        ws = AgentWorkspace(str(tmp_path / "workspace"))
+        ws.clean()
+        with pytest.raises(ValueError, match="Path traversal blocked"):
+            ws.exists("../../etc/passwd")
+
+    def test_normal_filenames_allowed(self, tmp_path):
+        ws = AgentWorkspace(str(tmp_path / "workspace"))
+        ws.clean()
+        # Normal filenames within workspace should work fine
+        ws.write("plan.md", "content")
+        assert ws.read("plan.md") == "content"
+        assert ws.exists("plan.md")
+
 
 class TestParseReviewVerdict:
     def setup_method(self):
