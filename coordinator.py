@@ -660,9 +660,10 @@ class ParallelCoordinator:
             with self._workers_lock:
                 workers_snapshot = list(self._workers)
             for worker in workers_snapshot:
-                if worker._claude is not None:
+                runner = worker._claude  # capture to avoid TOCTOU race
+                if runner is not None:
                     try:
-                        worker._claude.terminate()
+                        runner.terminate()
                     except Exception:
                         pass
 

@@ -506,3 +506,18 @@ class TestRunWithRetryZeroAttempts:
         result = gm._run_with_retry("status", max_attempts=0)
         assert result is not None
         assert result.returncode == 0
+
+
+class TestRollbackTimeoutOnCheckout:
+    """Verify that targeted rollback passes remaining time to checkout."""
+
+    def test_checkout_uses_remaining_deadline(self, tmp_git_repo):
+        """The bulk git checkout in targeted rollback should respect the
+        rollback timeout by passing remaining time, not the default timeout."""
+        import inspect
+        source = inspect.getsource(GitManager.rollback)
+        # The checkout call should compute remaining time from deadline
+        # rather than using the default GIT_DEFAULT_TIMEOUT
+        assert "deadline" in source and "timeout=" in source, (
+            "rollback() should pass remaining deadline time to checkout _run call"
+        )

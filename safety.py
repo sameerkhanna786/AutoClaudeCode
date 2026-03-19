@@ -196,9 +196,15 @@ class SafetyGuard:
             os.lseek(self._lock_fd, 0, os.SEEK_SET)
             os.write(self._lock_fd, str(os.getpid()).encode())
         except BaseException:
-            # Ensure fd is always closed if we fail to fully acquire the lock
-            if self._lock_fd != fd:
+            # Ensure fd is always closed if we fail to fully acquire the lock.
+            # If self._lock_fd was already set to fd (partial acquire), reset
+            # it so release_lock() won't try to double-close.
+            if self._lock_fd == fd:
+                self._lock_fd = None
+            try:
                 os.close(fd)
+            except OSError:
+                pass
             raise
 
     def release_lock(self) -> None:

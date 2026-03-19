@@ -707,3 +707,43 @@ class TestAcquireLockFdCleanup:
 
         # The fd must have been closed despite the unexpected exception
         assert len(close_calls) >= 1
+
+
+class TestAcquireLockFdLeakAfterPartialAcquire:
+    """Verify fd is closed if exception occurs after self._lock_fd is set."""
+
+    def test_fd_closed_on_ftruncate_failure(self, guard):
+        """If os.ftruncate fails after lock_fd is stored, fd must be closed."""
+        close_calls = []
+        original_close = os.close
+
+        def tracking_close(fd):
+            close_calls.append(fd)
+            return original_close(fd)
+
+        with patch("safety.os.ftruncate", side_effect=OSError("disk full")), \
+             patch("safety.os.close", side_effect=tracking_close):
+            with pytest.raises(OSError, match="disk full"):
+                guard.acquire_lock()
+
+        # The fd must have been closed
+        assert len(close_calls) >= 1
+        # And _lock_fd must be reset to None
+        assert guard._lock_fd is None
+
+    def test_fd_closed_on_write_failure(self, guard):
+        """If os.write fails after lock_fd is stored, fd must be closed."""
+        close_calls = []
+        original_close = os.close
+
+        def tracking_close(fd):
+            close_calls.append(fd)
+            return original_close(fd)
+
+        with patch("safety.os.write", side_effect=OSError("I/O error")), \
+             patch("safety.os.close", side_effect=tracking_close):
+            with pytest.raises(OSError, match="I/O error"):
+                guard.acquire_lock()
+
+        assert len(close_calls) >= 1
+        assert guard._lock_fd is None

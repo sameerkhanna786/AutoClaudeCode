@@ -573,3 +573,20 @@ class TestWorkersLock:
         assert "self._workers_lock" in source, (
             "Signal handler should use _workers_lock to protect worker list access"
         )
+
+
+class TestSignalHandlerClaudeRace:
+    """Signal handler must not race on worker._claude access."""
+
+    def test_signal_handler_uses_local_variable_for_claude(self, parallel_config):
+        """Signal handler should capture worker._claude in a local variable
+        to avoid TOCTOU race where _claude becomes None between check and use."""
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator)
+        # The handler should NOT do `if worker._claude is not None: worker._claude.terminate()`
+        # It should capture in a local: `runner = worker._claude; if runner is not None: runner.terminate()`
+        assert "runner = worker._claude" in source or "proc = worker._claude" in source or "claude = worker._claude" in source, (
+            "Signal handler should capture worker._claude in a local variable "
+            "to avoid TOCTOU race between None check and terminate() call"
+        )
