@@ -84,3 +84,62 @@ class TestSaveRecommendations:
         tuner.save_recommendations(recs)
         tmp_files = list(tmp_path.glob("*.tmp"))
         assert len(tmp_files) == 0
+
+
+class TestAnalyzeLoopInterval:
+    """Tests for _analyze_loop_interval no-task detection heuristic."""
+
+    def _make_config(self):
+        from unittest.mock import MagicMock
+        config = MagicMock()
+        config.orchestrator.loop_interval_seconds = 60
+        config.orchestrator.max_batch_size = 5
+        config.orchestrator.max_validation_retries = 3
+        config.claude.max_turns = 25
+        return config
+
+    def _make_records(self, error_messages):
+        """Create recent records with given error messages (all failures)."""
+        import time
+        return [
+            {"timestamp": time.time(), "success": False, "error": msg}
+            for msg in error_messages
+        ]
+
+    def test_counts_no_tasks_error(self):
+        """'No tasks found' should count as a no-task cycle."""
+        config = self._make_config()
+        tuner = ConfigTuner("/tmp/test")
+        records = self._make_records(["No tasks found"] * 12 + ["ok"] * 8)
+        # Mark some as successes
+        for r in records[12:]:
+            r["success"] = True
+            r["error"] = ""
+        recs = tuner._analyze_loop_interval(records, config)
+        assert len(recs) == 1
+        assert "interval" in recs[0].field.lower() or "loop" in recs[0].field.lower()
+
+    def test_counts_no_actionable_tasks_error(self):
+        """'No actionable tasks' should count as a no-task cycle."""
+        config = self._make_config()
+        tuner = ConfigTuner("/tmp/test")
+        records = self._make_records(["No actionable tasks"] * 15 + ["ok"] * 5)
+        for r in records[15:]:
+            r["success"] = True
+            r["error"] = ""
+        recs = tuner._analyze_loop_interval(records, config)
+        assert len(recs) == 1
+
+    def test_does_not_match_false_positive_errors(self):
+        """Errors like 'Cannot find task node' should NOT count as no-task cycles."""
+        config = self._make_config()
+        tuner = ConfigTuner("/tmp/test")
+        records = self._make_records([
+            "Cannot find task node",
+            "Token not valid for task",
+            "Validation failed: task dependency missing",
+            "No response from task runner",
+        ] * 5)
+        recs = tuner._analyze_loop_interval(records, config)
+        # These errors should NOT trigger the "no tasks" recommendation
+        assert all("interval" not in r.field.lower() for r in recs)

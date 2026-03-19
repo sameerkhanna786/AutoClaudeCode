@@ -1426,3 +1426,45 @@ class TestAgentWorkspaceCleanup:
         # Files should be cleaned up
         assert not (workspace / "plan.md").exists()
         assert not (workspace / "review.md").exists()
+
+
+class TestFeedbackDirRace:
+    def test_feedback_dir_oserror_does_not_crash_cycle(self, config):
+        """When feedback directory raises OSError during iteration, cycle should not crash."""
+        with patch("orchestrator.GitManager") as MockGit, \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery") as MockDisc, \
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.resolve_model_id", return_value=None), \
+             patch("provider_runner.create_runner") as MockCreateRunner, \
+             patch("subprocess.run") as mock_sp:
+
+            mock_sp.return_value = MagicMock(returncode=0)
+            mock_git = MockGit.return_value
+            mock_git.create_snapshot.return_value = Snapshot(commit_hash="a" * 40)
+            mock_git.capture_worktree_state.return_value = set()
+            mock_git.get_changed_files.return_value = []
+            mock_git.get_new_changed_files.return_value = []
+
+            mock_claude = MagicMock()
+            mock_claude.run.return_value = ClaudeResult(
+                success=True, result_text="done", cost_usd=0.01,
+            )
+            MockCreateRunner.return_value = mock_claude
+
+            mock_disc = MockDisc.return_value
+            mock_disc.discover_all.return_value = []
+
+            o = Orchestrator(config)
+            o.git = mock_git
+            o.discovery = mock_disc
+
+            # Simulate feedback_dir.iterdir() raising OSError
+            o.feedback.get_pending_feedback = MagicMock(return_value=[])
+            mock_feedback_dir = MagicMock()
+            mock_feedback_dir.exists.return_value = True
+            mock_feedback_dir.iterdir.side_effect = OSError("Permission denied")
+            o.feedback.feedback_dir = mock_feedback_dir
+
+            # Should not raise — the OSError should be caught
+            o._cycle()

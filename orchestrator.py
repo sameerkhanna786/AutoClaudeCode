@@ -649,10 +649,13 @@ class Orchestrator:
                 enabled_methods.append("claude_ideas")
             if dc.enable_quality_review:
                 enabled_methods.append("quality_review")
-            has_feedback = any(
-                f.is_file() and f.suffix in (".md", ".txt")
-                for f in self.feedback.feedback_dir.iterdir()
-            ) if self.feedback.feedback_dir.exists() else False
+            try:
+                has_feedback = any(
+                    f.is_file() and f.suffix in (".md", ".txt")
+                    for f in self.feedback.feedback_dir.iterdir()
+                ) if self.feedback.feedback_dir.exists() else False
+            except OSError:
+                has_feedback = False
             if not enabled_methods and not has_feedback:
                 logger.warning(
                     "No tasks found: no discovery methods enabled and no pending feedback"

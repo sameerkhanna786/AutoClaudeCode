@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from dataclasses import asdict, dataclass
@@ -184,11 +185,12 @@ class ConfigTuner:
         if len(recent) < 5:
             return recs
 
-        # Count cycles with no tasks (error contains "No tasks" or "No actionable")
+        # Count cycles with no tasks (error mentions "No tasks" or "No actionable tasks")
         no_task_count = sum(
             1 for r in recent
-            if not r.get("success") and "no" in r.get("error", "").lower()
-            and "task" in r.get("error", "").lower()
+            if not r.get("success") and re.search(
+                r'\bno\s+(?:actionable\s+)?tasks?\b', r.get("error", ""), re.IGNORECASE
+            )
         )
 
         current_interval = config.orchestrator.loop_interval_seconds

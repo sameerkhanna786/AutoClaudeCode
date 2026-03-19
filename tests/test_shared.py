@@ -90,6 +90,18 @@ class TestSyntaxCheckFiles(unittest.TestCase):
             result = syntax_check_files(["readme.txt"], tmpdir)
             self.assertIsNone(result)
 
+    def test_utf8_file_with_non_ascii(self):
+        """syntax_check_files should handle UTF-8 files with non-ASCII characters."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            py_file = Path(tmpdir) / "unicode.py"
+            py_file.write_text(
+                '# -*- coding: utf-8 -*-\nx = "héllo wörld"\n',
+                encoding="utf-8",
+            )
+            result = syntax_check_files(["unicode.py"], tmpdir)
+            self.assertIsNone(result)
+
 
 # ---------------------------------------------------------------------------
 # gather_tasks

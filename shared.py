@@ -184,7 +184,7 @@ def syntax_check_files(changed_files: List[str], base_dir: str) -> Optional[str]
             full_path = Path(base_dir) / f
             if full_path.exists():
                 try:
-                    source = full_path.read_text()
+                    source = full_path.read_text(encoding="utf-8")
                     ast.parse(source, filename=f)
                 except SyntaxError as e:
                     return f"Syntax error in {f} at line {e.lineno}: {e.msg}"
