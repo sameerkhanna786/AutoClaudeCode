@@ -928,5 +928,62 @@ class TestSummarizeSameSourceNoFileRefs(unittest.TestCase):
         self.assertIn("2", result)
 
 
+class TestBuildCommitMessageEmptyDescription(unittest.TestCase):
+    """Regression: build_commit_message with empty cleaned description should
+    produce a meaningful subject, not just the verb (e.g. 'Fix')."""
+
+    def test_empty_description_with_verb(self):
+        """When clean_description returns empty, subject should include source type."""
+        task = Task(description="Fix test failure: ", priority=2, source="test_failure")
+        result = build_commit_message(task)
+        # Should not be just "Fix" — should have meaningful content
+        self.assertGreater(len(result.strip()), 5)
+        self.assertIn("test", result.lower())
+
+    def test_empty_description_lint_source(self):
+        """Lint source with empty cleaned description."""
+        task = Task(description="Fix lint error: ", priority=2, source="lint")
+        result = build_commit_message(task)
+        self.assertGreater(len(result.strip()), 5)
+
+    def test_empty_description_coverage_source(self):
+        """Coverage source with empty cleaned description."""
+        task = Task(description="", priority=4, source="coverage")
+        result = build_commit_message(task)
+        self.assertGreater(len(result.strip()), 5)
+
+
+class TestSummarizeMixedSourcesEmptyDescription(unittest.TestCase):
+    """Regression: _summarize_mixed_sources should handle empty clean_description
+    for claude_idea/feedback tasks without producing empty parts."""
+
+    def test_empty_claude_idea_description(self):
+        from shared import _summarize_mixed_sources
+        tasks = [
+            Task(description="IDEA: ", priority=4, source="claude_idea"),
+            Task(description="Fix lint error in foo.py", priority=2, source="lint"),
+        ]
+        source_groups = {}
+        for t in tasks:
+            source_groups.setdefault(t.source, []).append(t)
+        result = _summarize_mixed_sources(set(source_groups.keys()), tasks)
+        # Should not start with a space or have empty parts
+        self.assertTrue(result[0].isupper(), f"Subject should start with uppercase: {result!r}")
+        self.assertNotIn("  ", result)
+
+    def test_empty_feedback_description(self):
+        from shared import _summarize_mixed_sources
+        tasks = [
+            Task(description="", priority=1, source="feedback"),
+            Task(description="Fix test failure in bar.py", priority=2, source="test_failure"),
+        ]
+        source_groups = {}
+        for t in tasks:
+            source_groups.setdefault(t.source, []).append(t)
+        result = _summarize_mixed_sources(set(source_groups.keys()), tasks)
+        self.assertTrue(len(result) > 0)
+        self.assertTrue(result[0].isupper())
+
+
 if __name__ == "__main__":
     unittest.main()

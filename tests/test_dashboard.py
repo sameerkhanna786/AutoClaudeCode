@@ -837,5 +837,46 @@ class TestGetFeedbackFilesEncoding(unittest.TestCase):
             self.assertIn("über", result["pending"][0]["content"])
 
 
+class TestGetLocNonNumericValues(unittest.TestCase):
+    """Regression: get_loc_for_commits should handle non-numeric values
+    from git numstat (e.g. binary files that show '-' for both columns,
+    or unexpected output formats) without raising ValueError."""
+
+    @patch("dashboard.subprocess.run")
+    def test_binary_file_dashes(self, mock_run):
+        """Binary files show '-\t-\tpath' in numstat — should parse as 0."""
+        mock_run.return_value = MagicMock(
+            stdout="-\t-\tbinary.png\n10\t5\tnormal.py",
+            returncode=0,
+        )
+        cache = {}
+        lock = threading.Lock()
+        result = get_loc_for_commits("/tmp", ["abc123"], cache, lock)
+        self.assertIn("abc123", result)
+        data = result["abc123"]
+        self.assertEqual(data["total_insertions"], 10)
+        self.assertEqual(data["total_deletions"], 5)
+        self.assertEqual(len(data["files"]), 2)
+        # Binary file should have 0 for both
+        self.assertEqual(data["files"][0]["insertions"], 0)
+        self.assertEqual(data["files"][0]["deletions"], 0)
+
+    @patch("dashboard.subprocess.run")
+    def test_malformed_numstat_line(self, mock_run):
+        """Unexpected non-numeric values should not crash."""
+        mock_run.return_value = MagicMock(
+            stdout="abc\tdef\tfile.txt",
+            returncode=0,
+        )
+        cache = {}
+        lock = threading.Lock()
+        # Should not raise ValueError
+        result = get_loc_for_commits("/tmp", ["abc123"], cache, lock)
+        self.assertIn("abc123", result)
+        data = result["abc123"]
+        self.assertEqual(data["total_insertions"], 0)
+        self.assertEqual(data["total_deletions"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

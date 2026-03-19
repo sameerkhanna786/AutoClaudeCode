@@ -998,8 +998,14 @@ def get_loc_for_commits(
                 parts = line.split("\t")
                 if len(parts) == 3:
                     ins_str, del_str, path = parts
-                    ins = int(ins_str) if ins_str != "-" else 0
-                    dels = int(del_str) if del_str != "-" else 0
+                    try:
+                        ins = int(ins_str) if ins_str != "-" else 0
+                    except ValueError:
+                        ins = 0
+                    try:
+                        dels = int(del_str) if del_str != "-" else 0
+                    except ValueError:
+                        dels = 0
                     files.append({"path": path, "insertions": ins, "deletions": dels})
                     total_ins += ins
                     total_del += dels

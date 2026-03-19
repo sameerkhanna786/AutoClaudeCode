@@ -415,7 +415,7 @@ def build_commit_message(task: Task) -> str:
         if cleaned.lower().startswith(verb.lower()):
             subject = cleaned
         else:
-            subject = f"{verb} {cleaned[0].lower() + cleaned[1:]}" if cleaned else verb
+            subject = f"{verb} {cleaned[0].lower() + cleaned[1:]}" if cleaned else f"{verb} {task.source.replace('_', ' ')}"
 
     if subject:
         subject = subject[0].upper() + subject[1:]
@@ -518,7 +518,11 @@ def _summarize_mixed_sources(sources: set, tasks: List[Task]) -> str:
         elif src == "quality":
             parts.append("refactor")
         elif src in ("claude_idea", "feedback"):
-            parts.append(clean_description(group[0].description).lower())
+            desc = clean_description(group[0].description).lower()
+            if desc:
+                parts.append(desc)
+            else:
+                parts.append(f"complete {src.replace('_', ' ')} task")
 
     file_count = len(set().union(*(set(extract_file_names(source_groups[s]))
                                    for s in source_groups))) if source_groups else 0
