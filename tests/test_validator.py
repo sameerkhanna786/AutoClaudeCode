@@ -428,6 +428,21 @@ class TestValidateSyntaxOnly:
         assert result.passed is False
         assert "parse error" in result.steps[0].output
 
+    def test_path_traversal_skipped(self, validator, tmp_path):
+        """Files with path traversal (../) should be skipped, not read."""
+        # Create a file outside the working dir
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.py").write_text("SECRET = 'password123'\n")
+
+        workdir = tmp_path / "repo"
+        workdir.mkdir()
+        result = validator.validate_syntax_only(
+            ["../outside/secret.py"], str(workdir),
+        )
+        # Should pass (file skipped), not parse the file outside cwd
+        assert result.passed is True
+
 
 class TestRemoveXFlag:
     """Test -x flag removal from test commands during baseline comparison."""

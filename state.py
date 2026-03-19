@@ -106,6 +106,12 @@ class StateManager:
                 self._cache_mtime = current_mtime
                 return []
             records = json.loads(text)
+            if not isinstance(records, list):
+                logger.error(
+                    "History file contains %s instead of a JSON array",
+                    type(records).__name__,
+                )
+                records = []
 
             self._cache = records
             self._cache_mtime = current_mtime

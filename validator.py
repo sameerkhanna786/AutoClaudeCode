@@ -141,8 +141,15 @@ class Validator:
                 )],
             )
 
+        cwd_resolved = Path(cwd).resolve()
         for filepath in py_files:
             full_path = os.path.join(cwd, filepath)
+            # Guard against path traversal (e.g. "../../../etc/passwd")
+            try:
+                Path(full_path).resolve().relative_to(cwd_resolved)
+            except ValueError:
+                logger.warning("Skipping file outside working dir: %s", filepath)
+                continue
             if not os.path.isfile(full_path):
                 continue
             try:

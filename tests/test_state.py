@@ -1281,3 +1281,32 @@ class TestFilePatternRegex:
             result = state_mgr._load_history()
         # Should return the cached 3 records, not an empty list
         assert len(result) == 3
+
+
+class TestLoadHistoryTypeValidation:
+    """Tests that _load_history validates the deserialized JSON is a list."""
+
+    def test_dict_history_treated_as_corrupt(self, state_mgr):
+        """If history.json contains a JSON object instead of array, treat as corrupt."""
+        state_mgr.history_file.write_text('{"not": "a list"}')
+        state_mgr._cache = None
+        result = state_mgr._load_history()
+        # Should return empty list (corrupt data), not a dict
+        assert isinstance(result, list)
+
+    def test_string_history_treated_as_corrupt(self, state_mgr):
+        """If history.json contains a JSON string, treat as corrupt."""
+        state_mgr.history_file.write_text('"just a string"')
+        state_mgr._cache = None
+        result = state_mgr._load_history()
+        assert isinstance(result, list)
+
+    def test_valid_list_history_loads_normally(self, state_mgr):
+        """A valid JSON array loads normally."""
+        import json, time
+        records = [{"timestamp": time.time(), "task_description": "test", "success": True}]
+        state_mgr.history_file.write_text(json.dumps(records))
+        state_mgr._cache = None
+        result = state_mgr._load_history()
+        assert isinstance(result, list)
+        assert len(result) == 1
