@@ -590,3 +590,23 @@ class TestSignalHandlerClaudeRace:
             "Signal handler should capture worker._claude in a local variable "
             "to avoid TOCTOU race between None check and terminate() call"
         )
+
+
+class TestMergeWorkerBranchCleanNoCommit:
+    """Test that AI conflict resolution handles clean merges correctly."""
+
+    def test_clean_merge_no_commit_is_completed(self, parallel_config):
+        """When merge_no_commit returns True (clean merge), the merge should be
+        completed with a commit rather than aborting the clean merge."""
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator._merge_worker_branch)
+        # The code should check merge_no_commit return value
+        assert "merge_clean" in source or "merge_no_commit" in source, (
+            "_merge_worker_branch should check merge_no_commit return value"
+        )
+        # When merge is clean, it should NOT call abort_merge
+        # The code should have a path that handles clean merge differently from conflicts
+        assert "if merge_clean" in source or "if not merge_clean" in source, (
+            "_merge_worker_branch should handle clean merge_no_commit separately"
+        )

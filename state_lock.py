@@ -48,7 +48,7 @@ class LockedStateManager(StateManager):
             return
 
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR)
+        fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
             self._local.held = True

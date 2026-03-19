@@ -463,9 +463,24 @@ class ParallelCoordinator:
             ai_snapshot = self.git.create_snapshot()
 
             # Attempt merge leaving conflicts in working tree
-            self.git.merge_no_commit(worker.branch_name)
+            merge_clean = self.git.merge_no_commit(worker.branch_name)
 
-            conflicted = self.git.get_conflicted_files()
+            if merge_clean:
+                # No conflicts — complete the merge commit directly
+                commit_msg = f"Merge branch '{worker.branch_name}'"
+                commit_hash = self.git.commit(commit_msg)
+                if commit_hash:
+                    validation = validator.validate(self.config.target_dir)
+                    if validation.passed:
+                        logger.info("Worker %d: clean no-commit merge succeeded", worker.worker_id)
+                        return True
+                    else:
+                        logger.warning("Worker %d: validation failed after clean merge: %s",
+                                       worker.worker_id, validation.summary)
+                # Clean merge failed validation — rollback
+                self.git.rollback(ai_snapshot)
+
+            conflicted = self.git.get_conflicted_files() if not merge_clean else []
             if conflicted:
                 from conflict_resolver import ConflictResolver
                 resolver = ConflictResolver(self.config)

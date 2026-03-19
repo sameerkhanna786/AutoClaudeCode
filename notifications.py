@@ -174,6 +174,8 @@ class NotificationManager:
 
         # Send to all webhooks via a bounded thread pool to prevent
         # unbounded thread creation under rapid notification bursts.
+        if self._webhook_pool is None:
+            return
         for webhook in self._config.webhooks:
             if not webhook.url:
                 continue

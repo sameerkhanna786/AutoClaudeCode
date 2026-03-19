@@ -96,6 +96,7 @@ class Orchestrator:
         self._successful_commits = 0
         self._consecutive_empty_plans = 0  # Track planning failures to skip when futile
         self._cycle_counter = 0  # For periodic summary notifications
+        self._claude_executor: Optional[concurrent.futures.ThreadPoolExecutor] = None
         self._session_manager = None
         if config.orchestrator.session_recovery:
             from session_manager import SessionManager
@@ -562,18 +563,20 @@ class Orchestrator:
         Wraps self.claude.run() in a thread pool with a configurable timeout
         to prevent indefinite hangs even if the subprocess timeout fails.
         On timeout, actively terminates the child process and waits for the
-        thread to clean up before shutting down the executor.
+        thread to clean up before replacing the executor.
+
+        Reuses a single ThreadPoolExecutor across invocations to avoid the
+        overhead of creating and destroying threads on every call.
         """
         timeout = self.config.orchestrator.cycle_timeout_seconds
         actual_runner = runner or self.claude
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        timed_out = False
+        if self._claude_executor is None:
+            self._claude_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            future = executor.submit(actual_runner.run, prompt)
+            future = self._claude_executor.submit(actual_runner.run, prompt)
             try:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
-                timed_out = True
                 logger.warning(
                     "Claude CLI cycle timeout fired after %ds — killing subprocess", timeout,
                 )
@@ -587,15 +590,27 @@ class Orchestrator:
                         "Claude thread still alive 30s after terminate — "
                         "continuing without blocking"
                     )
+                # Replace the executor since the stuck thread may hold it
+                self._claude_executor.shutdown(wait=False)
+                self._claude_executor = None
                 return ClaudeResult(
                     success=False,
                     error=f"Cycle timeout after {timeout}s (Claude CLI hung)",
                 )
-        finally:
-            # Use wait=True on the normal path so the thread is joined and
-            # its resources are reclaimed.  Only use wait=False when timed
-            # out and the thread may be stuck, to avoid blocking the caller.
-            executor.shutdown(wait=not timed_out)
+        except RuntimeError:
+            # Executor was shut down — create a new one and retry once
+            self._claude_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = self._claude_executor.submit(actual_runner.run, prompt)
+            try:
+                return future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                actual_runner.terminate()
+                self._claude_executor.shutdown(wait=False)
+                self._claude_executor = None
+                return ClaudeResult(
+                    success=False,
+                    error=f"Cycle timeout after {timeout}s (Claude CLI hung)",
+                )
 
     def _cycle(self) -> None:
         """Run a single orchestration cycle."""
@@ -1091,5 +1106,8 @@ class Orchestrator:
 
             logger.info("Orchestrator stopped")
         finally:
+            if self._claude_executor is not None:
+                self._claude_executor.shutdown(wait=False)
+                self._claude_executor = None
             self.notifier.shutdown()
             self.safety.release_lock()

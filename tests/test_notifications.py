@@ -515,5 +515,23 @@ class TestHttpWebhookWarning(unittest.TestCase):
             self.assertNotIn("insecure HTTP", str(call_args))
 
 
+class TestWebhookPoolNoneGuard(unittest.TestCase):
+    """When NotificationManager is created with enabled=False, _webhook_pool is None.
+
+    Calling notify() after mutating _config.enabled to True should not crash
+    with AttributeError when trying to call None.submit().
+    """
+
+    def test_notify_with_none_pool_does_not_crash(self):
+        config = _make_config(enabled=False)
+        mgr = NotificationManager(config)
+        assert mgr._webhook_pool is None
+
+        # Mutate enabled to True to simulate config reload
+        mgr._config.enabled = True
+        # This should not raise AttributeError
+        mgr.notify("cycle_success", {"tasks": ["test"]})
+
+
 if __name__ == "__main__":
     unittest.main()

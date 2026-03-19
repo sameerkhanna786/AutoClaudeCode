@@ -368,6 +368,20 @@ class TestReentrantHeldFlagOnFlockFailure:
         locked_state._local.held = False  # cleanup
 
 
+class TestLockFilePermissions:
+    """Test that _file_lock creates the lock file with restricted permissions."""
+
+    def test_lock_file_created_with_0600_permissions(self, locked_state):
+        """Lock file should be created with 0o600 (owner-only read/write)."""
+        with locked_state._file_lock():
+            lock_path = locked_state._lock_path
+            assert lock_path.exists()
+            mode = lock_path.stat().st_mode & 0o777
+            assert mode == 0o600, (
+                f"Lock file permissions should be 0o600 but got {oct(mode)}"
+            )
+
+
 class TestLoadHistoryReturnsCopy:
     """Test that load_history() returns a copy, not a reference to the cache."""
 

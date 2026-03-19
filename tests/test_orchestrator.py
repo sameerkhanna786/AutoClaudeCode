@@ -1,5 +1,6 @@
 """Tests for orchestrator module."""
 
+import concurrent.futures
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -572,8 +573,8 @@ class TestCycleTimeout:
             assert result.success is True
             assert result.result_text == "Done"
 
-    def test_executor_shutdown_wait_true_on_success(self, tmp_path):
-        """On normal completion, executor.shutdown(wait=True) is called to join the thread."""
+    def test_executor_reused_on_success(self, tmp_path):
+        """On normal completion, executor is kept alive for reuse (not shut down)."""
         import concurrent.futures
 
         cfg = Config()
@@ -604,8 +605,9 @@ class TestCycleTimeout:
             o = Orchestrator(cfg)
             result = o._run_claude_with_timeout("test prompt")
             assert result.success is True
-            # On success path, shutdown should be called with wait=True
-            mock_pool.shutdown.assert_called_once_with(wait=True)
+            # Executor should be kept alive for reuse, not shut down
+            assert o._claude_executor is not None
+            mock_pool.shutdown.assert_not_called()
 
 
 class TestAdaptiveBatchSizing:
@@ -1518,3 +1520,65 @@ class TestConfigTunerLogging:
                     tuner_in_debug = any("tuner" in c.lower() or "Config tuner" in c for c in debug_calls)
                     assert tuner_in_warning, "Config tuner failure should be logged at WARNING level"
                     assert not tuner_in_debug, "Config tuner failure should NOT be logged at DEBUG level"
+
+
+class TestClaudeExecutorReuse:
+    """Test that _run_claude_with_timeout reuses a ThreadPoolExecutor."""
+
+    @pytest.fixture
+    def orch(self, tmp_path):
+        config = Config()
+        config.target_dir = str(tmp_path)
+        config.timeout = 30
+        with patch("orchestrator.GitManager"), \
+             patch("orchestrator.SafetyGuard"), \
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.StateManager"), \
+             patch("orchestrator.FeedbackManager"), \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.NotificationManager"):
+            o = Orchestrator(config)
+        return o
+
+    def test_executor_created_lazily(self, orch):
+        """Executor should be None until first call."""
+        assert orch._claude_executor is None
+
+    def test_executor_reused_across_calls(self, orch):
+        """Same executor should be reused across multiple calls."""
+        mock_result = MagicMock()
+        mock_result.cost_usd = 0.01
+
+        future = MagicMock()
+        future.result.return_value = mock_result
+
+        with patch("concurrent.futures.ThreadPoolExecutor") as MockTPE:
+            mock_executor = MagicMock()
+            mock_executor.submit.return_value = future
+            MockTPE.return_value = mock_executor
+
+            orch._run_claude_with_timeout("prompt1")
+
+            # Second call should NOT create a new executor
+            orch._run_claude_with_timeout("prompt2")
+
+            # ThreadPoolExecutor should only have been constructed once
+            assert MockTPE.call_count == 1
+
+    def test_executor_replaced_on_timeout(self, orch):
+        """Executor should be replaced after a timeout."""
+        orch.config.orchestrator.cycle_timeout_seconds = 1
+
+        with patch("concurrent.futures.ThreadPoolExecutor") as MockTPE:
+            mock_executor = MagicMock()
+            mock_executor.submit.return_value.result.side_effect = (
+                concurrent.futures.TimeoutError()
+            )
+            MockTPE.return_value = mock_executor
+
+            result = orch._run_claude_with_timeout("prompt")
+            # After timeout, executor should be set to None (shutdown called)
+            assert orch._claude_executor is None
+            # shutdown(wait=False) should have been called
+            mock_executor.shutdown.assert_called_with(wait=False)
