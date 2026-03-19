@@ -1603,3 +1603,47 @@ class TestCycleStateClearedOnWaitingApproval:
 
         # cycle_state.clear() must have been called to prevent stale dashboard state
         orch.cycle_state.clear.assert_called()
+
+
+class TestPipelineRollbackPreservesDirtyFiles:
+    """Regression: _cycle_multi_agent rollback_fn must pass allowed_dirty."""
+
+    def test_rollback_fn_passes_allowed_dirty(self, orch):
+        """The rollback_fn given to AgentPipeline.run must include allowed_dirty
+        so that pre-existing dirty files are not destroyed on rollback."""
+        orch.config.agent_pipeline.enabled = True
+
+        pre_existing = {"dirty_file.py"}
+        snapshot = Snapshot(commit_hash="a" * 40)
+
+        captured_calls = []
+        original_rollback = orch.git.rollback
+
+        def spy_rollback(*args, **kwargs):
+            captured_calls.append((args, kwargs))
+
+        orch.git.rollback = spy_rollback
+
+        with patch("orchestrator.AgentPipeline") as MockPipeline:
+            mock_pipeline = MockPipeline.return_value
+            mock_pipeline.terminate = MagicMock()
+
+            def capture_rollback_fn(tasks, rollback_fn, snap):
+                # Simulate the pipeline calling rollback_fn(snapshot)
+                rollback_fn(snap)
+                from agent_pipeline import PipelineResult
+                return PipelineResult(success=False, error="test")
+
+            mock_pipeline.run.side_effect = capture_rollback_fn
+
+            orch._cycle_multi_agent(
+                tasks=[Task(description="test", priority=1, source="test_failure")],
+                snapshot=snapshot,
+                pre_existing_files=pre_existing,
+                is_batch=False,
+            )
+
+        # The rollback_fn called from inside the pipeline must have passed allowed_dirty
+        assert len(captured_calls) >= 1
+        pipeline_rollback_call = captured_calls[0]
+        assert pipeline_rollback_call[1].get("allowed_dirty") == pre_existing

@@ -916,7 +916,9 @@ class Orchestrator:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         timed_out = False
         try:
-            future = executor.submit(pipeline.run, tasks, self.git.rollback, snapshot)
+            def _rollback(snap, _dirty=pre_existing_files):
+                self.git.rollback(snap, allowed_dirty=_dirty)
+            future = executor.submit(pipeline.run, tasks, _rollback, snapshot)
             try:
                 pipeline_result = future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
