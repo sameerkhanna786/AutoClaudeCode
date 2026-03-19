@@ -653,7 +653,7 @@ class ParallelCoordinator:
                 groups[file_to_group[t.source_file]].append(t)
             else:
                 if len(groups) >= effective_workers:
-                    break
+                    continue  # Keep scanning for tasks matching existing groups
                 if t.source_file:
                     file_to_group[t.source_file] = len(groups)
                 groups.append([t])

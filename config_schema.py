@@ -499,8 +499,8 @@ def validate_config(config: Config) -> None:
             f"claude.max_turns must be positive, got {config.claude.max_turns}"
         )
 
-    # Cross-field: Claude timeout must exceed test timeout
-    if config.claude.timeout_seconds <= config.validation.test_timeout:
+    # Cross-field: Claude timeout must exceed test timeout (only when tests are configured)
+    if config.validation.test_command.strip() and config.claude.timeout_seconds <= config.validation.test_timeout:
         raise ValueError(
             f"claude.timeout_seconds ({config.claude.timeout_seconds}) must be greater than "
             f"validation.test_timeout ({config.validation.test_timeout}) to ensure tests "

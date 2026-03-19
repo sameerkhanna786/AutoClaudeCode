@@ -464,6 +464,30 @@ class TestRemoveXFlag:
         assert result == expected
 
 
+class TestCaptureBaselineNonPytest:
+    """Test that capture_baseline doesn't append --tb=line for non-pytest commands."""
+
+    @patch("validator.run_with_group_kill")
+    def test_non_pytest_command_no_tb_flag(self, mock_run, default_config):
+        """Non-pytest test commands should not get --tb=line appended."""
+        default_config.validation.test_command = "npm test"
+        v = Validator(default_config)
+        mock_run.return_value = RunResult(returncode=0, stdout="OK", stderr="", timed_out=False)
+        v.capture_baseline("/tmp")
+        cmd = mock_run.call_args[0][0]
+        assert "--tb=line" not in cmd
+
+    @patch("validator.run_with_group_kill")
+    def test_pytest_command_gets_tb_flag(self, mock_run, default_config):
+        """Pytest-based test commands should still get --tb=line appended."""
+        default_config.validation.test_command = "python3 -m pytest tests/"
+        v = Validator(default_config)
+        mock_run.return_value = RunResult(returncode=0, stdout="OK", stderr="", timed_out=False)
+        v.capture_baseline("/tmp")
+        cmd = mock_run.call_args[0][0]
+        assert "--tb=line" in cmd
+
+
 class TestValidateIncremental:
     """Tests for validate_incremental using configured test command."""
 

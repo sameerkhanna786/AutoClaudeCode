@@ -916,3 +916,27 @@ class TestBoolIntTypeConfusion:
         cc = ClaudeConfig()
         _merge_dataclass(cc, {"max_turns": 42})
         assert cc.max_turns == 42
+
+
+class TestTimeoutValidationNoTestCommand:
+    """Test that timeout cross-validation is skipped when no test command is set."""
+
+    def test_no_test_command_allows_equal_timeouts(self):
+        """When test_command is empty, timeout_seconds == test_timeout should be allowed."""
+        from config_schema import validate_config
+        config = Config()
+        config.validation.test_command = ""
+        config.claude.timeout_seconds = 7200
+        config.validation.test_timeout = 7200
+        # Should NOT raise
+        validate_config(config)
+
+    def test_with_test_command_rejects_equal_timeouts(self):
+        """When test_command is set, timeout_seconds must exceed test_timeout."""
+        from config_schema import validate_config
+        config = Config()
+        config.validation.test_command = "python3 -m pytest"
+        config.claude.timeout_seconds = 7200
+        config.validation.test_timeout = 7200
+        with pytest.raises(ValueError, match="must be greater than"):
+            validate_config(config)

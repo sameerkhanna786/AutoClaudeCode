@@ -202,8 +202,11 @@ class Validator:
         if not test_cmd:
             return set()
 
-        # Append --tb=line for faster output
-        baseline_cmd = f"{test_cmd} --tb=line"
+        # Append --tb=line for faster output (only for pytest-compatible commands)
+        if "pytest" in test_cmd or "py.test" in test_cmd:
+            baseline_cmd = f"{test_cmd} --tb=line"
+        else:
+            baseline_cmd = test_cmd
         step = self._run_command("baseline", baseline_cmd, vc.test_timeout, cwd)
 
         if step.passed:

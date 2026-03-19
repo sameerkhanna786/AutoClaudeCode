@@ -192,10 +192,8 @@ class GitManager:
                     logger.info("Reset HEAD to snapshot %s", snapshot.commit_hash[:8])
 
             if files_to_revert:
-                # Checkout tracked files, respecting the overall rollback deadline
-                remaining = max(1, int(deadline - time.monotonic()))
-                self._run("checkout", "--", *sorted(files_to_revert), check=False, timeout=remaining)
-                # Identify untracked files in one batch call instead of per-file
+                # Identify untracked files BEFORE checkout so we only pass
+                # tracked files to git checkout (untracked files cause errors).
                 untracked = set()
                 ls_result = self._run(
                     "ls-files", "--others", "--exclude-standard", check=False
@@ -204,6 +202,11 @@ class GitManager:
                     for line in ls_result.stdout.strip().split("\n"):
                         if line.strip():
                             untracked.add(line.strip())
+                # Checkout only tracked files, respecting the rollback deadline
+                tracked_to_revert = sorted(files_to_revert - untracked)
+                if tracked_to_revert:
+                    remaining = max(1, int(deadline - time.monotonic()))
+                    self._run("checkout", "--", *tracked_to_revert, check=False, timeout=remaining)
                 # Clean untracked files in the allowed set
                 reverted_count = 0
                 total_count = len(files_to_revert)

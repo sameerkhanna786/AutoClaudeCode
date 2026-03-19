@@ -547,6 +547,34 @@ class TestMergeCheckoutFailureAfterRebase:
         assert any("checkout" in r.message.lower() for r in caplog.records if r.levelno >= logging.WARNING)
 
 
+class TestPartitionTasksNewFileAfterGroupsFull:
+    """Test that tasks with unknown source_files don't abort the entire loop."""
+
+    def test_new_source_file_skipped_but_later_known_file_still_grouped(self, parallel_config):
+        """When groups are full and a task has a new source_file, it should be
+        skipped (continue), not abort the loop (break). Later tasks matching
+        existing groups must still be added."""
+        parallel_config.parallel.max_workers = 2
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description="Fix A", priority=1, source="lint", source_file="a.py"),
+            Task(description="Fix B", priority=2, source="lint", source_file="b.py"),
+            # Groups are full (2). This task has a NEW source_file — should be skipped.
+            Task(description="Fix C", priority=3, source="lint", source_file="c.py"),
+            # This task matches existing group a.py — must still be grouped.
+            Task(description="Fix A2", priority=4, source="lint", source_file="a.py"),
+        ]
+        groups = coord._partition_tasks(tasks)
+        assert len(groups) == 2
+        a_group = [g for g in groups if any(t.source_file == "a.py" for t in g)]
+        assert len(a_group) == 1
+        a_descs = [t.description for t in a_group[0]]
+        assert "Fix A" in a_descs
+        assert "Fix A2" in a_descs, (
+            "Fix A2 should still be grouped with a.py even though c.py was skipped"
+        )
+
+
 class TestDegradationMissingBatchSizeFactor:
     """Test that _partition_tasks doesn't crash when degradation dict lacks batch_size_factor."""
 
