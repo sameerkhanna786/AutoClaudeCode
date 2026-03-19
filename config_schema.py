@@ -344,7 +344,7 @@ def load_config(path: Optional[str] = None) -> Config:
     if not config_path.exists():
         return config
 
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         try:
             raw = yaml.safe_load(f)
         except yaml.YAMLError as e:

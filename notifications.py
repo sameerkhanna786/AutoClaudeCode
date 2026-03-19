@@ -124,8 +124,14 @@ class NotificationManager:
 
         details = details or {}
 
-        # Rate-limit: deduplicate identical events within the window
-        dedup_key = f"{event}:{json.dumps(details, sort_keys=True, default=str)}"
+        # Rate-limit: deduplicate identical events within the window.
+        # Hash the details to bound key size — large payloads would otherwise
+        # create arbitrarily long dict keys consuming excessive memory.
+        import hashlib
+        details_hash = hashlib.md5(
+            json.dumps(details, sort_keys=True, default=str).encode()
+        ).hexdigest()
+        dedup_key = f"{event}:{details_hash}"
         now = time.time()
         with self._lock:
             last_sent = self._recent.get(dedup_key, 0)

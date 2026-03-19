@@ -122,7 +122,6 @@ class ParallelCoordinator:
                         try:
                             self.git.remove_worktree(wt_path, force=True)
                         except Exception:
-                            import shutil
                             shutil.rmtree(wt_path, ignore_errors=True)
                     if branch:
                         self.git.delete_branch(branch, force=True)

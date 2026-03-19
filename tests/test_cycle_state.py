@@ -138,3 +138,72 @@ class TestReadCycleState:
         assert result.task_description == ""
         assert result.accumulated_cost == 0.0
         assert result.batch_size == 1
+
+
+class TestCycleStateWriterThreadSafety:
+    """Tests that write() acquires the lock to prevent races with update()."""
+
+    def test_write_acquires_lock(self, tmp_path):
+        """write() should hold the lock during the write operation."""
+        writer = CycleStateWriter(str(tmp_path))
+        state = CycleState(phase="executing")
+
+        # Manually acquire the lock; write() should block
+        writer._lock.acquire()
+        import threading
+        result_holder = []
+
+        def do_write():
+            writer.write(state)
+            result_holder.append("done")
+
+        t = threading.Thread(target=do_write)
+        t.start()
+        # Give thread a moment to attempt the lock
+        t.join(timeout=0.1)
+        # Thread should still be blocked (no result yet)
+        assert result_holder == []
+
+        # Release lock; write should now complete
+        writer._lock.release()
+        t.join(timeout=2.0)
+        assert result_holder == ["done"]
+
+        # Verify the state was written correctly
+        result = read_cycle_state(str(tmp_path))
+        assert result is not None
+        assert result.phase == "executing"
+
+    def test_concurrent_write_and_update(self, tmp_path):
+        """Concurrent write() and update() should not corrupt state."""
+        import threading
+
+        writer = CycleStateWriter(str(tmp_path))
+        writer.write(CycleState(phase="initial", retry_count=0))
+        errors = []
+
+        def do_writes():
+            try:
+                for i in range(20):
+                    writer.write(CycleState(phase=f"write_{i}", retry_count=i))
+            except Exception as e:
+                errors.append(e)
+
+        def do_updates():
+            try:
+                for i in range(20):
+                    writer.update(accumulated_cost=float(i))
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=do_writes)
+        t2 = threading.Thread(target=do_updates)
+        t1.start()
+        t2.start()
+        t1.join(timeout=5.0)
+        t2.join(timeout=5.0)
+
+        assert errors == []
+        # Final state should be valid JSON
+        result = read_cycle_state(str(tmp_path))
+        assert result is not None

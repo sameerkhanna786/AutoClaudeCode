@@ -213,5 +213,54 @@ class TestNaturalLanguageSummarizerFailure(unittest.TestCase):
         self.assertIn("encountered issues", result)
 
 
+class TestNotifyDedupWithHashedKey(unittest.TestCase):
+    """Tests that rate-limiting dedup uses hashed keys (not raw details)."""
+
+    @patch("notifications.urllib.request.urlopen")
+    def test_large_details_still_deduped(self, mock_urlopen):
+        """Large payloads should be deduped via hash, not stored as raw keys."""
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+
+        config = _make_config()
+        mgr = NotificationManager(config)
+
+        large_details = {"data": "x" * 10000}
+        mgr.notify("cycle_success", large_details)
+        mgr.notify("cycle_success", large_details)
+
+        time.sleep(0.2)
+        # Only one call — second should be rate-limited
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+    @patch("notifications.urllib.request.urlopen")
+    def test_different_details_not_deduped(self, mock_urlopen):
+        """Different details produce different hashes, so both should send."""
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+
+        config = _make_config()
+        mgr = NotificationManager(config)
+
+        mgr.notify("cycle_success", {"task": "a"})
+        mgr.notify("cycle_success", {"task": "b"})
+
+        time.sleep(0.2)
+        self.assertEqual(mock_urlopen.call_count, 2)
+
+    def test_dedup_keys_are_bounded_size(self):
+        """Dedup keys should use MD5 hashes, not raw JSON strings."""
+        config = _make_config()
+        mgr = NotificationManager(config)
+
+        large_details = {"data": "x" * 100000}
+        mgr.notify("cycle_success", large_details)
+
+        # The keys in _recent should be bounded (event name + ":" + 32-char hex)
+        for key in mgr._recent:
+            # MD5 hex is 32 chars, plus "cycle_success:" prefix = ~46 chars
+            self.assertLess(len(key), 100)
+
+
 if __name__ == "__main__":
     unittest.main()

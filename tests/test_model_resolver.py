@@ -187,3 +187,41 @@ class TestResolveModelId:
         )
         result = resolve_model_id("opus")
         assert result == "claude-opus-4-6"
+
+
+class TestWriteCacheAtomicWrite:
+    """Tests that _write_cache uses atomic tempfile + os.replace pattern."""
+
+    def test_write_cache_creates_valid_json(self, tmp_path):
+        cache_path = str(tmp_path / "model_cache.json")
+        _write_cache("opus", "claude-opus-4-6", cache_path=cache_path)
+
+        data = json.loads(Path(cache_path).read_text())
+        assert "entries" in data
+        assert data["entries"]["opus"]["resolved"] == "claude-opus-4-6"
+        assert "timestamp" in data["entries"]["opus"]
+
+    def test_write_cache_preserves_existing_entries(self, tmp_path):
+        cache_path = str(tmp_path / "model_cache.json")
+        _write_cache("opus", "claude-opus-4-6", cache_path=cache_path)
+        _write_cache("sonnet", "claude-sonnet-4-20250514", cache_path=cache_path)
+
+        data = json.loads(Path(cache_path).read_text())
+        assert data["entries"]["opus"]["resolved"] == "claude-opus-4-6"
+        assert data["entries"]["sonnet"]["resolved"] == "claude-sonnet-4-20250514"
+
+    def test_write_cache_no_temp_files_left(self, tmp_path):
+        cache_path = str(tmp_path / "model_cache.json")
+        _write_cache("opus", "claude-opus-4-6", cache_path=cache_path)
+
+        # No .tmp files should remain after a successful write
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert tmp_files == []
+
+    def test_write_cache_atomic_replaces_existing(self, tmp_path):
+        cache_path = str(tmp_path / "model_cache.json")
+        _write_cache("opus", "claude-opus-4-6", cache_path=cache_path)
+        _write_cache("opus", "claude-opus-4-20260101", cache_path=cache_path)
+
+        data = json.loads(Path(cache_path).read_text())
+        assert data["entries"]["opus"]["resolved"] == "claude-opus-4-20260101"

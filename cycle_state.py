@@ -51,7 +51,15 @@ class CycleStateWriter:
         return str(self._path)
 
     def write(self, state: CycleState) -> None:
-        """Atomically write cycle state via tempfile + os.replace."""
+        """Atomically write cycle state via tempfile + os.replace.
+
+        Acquires self._lock to prevent races with concurrent update() calls.
+        """
+        with self._lock:
+            self._write_unlocked(state)
+
+    def _write_unlocked(self, state: CycleState) -> None:
+        """Write cycle state without acquiring the lock (caller must hold it)."""
         data = asdict(state)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = None
@@ -91,7 +99,7 @@ class CycleStateWriter:
             for k, v in kwargs.items():
                 if hasattr(current, k):
                     setattr(current, k, v)
-            self.write(current)
+            self._write_unlocked(current)
 
 
 def read_cycle_state(state_dir: str, filename: str = "current_cycle.json") -> Optional[CycleState]:

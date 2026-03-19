@@ -2,7 +2,9 @@
 
 import json
 import logging
+import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -62,7 +64,25 @@ def _write_cache(model_alias: str, resolved: str, cache_path: str = _CACHE_FILE)
             "resolved": resolved,
             "timestamp": time.time(),
         }
-        path.write_text(json.dumps({"entries": entries}))
+        # Atomic write: temp file + os.replace to prevent corruption on crash
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=str(path.parent), suffix=".tmp"
+        )
+        try:
+            try:
+                f = os.fdopen(tmp_fd, "w")
+            except Exception:
+                os.close(tmp_fd)
+                raise
+            with f:
+                json.dump({"entries": entries}, f)
+            os.replace(tmp_path, str(path))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     except OSError as e:
         logger.debug("Failed to write model cache: %s", e)
 
