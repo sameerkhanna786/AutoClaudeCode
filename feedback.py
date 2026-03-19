@@ -211,7 +211,11 @@ class FeedbackManager:
 
         for fpath in files:
             try:
-                with open(fpath, 'r', encoding='utf-8') as f:
+                # Use O_NOFOLLOW to atomically reject symlinks at the kernel
+                # level, preventing TOCTOU races between the is_symlink()
+                # check above and the actual file open.
+                fd = os.open(str(fpath), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(fd, 'r', encoding='utf-8') as f:
                     content = f.read(MAX_FEEDBACK_CONTENT_LENGTH)
             except UnicodeDecodeError:
                 logger.warning(

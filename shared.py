@@ -184,9 +184,15 @@ def syntax_check_files(changed_files: List[str], base_dir: str) -> Optional[str]
 
     Returns an error string if a syntax error is found, None otherwise.
     """
+    base_resolved = Path(base_dir).resolve()
     for f in changed_files:
         if f.endswith(".py"):
             full_path = Path(base_dir) / f
+            # Guard against path traversal (e.g. "../../../etc/passwd")
+            try:
+                full_path.resolve().relative_to(base_resolved)
+            except ValueError:
+                continue
             if full_path.exists():
                 try:
                     source = full_path.read_text(encoding="utf-8")

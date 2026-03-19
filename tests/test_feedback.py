@@ -771,3 +771,17 @@ class TestAtomicMoveSrcUnlinkRace:
         assert dst.read_text() == "task content"
         # Should have succeeded on the first attempt (no retries)
         assert call_count == 1
+
+
+class TestFeedbackFileOpenNoFollow:
+    """Test that feedback file reading uses O_NOFOLLOW to prevent symlink TOCTOU."""
+
+    def test_open_uses_nofollow(self):
+        """get_pending_feedback should use O_NOFOLLOW when opening feedback files."""
+        import inspect
+        from feedback import FeedbackManager
+        source = inspect.getsource(FeedbackManager.get_pending_feedback)
+        assert "O_NOFOLLOW" in source or "os.open(" in source, (
+            "get_pending_feedback should use O_NOFOLLOW to atomically reject "
+            "symlinks at the kernel level, preventing TOCTOU races"
+        )

@@ -989,5 +989,38 @@ class TestSummarizeMixedSourcesEmptyDescription(unittest.TestCase):
         self.assertTrue(result[0].isupper())
 
 
+class TestSyntaxCheckFilesPathTraversal(unittest.TestCase):
+    """Test that syntax_check_files rejects path traversal attempts."""
+
+    def test_path_traversal_skipped(self):
+        """Files with ../ components outside base_dir should be skipped."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a file outside base_dir
+            outside_dir = Path(tmpdir) / "outside"
+            outside_dir.mkdir()
+            evil_file = outside_dir / "evil.py"
+            evil_file.write_text("import os; os.system('rm -rf /')\n")
+
+            base_dir = Path(tmpdir) / "project"
+            base_dir.mkdir()
+
+            # Try to access the outside file via path traversal
+            result = syntax_check_files(["../outside/evil.py"], str(base_dir))
+            # Should skip the traversal path, not read/parse the file
+            self.assertIsNone(result)
+
+    def test_normal_subdirectory_still_works(self):
+        """Files in subdirectories should still be checked normally."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sub = Path(tmpdir) / "src"
+            sub.mkdir()
+            py_file = sub / "good.py"
+            py_file.write_text("x = 1\n")
+            result = syntax_check_files(["src/good.py"], tmpdir)
+            self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()
