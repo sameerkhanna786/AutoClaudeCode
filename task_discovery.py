@@ -80,8 +80,8 @@ def _extract_json_text(raw_output: str) -> str:
                         return text
             except (json.JSONDecodeError, TypeError):
                 continue
-    except Exception:
-        pass
+    except (json.JSONDecodeError, ValueError, TypeError, UnicodeDecodeError) as e:
+        logger.debug("JSON extraction failed: %s", e)
 
     return raw_output
 

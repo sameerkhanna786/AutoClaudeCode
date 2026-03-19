@@ -675,5 +675,26 @@ class TestTopologicalSortTasks(unittest.TestCase):
         self.assertEqual(child_priorities, sorted(child_priorities))
 
 
+    def test_duplicate_empty_task_ids(self):
+        """Multiple tasks with empty task_id should not collide silently."""
+        a = Task(description="Task A", priority=1, source="lint")
+        b = Task(description="Task B", priority=2, source="lint")
+        c = Task(description="Task C", priority=3, source="lint")
+        # All have default empty task_id=""
+        result = topological_sort_tasks([a, b, c])
+        self.assertEqual(len(result), 3)
+        # Should be sorted by priority
+        descriptions = [t.description for t in result]
+        self.assertEqual(descriptions, ["Task A", "Task B", "Task C"])
+
+    def test_mixed_empty_and_named_task_ids(self):
+        """Mix of tasks with and without task_ids should all be included."""
+        a = Task(description="Named", priority=2, source="lint", task_id="named")
+        b = Task(description="Anon 1", priority=1, source="lint")
+        c = Task(description="Anon 2", priority=3, source="lint")
+        result = topological_sort_tasks([a, b, c])
+        self.assertEqual(len(result), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

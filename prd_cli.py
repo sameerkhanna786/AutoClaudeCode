@@ -54,7 +54,9 @@ def cmd_import(args):
         )
         content = frontmatter + task.description
 
-        filename = f"prd-{task.task_id.replace('/', '-')}.md"
+        import re as _re
+        safe_id = _re.sub(r'[^a-zA-Z0-9_\-]', '_', task.task_id)
+        filename = f"prd-{safe_id}.md"
         filepath = feedback_dir / filename
         filepath.write_text(content)
 

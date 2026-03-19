@@ -9,8 +9,9 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from claude_runner import ClaudeRunner, ClaudeResult
+from claude_runner import ClaudeResult
 from config_schema import Config
+from provider_runner import create_runner
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +49,18 @@ class LLMJudge:
         self.judge_config = judge_config
         self._runner = self._build_runner()
 
-    def _build_runner(self) -> ClaudeRunner:
-        """Create a ClaudeRunner configured for judge evaluation."""
+    def _build_runner(self):
+        """Create a runner configured for judge evaluation.
+
+        Uses create_runner() to respect the configured provider (Claude,
+        OpenAI, Gemini) instead of always using ClaudeRunner.
+        """
         judge_config = copy.deepcopy(self.config)
         judge_config.claude.model = self.judge_config.model
         judge_config.claude.resolved_model = ""
         judge_config.claude.max_turns = self.judge_config.max_turns
         judge_config.claude.timeout_seconds = self.judge_config.timeout_seconds
-        return ClaudeRunner(judge_config)
+        return create_runner(judge_config)
 
     def _build_prompt(self, changed_files: List[str], diff_text: str,
                       task_description: str) -> str:

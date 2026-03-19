@@ -218,11 +218,12 @@ class FeedbackManager:
 
             # Warn if file was truncated
             try:
-                if fpath.stat().st_size > MAX_FEEDBACK_CONTENT_LENGTH:
+                file_size = fpath.stat().st_size
+                if file_size > MAX_FEEDBACK_CONTENT_LENGTH:
                     logger.warning(
                         "Feedback file %s truncated: %d bytes on disk, "
                         "read limit is %d bytes",
-                        fpath, fpath.stat().st_size, MAX_FEEDBACK_CONTENT_LENGTH,
+                        fpath, file_size, MAX_FEEDBACK_CONTENT_LENGTH,
                     )
             except OSError:
                 pass

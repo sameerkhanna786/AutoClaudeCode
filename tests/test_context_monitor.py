@@ -249,5 +249,43 @@ class TestWriteSplitTasksFdCleanup(unittest.TestCase):
             self.assertGreaterEqual(len(close_calls), 1)
 
 
+class TestTaskIdSanitization(unittest.TestCase):
+    """Tests that task IDs are sanitized in filenames to prevent path traversal."""
+
+    def test_dotdot_in_task_id_sanitized(self):
+        """Task IDs with '..' should be sanitized in the filename."""
+        task = Task(
+            description="Malicious task",
+            priority=1,
+            source="test",
+            task_id="../../etc/passwd",
+            depends_on=[],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            count = write_split_tasks_as_feedback([task], tmpdir)
+            self.assertEqual(count, 1)
+            files = list(Path(tmpdir).glob("split-*.md"))
+            self.assertEqual(len(files), 1)
+            # Filename should not contain '..' or '/'
+            self.assertNotIn("..", files[0].name)
+            self.assertNotIn("/", files[0].name)
+
+    def test_null_byte_in_task_id_sanitized(self):
+        """Task IDs with null bytes should be sanitized."""
+        task = Task(
+            description="Null byte task",
+            priority=1,
+            source="test",
+            task_id="task\x00id",
+            depends_on=[],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            count = write_split_tasks_as_feedback([task], tmpdir)
+            self.assertEqual(count, 1)
+            files = list(Path(tmpdir).glob("split-*.md"))
+            self.assertEqual(len(files), 1)
+            self.assertNotIn("\x00", files[0].name)
+
+
 if __name__ == "__main__":
     unittest.main()

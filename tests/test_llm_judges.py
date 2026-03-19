@@ -101,7 +101,7 @@ class TestVerdictParsing(unittest.TestCase):
 
 class TestJudgeEvaluate(unittest.TestCase):
 
-    @patch("llm_judges.ClaudeRunner")
+    @patch("llm_judges.create_runner")
     def test_pass_evaluation(self, mock_runner_cls):
         config = _make_config()
         mock_runner = MagicMock()
@@ -120,7 +120,7 @@ class TestJudgeEvaluate(unittest.TestCase):
         self.assertAlmostEqual(verdict.score, 0.9)
         self.assertGreater(verdict.cost_usd, 0)
 
-    @patch("llm_judges.ClaudeRunner")
+    @patch("llm_judges.create_runner")
     def test_fail_evaluation(self, mock_runner_cls):
         config = _make_config()
         mock_runner = MagicMock()
@@ -136,7 +136,7 @@ class TestJudgeEvaluate(unittest.TestCase):
 
         self.assertFalse(verdict.passed)
 
-    @patch("llm_judges.ClaudeRunner")
+    @patch("llm_judges.create_runner")
     def test_runner_failure_passes(self, mock_runner_cls):
         """When the judge runner fails, don't block the pipeline."""
         config = _make_config()
@@ -154,7 +154,7 @@ class TestJudgeEvaluate(unittest.TestCase):
 
 class TestJudgePanel(unittest.TestCase):
 
-    @patch("llm_judges.ClaudeRunner")
+    @patch("llm_judges.create_runner")
     def test_all_pass(self, mock_runner_cls):
         config = _make_config()
         mock_runner = MagicMock()
@@ -172,7 +172,7 @@ class TestJudgePanel(unittest.TestCase):
         self.assertEqual(len(result.verdicts), 2)  # security + quality
         self.assertEqual(result.blocking_feedback, "")
 
-    @patch("llm_judges.ClaudeRunner")
+    @patch("llm_judges.create_runner")
     def test_one_fails(self, mock_runner_cls):
         config = _make_config()
         call_count = [0]
@@ -201,7 +201,7 @@ class TestJudgePanel(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertIn("security", result.blocking_feedback)
 
-    @patch("llm_judges.ClaudeRunner")
+    @patch("llm_judges.create_runner")
     def test_cost_cap(self, mock_runner_cls):
         config = _make_config()
         config.judges.max_total_cost_usd = 0.04  # Very low cap
@@ -269,6 +269,22 @@ class TestJudgePrompts(unittest.TestCase):
         judge = ArchitectureJudge.__new__(ArchitectureJudge)
         prompt = judge._build_prompt(["foo.py"], "diff text", "Fix bug")
         self.assertIn("ARCHITECTURE", prompt)
+
+
+class TestJudgeUsesCreateRunner(unittest.TestCase):
+    """Verify judges use create_runner() to respect provider config."""
+
+    @patch("llm_judges.create_runner")
+    def test_build_runner_calls_create_runner(self, mock_create):
+        """_build_runner should call create_runner, not ClaudeRunner directly."""
+        config = _make_config()
+        mock_runner = MagicMock()
+        mock_create.return_value = mock_runner
+
+        judge = SecurityJudge(config, config.judges.security)
+        # create_runner should have been called during __init__
+        mock_create.assert_called_once()
+        self.assertIs(judge._runner, mock_runner)
 
 
 if __name__ == "__main__":

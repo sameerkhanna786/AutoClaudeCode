@@ -154,7 +154,8 @@ def write_split_tasks_as_feedback(tasks: List[Task], feedback_dir: str) -> int:
         )
         content = frontmatter + task.description
 
-        filename = f"split-{task.task_id.replace('/', '-')}.md"
+        safe_id = re.sub(r'[^a-zA-Z0-9_\-]', '_', task.task_id)
+        filename = f"split-{safe_id}.md"
         filepath = feedback_path / filename
         try:
             fd, tmp_path = tempfile.mkstemp(

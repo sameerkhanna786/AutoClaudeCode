@@ -126,7 +126,9 @@ class AgentWorkspace:
         """Resolve a filename within the workspace, preventing path traversal."""
         target = (self._root / name).resolve()
         root_resolved = self._root.resolve()
-        if not str(target).startswith(str(root_resolved) + os.sep) and target != root_resolved:
+        try:
+            target.relative_to(root_resolved)
+        except ValueError:
             raise ValueError(f"Path traversal blocked: {name!r} escapes workspace root")
         return target
 

@@ -75,30 +75,41 @@ def topological_sort_tasks(tasks: List[Task]) -> List[Task]:
     """
     import heapq
 
-    task_map = {t.task_id: t for t in tasks}
-    in_degree = {t.task_id: 0 for t in tasks}
-    # Build reverse adjacency: dep_id -> list of dependent task_ids
-    dependents: Dict[str, List[str]] = {t.task_id: [] for t in tasks}
+    # Assign unique internal IDs to tasks that have empty/duplicate task_ids
+    # to prevent silent collisions in the task_map.
+    id_counter = 0
+    internal_ids: List[str] = []
     for t in tasks:
+        if t.task_id:
+            internal_ids.append(t.task_id)
+        else:
+            internal_ids.append(f"__anon_{id_counter}")
+            id_counter += 1
+
+    task_map = {iid: t for iid, t in zip(internal_ids, tasks)}
+    in_degree = {iid: 0 for iid in internal_ids}
+    # Build reverse adjacency: dep_id -> list of dependent task internal ids
+    dependents: Dict[str, List[str]] = {iid: [] for iid in internal_ids}
+    for iid, t in zip(internal_ids, tasks):
         for dep in t.depends_on:
             if dep in task_map:
-                in_degree[t.task_id] += 1
-                dependents[dep].append(t.task_id)
+                in_degree[iid] += 1
+                dependents[dep].append(iid)
     # Use a heap for O(log n) priority extraction instead of repeated sorting
     counter = 0  # tie-breaker for stable ordering
     heap: List[tuple] = []
-    for t in tasks:
-        if in_degree[t.task_id] == 0:
-            heapq.heappush(heap, (t.priority, counter, t))
+    for iid, t in zip(internal_ids, tasks):
+        if in_degree[iid] == 0:
+            heapq.heappush(heap, (t.priority, counter, iid))
             counter += 1
     result: List[Task] = []
     while heap:
-        _, _, task = heapq.heappop(heap)
-        result.append(task)
-        for dep_id in dependents[task.task_id]:
+        _, _, iid = heapq.heappop(heap)
+        result.append(task_map[iid])
+        for dep_id in dependents[iid]:
             in_degree[dep_id] -= 1
             if in_degree[dep_id] == 0:
-                heapq.heappush(heap, (task_map[dep_id].priority, counter, task_map[dep_id]))
+                heapq.heappush(heap, (task_map[dep_id].priority, counter, dep_id))
                 counter += 1
     if len(result) != len(tasks):
         raise ValueError("Cycle detected in task dependencies")
