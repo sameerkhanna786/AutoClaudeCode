@@ -409,18 +409,26 @@ class ClaudeRunner:
                     text=True,
                     start_new_session=True,
                 )
-                with self._process_lock:
-                    self._current_process = popen_proc
                 try:
-                    stdout, stderr = popen_proc.communicate(
-                        timeout=self.config.claude.timeout_seconds,
-                    )
-                except subprocess.TimeoutExpired:
+                    with self._process_lock:
+                        self._current_process = popen_proc
+                    try:
+                        stdout, stderr = popen_proc.communicate(
+                            timeout=self.config.claude.timeout_seconds,
+                        )
+                    except subprocess.TimeoutExpired:
+                        self._kill_process(popen_proc)
+                        raise
+                    finally:
+                        with self._process_lock:
+                            self._current_process = None
+                except BaseException:
+                    # Ensure the process is killed if any exception occurs
+                    # after Popen but before communicate completes (e.g.
+                    # KeyboardInterrupt between Popen and _current_process
+                    # assignment, or OSError during communicate).
                     self._kill_process(popen_proc)
                     raise
-                finally:
-                    with self._process_lock:
-                        self._current_process = None
 
                 proc = _ProcResult()
                 proc.returncode = popen_proc.returncode

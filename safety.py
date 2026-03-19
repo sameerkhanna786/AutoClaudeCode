@@ -17,6 +17,9 @@ from state import StateManager
 
 logger = logging.getLogger(__name__)
 
+# Cached macOS page size (never changes at runtime).
+_darwin_page_size: Optional[int] = None
+
 # Module-level list of SafetyGuard instances that hold locks, for atexit cleanup.
 _active_guards: List[SafetyGuard] = []
 _active_guards_lock = threading.Lock()
@@ -151,7 +154,7 @@ class SafetyGuard:
         hold exclusive flocks on different inodes.
         """
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR)
+        fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -255,17 +258,17 @@ class SafetyGuard:
                 return
         elif system == "Darwin":
             try:
+                global _darwin_page_size
                 import subprocess
                 result = subprocess.run(
                     ["vm_stat"], capture_output=True, text=True, timeout=5,
                 )
                 if result.returncode == 0:
-                    page_size = 4096  # default macOS page size
                     free_pages = 0
                     for line in result.stdout.splitlines():
-                        if "page size of" in line:
+                        if _darwin_page_size is None and "page size of" in line:
                             try:
-                                page_size = int(line.split()[-2])
+                                _darwin_page_size = int(line.split()[-2])
                             except (ValueError, IndexError):
                                 pass
                         elif "Pages free:" in line:
@@ -278,6 +281,7 @@ class SafetyGuard:
                                 free_pages += int(line.split()[-1].rstrip("."))
                             except (ValueError, IndexError):
                                 pass
+                    page_size = _darwin_page_size if _darwin_page_size is not None else 4096
                     available_mb = (free_pages * page_size) / (1024 * 1024)
             except (OSError, subprocess.TimeoutExpired):
                 logger.debug("Could not run vm_stat, skipping memory check")

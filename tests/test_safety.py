@@ -548,6 +548,64 @@ class TestDiskSpaceOSError:
         guard.check_disk_space()  # should not raise on real filesystem
 
 
+class TestLockFilePermissions:
+    """Ensure lock file is created with restrictive permissions."""
+
+    def test_lock_file_not_world_readable(self, guard):
+        guard.acquire_lock()
+        try:
+            mode = os.stat(guard.lock_path).st_mode & 0o777
+            # Lock file should not be world-readable or world-writable
+            assert mode & 0o044 == 0, (
+                f"Lock file has overly permissive mode: {oct(mode)}"
+            )
+        finally:
+            guard.release_lock()
+
+    def test_lock_file_owner_can_read_write(self, guard):
+        guard.acquire_lock()
+        try:
+            mode = os.stat(guard.lock_path).st_mode & 0o777
+            # Owner should have read/write
+            assert mode & 0o600 == 0o600, (
+                f"Lock file missing owner read/write: {oct(mode)}"
+            )
+        finally:
+            guard.release_lock()
+
+
+class TestDarwinPageSizeCache:
+    """Ensure macOS page size is cached across check_memory calls."""
+
+    def test_page_size_cached_across_calls(self, guard):
+        """vm_stat should still be called each time (for free pages), but
+        the page size parsing result should be cached."""
+        import subprocess as real_subprocess
+        import safety
+
+        # Reset cache
+        safety._darwin_page_size = None
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
+            "Pages free:                              100000.\n"
+            "Pages inactive:                           50000.\n"
+            "Pages speculative:                        10000.\n"
+            "Pages purgeable:                           5000.\n"
+        )
+
+        with patch("platform.system", return_value="Darwin"), \
+             patch("subprocess.run", return_value=mock_result) as mock_run:
+            guard.check_memory()
+            guard.check_memory()
+            # vm_stat is called each time (to get current free pages)
+            assert mock_run.call_count == 2
+            # But the page size should be cached
+            assert safety._darwin_page_size == 16384
+
+
 class TestMeasureDirSize:
     """Tests for SafetyGuard._measure_dir_size helper."""
 

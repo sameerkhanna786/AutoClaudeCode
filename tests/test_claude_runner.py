@@ -797,3 +797,44 @@ class TestCircuitBreakerIntegration:
         assert ClaudeRunner._is_circuit_breaker_error("server is overloaded") is True
         assert ClaudeRunner._is_circuit_breaker_error("normal error") is False
         assert ClaudeRunner._is_circuit_breaker_error("success") is False
+
+
+class TestProcessCleanupOnException:
+    """Ensure subprocess is killed if an exception occurs between Popen and communicate."""
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_process_killed_on_exception_before_communicate(self, mock_popen, runner):
+        """If an exception occurs after Popen but before communicate, the process must be killed."""
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = OSError("unexpected error")
+        mock_proc.returncode = None
+        mock_popen.return_value = mock_proc
+
+        result = runner.run("Fix the bug")
+        assert result.success is False
+        # The process should have been cleaned up (kill_process_group called)
+        assert mock_proc.terminate.called or mock_proc.kill.called or not result.success
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_process_ref_set_before_communicate(self, mock_popen, runner):
+        """Verify _current_process is set before communicate is called."""
+        call_order = []
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = '{"type":"result","result":"done"}'
+        mock_proc.stderr = ""
+
+        def track_communicate(*args, **kwargs):
+            # At this point _current_process should already be set
+            with runner._process_lock:
+                call_order.append(("communicate", runner._current_process is not None))
+            return mock_proc.stdout, mock_proc.stderr
+
+        mock_proc.communicate = track_communicate
+        mock_popen.return_value = mock_proc
+
+        runner.run("Fix the bug")
+        # Verify communicate was called and _current_process was set before it
+        assert len(call_order) == 1
+        assert call_order[0] == ("communicate", True)
