@@ -547,7 +547,8 @@ class ParallelCoordinator:
                 free_mb, len(worktree_dirs),
             )
             # Remove worktree dirs that don't correspond to active workers
-            active_ids = {w.worker_id for w in self._workers}
+            with self._workers_lock:
+                active_ids = {w.worker_id for w in self._workers}
             for wt_dir in worktree_dirs:
                 # Parse worker id from directory name (e.g., "worker-0")
                 try:
