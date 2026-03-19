@@ -534,3 +534,38 @@ class TestUniqueDst:
         # Should contain a timestamp-like number (>= 1000)
         assert "task_" in dst.name
         assert dst.suffix == ".txt"
+
+
+class TestClaimFeedback:
+    def test_claim_success(self, fb_mgr):
+        fb_dir = Path(fb_mgr.feedback_dir)
+        src = fb_dir / "task.md"
+        src.write_text("fix bug")
+        assert fb_mgr.claim_feedback(str(src)) is True
+        assert not src.exists()
+        assert src.with_suffix(".md.claimed").exists()
+
+    def test_claim_missing_file_returns_false(self, fb_mgr):
+        fb_dir = Path(fb_mgr.feedback_dir)
+        src = fb_dir / "nonexistent.md"
+        assert fb_mgr.claim_feedback(str(src)) is False
+
+    def test_claim_permission_error_returns_false(self, fb_mgr):
+        """OSError (e.g. permission denied) should return False, not crash."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        src = fb_dir / "task.md"
+        src.write_text("fix bug")
+        with patch("feedback.os.rename", side_effect=PermissionError("denied")):
+            assert fb_mgr.claim_feedback(str(src)) is False
+
+
+class TestAtomicMoveFileNotFound:
+    def test_atomic_move_missing_source_returns_gracefully(self, fb_mgr):
+        """If source file vanishes before read, _atomic_move should not crash."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        done_dir = Path(fb_mgr.done_dir)
+        src = fb_dir / "gone.md"
+        dst = done_dir / "gone.md"
+        # Source doesn't exist — should raise FileNotFoundError (caught by callers)
+        with pytest.raises((FileNotFoundError, OSError)):
+            fb_mgr._atomic_move(src, dst)

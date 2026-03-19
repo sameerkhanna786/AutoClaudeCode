@@ -402,6 +402,9 @@ class FeedbackManager:
             return True
         except FileNotFoundError:
             return False  # another worker already claimed it
+        except OSError as e:
+            logger.warning("Failed to claim feedback %s: %s", source_file, e)
+            return False
 
     def unclaim_feedback(self, source_file: str) -> None:
         """Restore a claimed feedback file back to its original name.

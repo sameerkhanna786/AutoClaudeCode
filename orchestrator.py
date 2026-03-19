@@ -1049,13 +1049,11 @@ class Orchestrator:
 
                 # 13. Sleep (with exponential backoff if exceptions are recurring)
                 sleep_total = self.config.orchestrator.loop_interval_seconds + self._backoff_seconds
-                # Apply graceful degradation sleep multiplier
+                # Apply graceful degradation sleep multiplier (using the
+                # level already computed by _cycle to avoid redundant
+                # history scans).
                 if self._degradation.is_degraded:
-                    deg = self._degradation.check_and_adjust(
-                        self.state.get_cycle_count_last_hour(),
-                        self.state.get_total_cost(lookback_seconds=3600),
-                    )
-                    sleep_total = int(sleep_total * deg["sleep_multiplier"])
+                    sleep_total = int(sleep_total * self._degradation.current_sleep_multiplier)
                 if self._backoff_seconds > 0:
                     logger.info(
                         "Sleeping %ds (includes %ds backoff after %d consecutive errors)",
