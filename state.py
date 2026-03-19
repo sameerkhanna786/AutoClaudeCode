@@ -360,11 +360,18 @@ class StateManager:
 
         return size
 
-    def get_task_failure_count(self, task_description: str, task_type: str = "", task_key: str = "") -> int:
-        """Return the number of failed attempts for a specific task."""
+    def get_task_failure_count(self, task_description: str, task_type: str = "",
+                              task_key: str = "", lookback_seconds: int = 86400) -> int:
+        """Return the number of failed attempts for a specific task.
+
+        Only considers records within the lookback window (default 24h).
+        """
+        cutoff = time.time() - lookback_seconds
         records = self._load_history()
         count = 0
-        for r in records:
+        for r in reversed(records):
+            if r.get("timestamp", 0) < cutoff:
+                continue
             if r.get("success", False):
                 continue
             match = (r.get("task_description") == task_description

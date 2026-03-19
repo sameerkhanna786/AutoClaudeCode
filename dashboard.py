@@ -884,22 +884,25 @@ def compute_status(cfg: Dict[str, Any]) -> Dict[str, Any]:
     now = time.time()
     cutoff = now - 3600
 
-    # Consecutive failures (reverse scan)
+    # Single-pass computation of all metrics (avoids 4 separate iterations)
     consecutive_failures = 0
-    for r in reversed(records):
-        if r.get("success", False):
-            break
-        consecutive_failures += 1
-
-    # Cycles/hour
-    cycles_per_hour = sum(1 for r in records if r.get("timestamp", 0) >= cutoff)
-
-    # Cost/hour
-    cost_per_hour = sum(r.get("cost_usd", 0.0) for r in records if r.get("timestamp", 0) >= cutoff)
-
-    # Success rate
+    counting_failures = True
+    cycles_per_hour = 0
+    cost_per_hour = 0.0
     total = len(records)
-    successes = sum(1 for r in records if r.get("success", False))
+    successes = 0
+    for r in reversed(records):
+        is_success = r.get("success", False)
+        if counting_failures:
+            if is_success:
+                counting_failures = False
+            else:
+                consecutive_failures += 1
+        if is_success:
+            successes += 1
+        if r.get("timestamp", 0) >= cutoff:
+            cycles_per_hour += 1
+            cost_per_hour += r.get("cost_usd", 0.0)
     success_rate = (successes / total * 100) if total > 0 else 0.0
 
     # Disk space

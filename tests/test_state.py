@@ -1394,6 +1394,50 @@ class TestReverseIterationOptimization:
         )
 
 
+class TestTaskFailureCountLookback:
+    """Test that get_task_failure_count respects its lookback window."""
+
+    def test_old_failures_excluded_by_lookback(self, tmp_path, default_config):
+        """Failures older than lookback_seconds should not be counted."""
+        default_config.paths.history_file = str(tmp_path / "history.json")
+        sm = StateManager(default_config)
+        now = time.time()
+        records = [
+            {"timestamp": now - 100000, "task_description": "Fix bug",
+             "task_type": "feedback", "success": False},
+            {"timestamp": now - 60, "task_description": "Fix bug",
+             "task_type": "feedback", "success": False},
+        ]
+        sm._save_history(records)
+        # With 24h lookback (default), only the recent failure counts
+        assert sm.get_task_failure_count("Fix bug") == 1
+        # With a very large lookback, both count
+        assert sm.get_task_failure_count("Fix bug", lookback_seconds=200000) == 2
+
+    def test_default_lookback_is_24h(self, tmp_path, default_config):
+        """Default lookback should be 86400 seconds (24 hours)."""
+        import inspect
+        sig = inspect.signature(StateManager.get_task_failure_count)
+        assert sig.parameters["lookback_seconds"].default == 86400
+
+
+class TestDashboardSinglePassCompute:
+    """Test that compute_status computes all metrics in a single pass."""
+
+    def test_single_pass_implementation(self):
+        """compute_status should iterate records only once, not in 4 passes."""
+        import inspect
+        from dashboard import compute_status
+        source = inspect.getsource(compute_status)
+        # Should NOT have separate sum() comprehensions for each metric
+        assert source.count("sum(1 for r in records") == 0, (
+            "compute_status should use a single pass, not separate sum() calls"
+        )
+        assert source.count("sum(r.get") == 0, (
+            "compute_status should use a single pass, not separate sum() calls"
+        )
+
+
 class TestHistoryFilePermissions:
     """Test that _save_history restricts temp file permissions to 0o600."""
 
