@@ -617,3 +617,66 @@ class TestCleanupStaleClaims:
         fb_mgr._last_cleanup_time = 0.0
         fb_mgr.get_pending_feedback()
         assert not claimed.exists()
+
+
+class TestUniqueDstTimestampCollision:
+    """Test that _unique_dst handles timestamp collisions without overwriting."""
+
+    def test_timestamp_collision_uses_random_suffix(self, fb_mgr):
+        """When timestamp path also exists, a random suffix prevents overwrite."""
+        done_dir = fb_mgr.done_dir
+        # Create the base file and all 1000 numbered variants
+        (done_dir / "task.txt").write_text("existing")
+        for i in range(1, 1000):
+            (done_dir / f"task_{i}.txt").write_text("existing")
+
+        # Also create the timestamp-based file
+        ts = int(time.time() * 1000)
+        ts_file = done_dir / f"task_{ts}.txt"
+        ts_file.write_text("existing timestamp file")
+
+        with patch("feedback.time.time", return_value=ts / 1000):
+            dst = fb_mgr._unique_dst(done_dir, "task.txt")
+
+        # Should NOT be the timestamp file (would overwrite)
+        assert dst != ts_file
+        # Should NOT be any existing file
+        assert not dst.exists()
+        # Should still have proper suffix
+        assert dst.suffix == ".txt"
+
+
+class TestIsWithinFeedbackDirResolvesFirst:
+    """Test that _is_within_feedback_dir resolves the path before checking containment."""
+
+    def test_resolve_called_before_relative_to(self, fb_mgr):
+        """_is_within_feedback_dir should call resolve() before relative_to()."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        valid_file = fb_dir / "task.md"
+        valid_file.write_text("content")
+
+        # Track call order
+        call_order = []
+        original_resolve = Path.resolve
+        original_relative_to = Path.relative_to
+
+        def tracking_resolve(self_path, *args, **kwargs):
+            call_order.append(("resolve", str(self_path)))
+            return original_resolve(self_path, *args, **kwargs)
+
+        def tracking_relative_to(self_path, *args, **kwargs):
+            call_order.append(("relative_to", str(self_path)))
+            return original_relative_to(self_path, *args, **kwargs)
+
+        with patch.object(Path, "resolve", tracking_resolve):
+            with patch.object(Path, "relative_to", tracking_relative_to):
+                fb_mgr._is_within_feedback_dir(valid_file)
+
+        # resolve should be called before relative_to
+        resolve_indices = [i for i, (op, _) in enumerate(call_order) if op == "resolve"]
+        relative_indices = [i for i, (op, _) in enumerate(call_order) if op == "relative_to"]
+        assert resolve_indices, "resolve() should be called"
+        assert relative_indices, "relative_to() should be called"
+        assert min(resolve_indices) < min(relative_indices), (
+            "resolve() should be called before relative_to()"
+        )

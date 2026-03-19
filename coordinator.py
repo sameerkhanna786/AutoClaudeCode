@@ -45,6 +45,7 @@ class ParallelCoordinator:
         self.max_workers = config.parallel.max_workers
         self._running = True
         self._workers: List[Worker] = []
+        self._workers_lock = threading.Lock()
         self._consecutive_merge_failures: int = 0
         self._task_queue = TaskApprovalQueue(str(Path(self.config.paths.state_dir)))
 
@@ -202,7 +203,8 @@ class ParallelCoordinator:
                     main_repo_dir=self.config.target_dir,
                     baseline_failures=baseline_failures,
                 )
-                self._workers.append(worker)
+                with self._workers_lock:
+                    self._workers.append(worker)
                 futures[pool.submit(worker.execute)] = worker
 
             for future in as_completed(futures):
@@ -235,7 +237,8 @@ class ParallelCoordinator:
                 self._cleanup_worker_with_timeout(worker)
 
         self._log_cycle_summary(results, cycle_start)
-        self._workers.clear()
+        with self._workers_lock:
+            self._workers.clear()
         self.git.prune_worktrees()
 
     def _process_result(self, result: WorkerResult, worker: Worker) -> None:
@@ -652,8 +655,10 @@ class ParallelCoordinator:
             logger.info("Received signal %d, shutting down workers...", signum)
             self._running = False
             # Terminate any running Claude subprocesses in workers
-            # Snapshot the list to avoid iterating while main thread mutates it
-            for worker in list(self._workers):
+            # Snapshot the list under lock to avoid iterating while main thread mutates it
+            with self._workers_lock:
+                workers_snapshot = list(self._workers)
+            for worker in workers_snapshot:
                 if worker._claude is not None:
                     try:
                         worker._claude.terminate()

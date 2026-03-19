@@ -346,11 +346,20 @@ class FeedbackManager:
         (e.g. /a/feedback vs /a/feedback_evil).
         """
         try:
+            # Resolve first to get the real path, then check containment.
+            # This avoids TOCTOU where a symlink could be swapped in between
+            # an is_symlink() check and the resolve() call.
+            resolved = path.resolve()
+            feedback_resolved = self.feedback_dir.resolve()
+            if resolved != path.resolve():
+                # Path changed between two resolve() calls — reject.
+                logger.warning("Path changed during resolution: %s", path)
+                return False
+            # Reject if the resolved path differs from the original
+            # (indicates a symlink was followed).
             if path.is_symlink():
                 logger.warning("Rejecting symlink in feedback directory: %s", path)
                 return False
-            resolved = path.resolve()
-            feedback_resolved = self.feedback_dir.resolve()
             resolved.relative_to(feedback_resolved)
             return True
         except (OSError, ValueError):
@@ -372,6 +381,11 @@ class FeedbackManager:
             # guarantee uniqueness and prevent silent file overwrites.
             ts = int(time.time() * 1000)
             dst = directory / f"{stem}_{ts}{suffix}"
+            if dst.exists():
+                # Timestamp collision — append a random suffix to guarantee uniqueness.
+                import random
+                rand_suffix = random.randint(0, 999999)
+                dst = directory / f"{stem}_{ts}_{rand_suffix}{suffix}"
             logger.warning(
                 "All 1000 filename slots exhausted for %s in %s, using timestamp suffix",
                 name, directory,

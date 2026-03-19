@@ -631,3 +631,41 @@ class TestMeasureDirSize:
         (tmp_path / "top.txt").write_text("de")
         size = SafetyGuard._measure_dir_size(tmp_path)
         assert size == 3 + 2
+
+
+class TestGitGcUsesGroupKill:
+    """Verify git gc uses run_with_group_kill for proper process group cleanup."""
+
+    def test_git_gc_uses_run_with_group_kill(self, guard, tmp_path):
+        """check_git_object_growth should use run_with_group_kill, not subprocess.run."""
+        import inspect
+        source = inspect.getsource(SafetyGuard.check_git_object_growth)
+        assert "run_with_group_kill" in source, (
+            "git gc should use run_with_group_kill to kill child processes on timeout"
+        )
+        assert "subprocess.run" not in source, (
+            "git gc should not use subprocess.run (no process group kill on timeout)"
+        )
+
+    def test_git_gc_timeout_logged(self, guard, tmp_path, caplog):
+        """When git gc times out, a warning should be logged."""
+        import logging
+        from process_utils import RunResult
+
+        guard.config.target_dir = str(tmp_path)
+        git_objects = tmp_path / ".git" / "objects"
+        git_objects.mkdir(parents=True)
+        # Create a large file to trigger gc
+        big_file = git_objects / "big.pack"
+        big_file.write_bytes(b"x" * (600 * 1024 * 1024))  # 600 MB
+
+        timed_out_result = RunResult(returncode=-1, stdout="", stderr="", timed_out=True)
+
+        with patch("process_utils.run_with_group_kill", return_value=timed_out_result):
+            with caplog.at_level(logging.WARNING):
+                try:
+                    guard.check_git_object_growth()
+                except Exception:
+                    pass  # May raise SafetyError for size, that's fine
+
+        assert any("timed out" in r.message for r in caplog.records)

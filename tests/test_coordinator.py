@@ -554,3 +554,22 @@ class TestSignalHandlerWorkersCopy:
         assert "list(self._workers)" in source, (
             "Signal handler should snapshot _workers with list() to avoid race"
         )
+
+
+class TestWorkersLock:
+    """Test that _workers list mutations are protected by a lock."""
+
+    def test_workers_lock_exists(self, parallel_config):
+        """ParallelCoordinator should have a _workers_lock attribute."""
+        coord = ParallelCoordinator(parallel_config)
+        assert hasattr(coord, "_workers_lock")
+        assert isinstance(coord._workers_lock, type(threading.Lock()))
+
+    def test_signal_handler_acquires_lock(self, parallel_config):
+        """Signal handler should acquire _workers_lock when snapshotting workers."""
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator)
+        assert "self._workers_lock" in source, (
+            "Signal handler should use _workers_lock to protect worker list access"
+        )

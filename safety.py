@@ -519,15 +519,16 @@ class SafetyGuard:
                 "Git objects directory %.1f MB exceeds threshold %d MB, running git gc",
                 size_mb, max_mb,
             )
-            import subprocess
+            from process_utils import run_with_group_kill
             try:
-                subprocess.run(
+                gc_result = run_with_group_kill(
                     ["git", "gc", "--auto"],
                     cwd=target,
-                    capture_output=True,
                     timeout=120,
                 )
-            except (subprocess.TimeoutExpired, OSError) as e:
+                if gc_result.timed_out:
+                    logger.warning("git gc timed out after 120s")
+            except OSError as e:
                 logger.warning("git gc failed: %s", e)
 
             # Re-measure after gc
