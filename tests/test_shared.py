@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 from task_discovery import Task
 from shared import (
     format_task_list,
+    format_validation_errors,
     syntax_check_files,
     gather_tasks,
     clean_description,
@@ -555,6 +556,55 @@ class TestBuildRetryPrompt(unittest.TestCase):
             [task], "new error", ["main.py"], task_history=[],
         )
         self.assertNotIn("PREVIOUS FAILED ATTEMPTS", result)
+
+
+# ---------------------------------------------------------------------------
+# format_validation_errors
+# ---------------------------------------------------------------------------
+
+class TestFormatValidationErrors(unittest.TestCase):
+
+    def _make_step(self, name, passed, return_code=0, command="cmd", output=""):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            name=name, passed=passed, return_code=return_code,
+            command=command, output=output,
+        )
+
+    def _make_validation(self, steps, summary="all passed"):
+        from types import SimpleNamespace
+        return SimpleNamespace(steps=steps, summary=summary)
+
+    def test_failed_step_included(self):
+        v = self._make_validation([
+            self._make_step("tests", False, 1, "pytest", "FAILED test_foo"),
+        ], summary="1 failed")
+        result = format_validation_errors(v)
+        self.assertIn("tests FAILED", result)
+        self.assertIn("FAILED test_foo", result)
+
+    def test_include_full_false_omits_output(self):
+        v = self._make_validation([
+            self._make_step("tests", False, 1, "pytest", "long output"),
+        ])
+        result = format_validation_errors(v, include_full=False)
+        self.assertIn("tests FAILED", result)
+        self.assertNotIn("long output", result)
+
+    def test_all_pass_returns_summary(self):
+        v = self._make_validation([
+            self._make_step("tests", True),
+        ], summary="all passed")
+        result = format_validation_errors(v)
+        self.assertEqual(result, "all passed")
+
+    def test_output_truncated_at_8000(self):
+        long_output = "x" * 10000
+        v = self._make_validation([
+            self._make_step("tests", False, 1, "pytest", long_output),
+        ])
+        result = format_validation_errors(v)
+        self.assertIn("(truncated)", result)
 
 
 # ---------------------------------------------------------------------------

@@ -61,6 +61,11 @@ class GracefulDegradation:
     def degradation_level(self) -> int:
         return self._degradation_level
 
+    @property
+    def current_sleep_multiplier(self) -> float:
+        """Return the sleep multiplier for the current degradation level."""
+        return {0: 1.0, 1: 2.0, 2: 3.0, 3: 4.0}.get(self._degradation_level, 1.0)
+
     def check_and_adjust(
         self,
         cycles_per_hour: int,

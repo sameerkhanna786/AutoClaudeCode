@@ -28,6 +28,7 @@ from cost_predictor import check_cost_budget
 from notifications import NotificationManager
 from shared import (
     format_task_list, syntax_check_files, gather_tasks,
+    format_validation_errors as shared_format_validation_errors,
     build_commit_message, build_batch_commit_message,
     clean_description, extract_file_names,
     TASK_TYPE_INSTRUCTIONS,
@@ -214,18 +215,7 @@ class Orchestrator:
     def _format_validation_errors(self, validation: ValidationResult) -> str:
         """Extract failure details from ValidationResult for the retry prompt."""
         include_full = self.config.orchestrator.retry_include_full_output
-        parts = []
-        for step in validation.steps:
-            if not step.passed:
-                parts.append(f"--- {step.name} FAILED (exit code {step.return_code}) ---")
-                parts.append(f"Command: {step.command}")
-                if include_full and step.output:
-                    output = step.output[:8000]
-                    if len(step.output) > 8000:
-                        output += "\n... (truncated)"
-                    parts.append(output)
-                parts.append("")
-        return "\n".join(parts) if parts else validation.summary
+        return shared_format_validation_errors(validation, include_full=include_full)
 
     def _build_retry_prompt(self, tasks: List[Task], validation: ValidationResult,
                             attempt: int, max_attempts: int) -> str:
@@ -643,7 +633,10 @@ class Orchestrator:
                 enabled_methods.append("claude_ideas")
             if dc.enable_quality_review:
                 enabled_methods.append("quality_review")
-            has_feedback = bool(self.feedback.get_pending_feedback())
+            has_feedback = any(
+                f.is_file() and f.suffix in (".md", ".txt")
+                for f in self.feedback.feedback_dir.iterdir()
+            ) if self.feedback.feedback_dir.exists() else False
             if not enabled_methods and not has_feedback:
                 logger.warning(
                     "No tasks found: no discovery methods enabled and no pending feedback"
@@ -820,8 +813,8 @@ class Orchestrator:
                 else:
                     prompt = self._build_prompt(tasks[0])
                 claude_result = self._run_claude_with_timeout(prompt)
-                total_cost = claude_result.cost_usd
-                total_duration = claude_result.duration_seconds
+                total_cost += claude_result.cost_usd
+                total_duration += claude_result.duration_seconds
                 self.cycle_state.update(accumulated_cost=total_cost)
 
             if not claude_result.success:

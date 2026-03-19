@@ -191,6 +191,25 @@ def syntax_check_files(changed_files: List[str], base_dir: str) -> Optional[str]
     return None
 
 
+def format_validation_errors(validation, include_full: bool = True) -> str:
+    """Extract failure details from a ValidationResult for retry prompts.
+
+    Shared between Orchestrator and Worker to avoid duplication.
+    """
+    parts = []
+    for step in validation.steps:
+        if not step.passed:
+            parts.append(f"--- {step.name} FAILED (exit code {step.return_code}) ---")
+            parts.append(f"Command: {step.command}")
+            if include_full and step.output:
+                output = step.output[:8000]
+                if len(step.output) > 8000:
+                    output += "\n... (truncated)"
+                parts.append(output)
+            parts.append("")
+    return "\n".join(parts) if parts else validation.summary
+
+
 def gather_tasks(config, feedback_manager, state_manager, discovery,
                   dashboard_active: bool = False,
                   task_approval_queue=None) -> List[Task]:

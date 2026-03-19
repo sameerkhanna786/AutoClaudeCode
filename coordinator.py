@@ -81,13 +81,11 @@ class ParallelCoordinator:
 
                 # Sleep in small increments for signal responsiveness
                 sleep_time = self.config.orchestrator.loop_interval_seconds
-                # Apply graceful degradation sleep multiplier
+                # Apply graceful degradation sleep multiplier (using the
+                # level already computed by _run_cycle to avoid redundant
+                # history scans).
                 if self._degradation.is_degraded:
-                    deg = self._degradation.check_and_adjust(
-                        self.state.get_cycle_count_last_hour(),
-                        self.state.get_total_cost(lookback_seconds=3600),
-                    )
-                    sleep_time = int(sleep_time * deg["sleep_multiplier"])
+                    sleep_time = int(sleep_time * self._degradation.current_sleep_multiplier)
                 while sleep_time > 0 and self._running:
                     time.sleep(min(1, sleep_time))
                     sleep_time -= 1

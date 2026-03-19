@@ -469,6 +469,20 @@ class TestGracefulDegradation:
         assert result["level"] == 0
         assert degradation.is_degraded is False
 
+    def test_current_sleep_multiplier_matches_level(self, degradation):
+        """current_sleep_multiplier property must match the degradation level."""
+        degradation.check_and_adjust(50, 0.0)  # normal
+        assert degradation.current_sleep_multiplier == 1.0
+
+        degradation.check_and_adjust(75, 0.0)  # mild
+        assert degradation.current_sleep_multiplier == 2.0
+
+        degradation.check_and_adjust(90, 0.0)  # moderate
+        assert degradation.current_sleep_multiplier == 3.0
+
+        degradation.check_and_adjust(98, 0.0)  # severe
+        assert degradation.current_sleep_multiplier == 4.0
+
 
 class TestActiveGuardsThreadSafety:
     """Tests for thread-safe _active_guards list management."""

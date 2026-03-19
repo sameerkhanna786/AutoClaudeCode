@@ -19,6 +19,7 @@ from task_discovery import Task
 from validator import Validator
 from shared import (
     format_task_list as _shared_format_task_list,
+    format_validation_errors as _shared_format_validation_errors,
     syntax_check_files as _shared_syntax_check_files,
     build_commit_message as _shared_build_commit_message,
     build_batch_commit_message as _shared_build_batch_commit_message,
@@ -506,18 +507,7 @@ class Worker:
 
     def _format_validation_errors(self, validation) -> str:
         """Extract failure details from ValidationResult for the retry prompt."""
-        parts = []
-        for step in validation.steps:
-            if not step.passed:
-                parts.append(f"--- {step.name} FAILED (exit code {step.return_code}) ---")
-                parts.append(f"Command: {step.command}")
-                if step.output:
-                    output = step.output[:8000]
-                    if len(step.output) > 8000:
-                        output += "\n... (truncated)"
-                    parts.append(output)
-                parts.append("")
-        return "\n".join(parts) if parts else validation.summary
+        return _shared_format_validation_errors(validation, include_full=True)
 
     def _build_retry_prompt(
         self, tasks: List[Task], is_batch: bool, failure_output: str,
