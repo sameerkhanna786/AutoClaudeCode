@@ -178,6 +178,28 @@ class TestPartitionTasks:
         assert len(a_group[0]) == 2  # both a.py tasks grouped
 
 
+    def test_tasks_after_ungroupable_still_join_existing_groups(self, parallel_config):
+        """Tasks appearing after an ungroupable task should still be added
+        to existing groups if their source_file matches."""
+        parallel_config.parallel.max_workers = 2
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description="Fix A", priority=1, source="lint", source_file="a.py"),
+            Task(description="Fix B", priority=2, source="lint", source_file="b.py"),
+            # This task has no source_file and groups are full — should be skipped
+            Task(description="Fix C", priority=3, source="lint", source_file=None),
+            # This task maps to existing group a.py — should still be included
+            Task(description="Fix A2", priority=4, source="lint", source_file="a.py"),
+        ]
+        groups = coord._partition_tasks(tasks)
+        assert len(groups) == 2
+        # a.py group should contain both "Fix A" and "Fix A2"
+        a_group = [g for g in groups if any(t.source_file == "a.py" for t in g)]
+        assert len(a_group) == 1
+        a_descriptions = [t.description for t in a_group[0]]
+        assert "Fix A" in a_descriptions
+        assert "Fix A2" in a_descriptions
+
     def test_degradation_param_reduces_workers(self, parallel_config):
         """Pre-computed degradation result reduces effective workers."""
         parallel_config.parallel.max_workers = 4

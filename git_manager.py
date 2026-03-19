@@ -319,9 +319,15 @@ class GitManager:
             entry = line[3:] if len(line) > 3 else ""
             if not entry:
                 continue
-            # Handle renames: "old -> new"
+            # Handle renames first: "old -> new" or "old" -> "new"
             if " -> " in entry:
                 entry = entry.split(" -> ", 1)[1]
+            # git status --porcelain quotes filenames containing spaces
+            # or special characters (e.g., '"path with spaces/file.py"').
+            # Strip the surrounding quotes so downstream git operations
+            # receive the actual filesystem path.
+            if entry.startswith('"') and entry.endswith('"'):
+                entry = entry[1:-1]
             files.add(entry)
 
         return sorted(files)

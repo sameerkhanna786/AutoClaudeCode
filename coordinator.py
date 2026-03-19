@@ -646,7 +646,7 @@ class ParallelCoordinator:
             if len(groups) >= effective_workers and (
                 t.source_file is None or t.source_file not in file_to_group
             ):
-                break  # No room for a new group
+                continue  # No room for a new group; skip but check remaining tasks
 
             if t.source_file and t.source_file in file_to_group:
                 # Append to existing group that already handles this file

@@ -98,6 +98,44 @@ class TestGitManager:
 
 
 @pytest.mark.requires_subprocess
+class TestGetChangedFilesQuotedFilenames:
+    """Test that get_changed_files strips quotes from filenames with spaces."""
+
+    def test_quoted_filename_is_unquoted(self, tmp_git_repo):
+        """git status --porcelain quotes filenames with spaces; we must strip them."""
+        from unittest.mock import patch
+        import subprocess
+
+        gm = GitManager(tmp_git_repo)
+        # Simulate porcelain output with a quoted filename
+        porcelain_output = ' M "path with spaces/file.py"\n?? "another dir/test.py"\n'
+        result = subprocess.CompletedProcess(
+            args=["git"], returncode=0, stdout=porcelain_output, stderr=""
+        )
+        with patch.object(gm, "_run", return_value=result):
+            files = gm.get_changed_files()
+        assert "path with spaces/file.py" in files
+        assert "another dir/test.py" in files
+        # Should NOT contain quotes
+        assert not any(f.startswith('"') for f in files)
+
+    def test_quoted_rename_is_unquoted(self, tmp_git_repo):
+        """Renamed files with quoted paths should also be unquoted."""
+        from unittest.mock import patch
+        import subprocess
+
+        gm = GitManager(tmp_git_repo)
+        porcelain_output = 'R  "old name.py" -> "new name.py"\n'
+        result = subprocess.CompletedProcess(
+            args=["git"], returncode=0, stdout=porcelain_output, stderr=""
+        )
+        with patch.object(gm, "_run", return_value=result):
+            files = gm.get_changed_files()
+        assert "new name.py" in files
+        assert not any(f.startswith('"') for f in files)
+
+
+@pytest.mark.requires_subprocess
 class TestGetChangedFilesErrorHandling:
     def test_get_changed_files_raises_on_git_failure(self, tmp_git_repo):
         """When git status --porcelain fails, get_changed_files should raise RuntimeError."""
