@@ -764,6 +764,10 @@ startPolling();
 </body>
 </html>"""
 
+# Pre-encode the static HTML to bytes once at import time, avoiding
+# repeated .encode("utf-8") calls on every request.
+_STATIC_HTML_BYTES = STATIC_HTML.encode("utf-8")
+
 
 # ---------------------------------------------------------------------------
 # Section 2: Data access functions
@@ -1093,12 +1097,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # ---- Route handlers ----
 
     def _serve_spa(self, query: Dict) -> None:
-        content = STATIC_HTML.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Content-Length", str(len(_STATIC_HTML_BYTES)))
         self.end_headers()
-        self.wfile.write(content)
+        self.wfile.write(_STATIC_HTML_BYTES)
 
     def _api_status(self, query: Dict) -> None:
         # Write heartbeat so orchestrator knows dashboard is active

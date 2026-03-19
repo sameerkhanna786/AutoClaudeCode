@@ -370,12 +370,17 @@ class StateManager:
 
     def should_auto_reset_failures(self, min_idle_seconds: int = 3600) -> bool:
         """Return True if consecutive failures >= max and system has been idle long enough."""
-        failures = self.get_consecutive_failures()
-        limit = self.config.safety.max_consecutive_failures
-        if failures < limit:
-            return False
         records = self._load_history()
         if not records:
+            return False
+        # Count consecutive failures from the end (inline to avoid double load)
+        failures = 0
+        for r in reversed(records):
+            if r.get("success", False):
+                break
+            failures += 1
+        limit = self.config.safety.max_consecutive_failures
+        if failures < limit:
             return False
         last_timestamp = records[-1].get("timestamp", 0)
         idle_seconds = time.time() - last_timestamp

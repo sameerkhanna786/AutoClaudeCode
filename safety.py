@@ -468,6 +468,21 @@ class SafetyGuard:
                     except OSError:
                         continue
 
+    @staticmethod
+    def _measure_dir_size(dir_path: Path) -> Optional[int]:
+        """Return total size in bytes of all files under dir_path, or None on error."""
+        total = 0
+        try:
+            for dirpath, _dirnames, filenames in os.walk(str(dir_path)):
+                for fname in filenames:
+                    try:
+                        total += os.path.getsize(os.path.join(dirpath, fname))
+                    except OSError:
+                        continue
+        except OSError:
+            return None
+        return total
+
     def check_git_object_growth(self) -> None:
         """Monitor .git/objects directory size to detect repository bloat.
 
@@ -485,16 +500,9 @@ class SafetyGuard:
         if not git_objects_dir.exists():
             return
 
-        total_size = 0
-        try:
-            for dirpath, _dirnames, filenames in os.walk(str(git_objects_dir)):
-                for fname in filenames:
-                    try:
-                        total_size += os.path.getsize(os.path.join(dirpath, fname))
-                    except OSError:
-                        continue
-        except OSError as e:
-            logger.debug("Could not scan .git/objects: %s", e)
+        total_size = self._measure_dir_size(git_objects_dir)
+        if total_size is None:
+            logger.debug("Could not scan .git/objects")
             return
 
         size_mb = total_size / (1024 * 1024)
@@ -516,17 +524,8 @@ class SafetyGuard:
                 logger.warning("git gc failed: %s", e)
 
             # Re-measure after gc
-            post_gc_size = 0
-            try:
-                for dirpath, _dirnames, filenames in os.walk(str(git_objects_dir)):
-                    for fname in filenames:
-                        try:
-                            post_gc_size += os.path.getsize(
-                                os.path.join(dirpath, fname)
-                            )
-                        except OSError:
-                            continue
-            except OSError:
+            post_gc_size = self._measure_dir_size(git_objects_dir)
+            if post_gc_size is None:
                 return
 
             post_gc_mb = post_gc_size / (1024 * 1024)

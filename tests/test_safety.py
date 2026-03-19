@@ -522,3 +522,30 @@ class TestDiskSpaceOSError:
     def test_normal_disk_check_passes(self, guard):
         """Normal disk check with enough space should not raise."""
         guard.check_disk_space()  # should not raise on real filesystem
+
+
+class TestMeasureDirSize:
+    """Tests for SafetyGuard._measure_dir_size helper."""
+
+    def test_measures_files(self, tmp_path):
+        (tmp_path / "a.txt").write_text("hello")
+        (tmp_path / "b.txt").write_text("world!")
+        size = SafetyGuard._measure_dir_size(tmp_path)
+        assert size == 5 + 6  # len("hello") + len("world!")
+
+    def test_empty_dir_returns_zero(self, tmp_path):
+        size = SafetyGuard._measure_dir_size(tmp_path)
+        assert size == 0
+
+    def test_nonexistent_dir_returns_zero(self, tmp_path):
+        # os.walk silently yields nothing for nonexistent dirs
+        size = SafetyGuard._measure_dir_size(tmp_path / "nonexistent")
+        assert size == 0
+
+    def test_nested_dirs(self, tmp_path):
+        sub = tmp_path / "sub" / "deep"
+        sub.mkdir(parents=True)
+        (sub / "file.txt").write_text("abc")
+        (tmp_path / "top.txt").write_text("de")
+        size = SafetyGuard._measure_dir_size(tmp_path)
+        assert size == 3 + 2

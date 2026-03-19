@@ -615,5 +615,20 @@ class TestDashboardSecurityFixes(unittest.TestCase):
             self.assertNotIn("/", data.get("error", ""))
 
 
+class TestStaticHtmlBytesCache(unittest.TestCase):
+    """Test that STATIC_HTML is pre-encoded to bytes at module level."""
+
+    def test_static_html_bytes_exists(self):
+        from dashboard import _STATIC_HTML_BYTES, STATIC_HTML
+        self.assertIsInstance(_STATIC_HTML_BYTES, bytes)
+        self.assertEqual(_STATIC_HTML_BYTES, STATIC_HTML.encode("utf-8"))
+
+    def test_static_html_bytes_is_same_object(self):
+        """Multiple imports should return the same cached bytes object."""
+        from dashboard import _STATIC_HTML_BYTES as a
+        from dashboard import _STATIC_HTML_BYTES as b
+        self.assertIs(a, b)
+
+
 if __name__ == "__main__":
     unittest.main()
