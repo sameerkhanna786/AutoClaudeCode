@@ -143,22 +143,22 @@ class TestAtomicMoveRetry:
         src.write_text("task content")
         dst = done_dir / "task.md"
 
-        read_count = 0
-        original_read_text = Path.read_text
+        open_count = 0
+        original_os_open = os.open
 
-        def failing_read_text(self_path, *args, **kwargs):
-            nonlocal read_count
-            if self_path == src:
-                read_count += 1
+        def failing_os_open(path, flags, *args, **kwargs):
+            nonlocal open_count
+            if path == str(src):
+                open_count += 1
                 raise OSError("read failure")
-            return original_read_text(self_path, *args, **kwargs)
+            return original_os_open(path, flags, *args, **kwargs)
 
-        with patch.object(Path, "read_text", failing_read_text):
+        with patch("os.open", failing_os_open):
             with pytest.raises(OSError, match="read failure"):
                 fb_mgr._atomic_move(src, dst)
 
         # Content is read exactly once (no retries on read failures)
-        assert read_count == 1
+        assert open_count == 1
 
     def test_atomic_move_reads_content_only_once(self, fb_mgr, tmp_path):
         """Content is read once before the retry loop, not on each attempt."""
@@ -168,14 +168,14 @@ class TestAtomicMoveRetry:
         src.write_text("task content")
         dst = done_dir / "task.md"
 
-        read_count = 0
-        original_read_text = Path.read_text
+        open_count = 0
+        original_os_open = os.open
 
-        def counting_read_text(self_path, *args, **kwargs):
-            nonlocal read_count
-            if self_path == src:
-                read_count += 1
-            return original_read_text(self_path, *args, **kwargs)
+        def counting_os_open(path, flags, *args, **kwargs):
+            nonlocal open_count
+            if path == str(src):
+                open_count += 1
+            return original_os_open(path, flags, *args, **kwargs)
 
         replace_count = 0
         original_replace = os.replace
@@ -187,13 +187,13 @@ class TestAtomicMoveRetry:
                 raise OSError("transient replace failure")
             return original_replace(src_path, dst_path)
 
-        with patch.object(Path, "read_text", counting_read_text):
+        with patch("os.open", counting_os_open):
             with patch("os.replace", failing_replace):
                 with patch("feedback.time.sleep"):
                     fb_mgr._atomic_move(src, dst)
 
         # Content was read exactly once, even though replace retried
-        assert read_count == 1
+        assert open_count == 1
         assert replace_count == 3  # failed twice, succeeded on third
 
     def test_atomic_move_source_already_moved(self, fb_mgr, tmp_path):
@@ -784,4 +784,44 @@ class TestFeedbackFileOpenNoFollow:
         assert "O_NOFOLLOW" in source or "os.open(" in source, (
             "get_pending_feedback should use O_NOFOLLOW to atomically reject "
             "symlinks at the kernel level, preventing TOCTOU races"
+        )
+
+
+class TestNestedDangerousPatternSanitization:
+    """Test that nested dangerous patterns are fully removed by iterative stripping."""
+
+    def test_nested_command_substitution_fully_stripped(self):
+        from feedback import sanitize_feedback_content
+        content = "Fix $($(whoami)) bug"
+        result = sanitize_feedback_content(content)
+        assert "$(" not in result
+        assert "whoami" not in result
+        assert "Fix" in result
+
+    def test_deeply_nested_patterns(self):
+        from feedback import sanitize_feedback_content
+        content = "Run $($($(id))) now"
+        result = sanitize_feedback_content(content)
+        assert "$(" not in result
+        assert "id" not in result
+
+    def test_mixed_nested_patterns(self):
+        from feedback import sanitize_feedback_content
+        content = "Do ${$(cmd)} thing"
+        result = sanitize_feedback_content(content)
+        assert "$(" not in result
+        # ${} with empty content is harmless (regex requires non-empty braces)
+        assert "cmd" not in result
+
+
+class TestAtomicMoveRejectsSymlinks:
+    """Test that _atomic_move refuses to read symlinks via O_NOFOLLOW."""
+
+    def test_atomic_move_uses_nofollow(self):
+        """_atomic_move should use O_NOFOLLOW when reading the source file."""
+        import inspect
+        from feedback import FeedbackManager
+        source = inspect.getsource(FeedbackManager._atomic_move)
+        assert "O_NOFOLLOW" in source, (
+            "_atomic_move should use O_NOFOLLOW to prevent TOCTOU symlink attacks"
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import random
@@ -59,14 +60,22 @@ def sanitize_feedback_content(content: str) -> str:
     # Remove control characters (keep \n, \r, \t)
     content = _CONTROL_CHAR_RE.sub('', content)
 
-    # Check for dangerous patterns (shell injection, command substitution)
-    for i, pattern in enumerate(_DANGEROUS_PATTERNS):
-        if pattern.search(content):
-            logger.warning(
-                "Dangerous pattern detected in feedback content (pattern %d)",
-                i,
-            )
-            content = pattern.sub('', content)
+    # Check for dangerous patterns (shell injection, command substitution).
+    # Loop until no patterns match — nested patterns like $($(cmd)) survive
+    # a single pass because stripping the outer $() reveals the inner one.
+    max_passes = 10  # safety limit to avoid infinite loop on pathological input
+    for _pass in range(max_passes):
+        found = False
+        for i, pattern in enumerate(_DANGEROUS_PATTERNS):
+            if pattern.search(content):
+                logger.warning(
+                    "Dangerous pattern detected in feedback content (pattern %d, pass %d)",
+                    i, _pass,
+                )
+                content = pattern.sub('', content)
+                found = True
+        if not found:
+            break
 
     # Truncate to max length
     if len(content) > MAX_FEEDBACK_CONTENT_LENGTH:
@@ -109,11 +118,23 @@ class FeedbackManager:
 
         # Read source content once before the retry loop — the content
         # doesn't change between retries, so re-reading is wasted I/O.
+        # Use O_NOFOLLOW to refuse symlinks (TOCTOU defense).
         try:
-            content = src.read_text(encoding='utf-8', errors='replace')
+            fd = os.open(str(src), os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                raw = os.read(fd, MAX_FEEDBACK_CONTENT_LENGTH + 1)
+            finally:
+                os.close(fd)
+            content = raw.decode('utf-8', errors='replace')
         except FileNotFoundError:
             logger.debug("Source file %s already moved by another process", src)
             return
+        except OSError as e:
+            # O_NOFOLLOW raises ELOOP (errno 40 on macOS, 62 on Linux) for symlinks
+            if e.errno in (errno.ELOOP, getattr(errno, 'EMLINK', -1)):
+                logger.warning("Refusing to follow symlink: %s", src)
+                return
+            raise
 
         for attempt in range(max_retries):
             # If the source file no longer exists on a retry, another process
