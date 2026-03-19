@@ -642,6 +642,82 @@ class TestSignalHandlerClaudeRace:
         )
 
 
+class TestWorktreeDiskSpaceUnparsableName:
+    """Regression: unparsable worktree directory names must not be deleted.
+
+    Previously, if a worktree directory name couldn't be parsed to extract a
+    worker ID (e.g. 'worker-data' or 'my-worktree'), wt_id was set to -1,
+    which never matched active_ids, causing the directory to be deleted
+    unconditionally. The fix skips directories with unparsable names.
+    """
+
+    def test_unparsable_worktree_name_not_deleted(self, parallel_config):
+        """Worktree dirs with non-numeric suffixes should be skipped, not removed."""
+        import shutil
+
+        coord = ParallelCoordinator(parallel_config)
+        worktree_base = Path(parallel_config.target_dir) / ".worktrees"
+
+        # Create a worktree with a non-numeric suffix
+        (worktree_base / "worker-data").mkdir(parents=True, exist_ok=True)
+        # And a parsable but inactive one
+        (worktree_base / "worker-99").mkdir(parents=True, exist_ok=True)
+
+        remove_calls = []
+
+        def tracking_remove(path, force=False):
+            remove_calls.append(path)
+
+        rmtree_calls = []
+        original_rmtree = shutil.rmtree
+
+        def tracking_rmtree(path, **kwargs):
+            rmtree_calls.append(path)
+
+        with patch.object(coord.git, "remove_worktree", side_effect=tracking_remove), \
+             patch.object(coord.git, "prune_worktrees"), \
+             patch("coordinator.shutil.rmtree", side_effect=tracking_rmtree), \
+             patch("coordinator.shutil.disk_usage") as mock_usage:
+            # Simulate low disk space to trigger cleanup
+            mock_usage.return_value = MagicMock(free=10 * 1024 * 1024)  # 10 MB free
+            coord._check_worktree_disk_space()
+
+        # "worker-data" should NOT have been touched (unparsable name)
+        all_paths = remove_calls + rmtree_calls
+        assert not any("worker-data" in str(p) for p in all_paths), (
+            "Worktree with unparsable name 'worker-data' should be skipped, not removed"
+        )
+        # "worker-99" should have been removed (parsable, not active)
+        assert any("worker-99" in str(p) for p in all_paths), (
+            "Worktree with parsable inactive ID 'worker-99' should be cleaned up"
+        )
+
+    def test_worktree_with_no_dash_not_deleted(self, parallel_config):
+        """Worktree dir with no dash in name should be skipped."""
+        import shutil
+
+        coord = ParallelCoordinator(parallel_config)
+        worktree_base = Path(parallel_config.target_dir) / ".worktrees"
+
+        (worktree_base / "tempdir").mkdir(parents=True, exist_ok=True)
+
+        remove_calls = []
+
+        def tracking_remove(path, force=False):
+            remove_calls.append(path)
+
+        with patch.object(coord.git, "remove_worktree", side_effect=tracking_remove), \
+             patch.object(coord.git, "prune_worktrees"), \
+             patch("coordinator.shutil.rmtree"), \
+             patch("coordinator.shutil.disk_usage") as mock_usage:
+            mock_usage.return_value = MagicMock(free=10 * 1024 * 1024)
+            coord._check_worktree_disk_space()
+
+        assert not any("tempdir" in str(p) for p in remove_calls), (
+            "Worktree dir without dash should be skipped"
+        )
+
+
 class TestMergeWorkerBranchCleanNoCommit:
     """Test that AI conflict resolution handles clean merges correctly."""
 

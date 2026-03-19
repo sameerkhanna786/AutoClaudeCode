@@ -54,8 +54,8 @@ class LockedStateManager(StateManager):
             self._local.held = True
             yield
         finally:
-            os.close(fd)
             self._local.held = False
+            os.close(fd)
 
     def record_cycle(self, record: CycleRecord) -> None:
         with self._file_lock():

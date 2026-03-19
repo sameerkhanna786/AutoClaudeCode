@@ -308,6 +308,37 @@ class TestMissingLockedWrappers:
         assert "2/2 succeeded" in report
 
 
+class TestHeldFlagClearedBeforeFdClose:
+    """Regression: held flag must be cleared BEFORE os.close(fd).
+
+    If os.close(fd) runs first, the lock is released but held is still True.
+    A concurrent re-entrant check on the same thread would see held=True and
+    skip acquiring a new lock — even though the file lock is already gone.
+    """
+
+    def test_held_false_before_fd_close(self, locked_state):
+        """Verify self._local.held is False by the time os.close is called."""
+        import fcntl
+
+        original_close = os.close
+        held_at_close_time = []
+
+        def spy_close(fd):
+            # Capture the held flag at the moment close is called
+            held_at_close_time.append(getattr(locked_state._local, 'held', 'MISSING'))
+            return original_close(fd)
+
+        with patch("state_lock.os.close", side_effect=spy_close):
+            with locked_state._file_lock():
+                pass
+
+        assert len(held_at_close_time) == 1, "os.close should be called exactly once"
+        assert held_at_close_time[0] is False, (
+            "held flag must be cleared BEFORE os.close(fd) to prevent "
+            "re-entrant check from skipping lock acquisition after release"
+        )
+
+
 class TestNoExplicitUnlockBeforeClose:
     """The file lock must NOT explicitly unlock before close.
 

@@ -570,9 +570,11 @@ class ParallelCoordinator:
             for wt_dir in worktree_dirs:
                 # Parse worker id from directory name (e.g., "worker-0")
                 try:
-                    wt_id = int(wt_dir.name.split("-", 1)[1])
+                    wt_id = int(wt_dir.name.rsplit("-", 1)[1])
                 except (ValueError, IndexError):
-                    wt_id = -1
+                    # Can't parse worker id — skip removal to avoid
+                    # deleting unrecognised directories
+                    continue
                 if wt_id not in active_ids:
                     logger.info("Removing stale worktree: %s", wt_dir)
                     try:
