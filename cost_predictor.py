@@ -126,7 +126,7 @@ def check_cost_budget(
     hourly_limit = config.safety.max_cost_usd_per_hour
     remaining = hourly_limit - hourly_spent
 
-    allowed = estimated < remaining
+    allowed = estimated <= remaining
 
     if not allowed:
         logger.warning(

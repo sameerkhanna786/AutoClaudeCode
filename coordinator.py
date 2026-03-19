@@ -687,7 +687,7 @@ class ParallelCoordinator:
                     try:
                         runner.terminate()
                     except Exception:
-                        pass
+                        logger.debug("Failed to terminate worker subprocess", exc_info=True)
 
         signal.signal(signal.SIGINT, handler)
         signal.signal(signal.SIGTERM, handler)

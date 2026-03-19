@@ -153,6 +153,19 @@ class TestCheckCostBudget(unittest.TestCase):
         allowed, estimated, remaining = check_cost_budget(tasks, config, state)
         self.assertAlmostEqual(remaining, 2.0)
 
+    def test_allowed_when_estimated_equals_remaining(self):
+        """Budget boundary: estimated == remaining should be allowed (at budget, not over)."""
+        tasks = [_make_task("test")]
+        # First, figure out the estimated cost for this task
+        config = self._make_config(model="opus", max_cost=10.0)
+        state = self._make_state(total_cost=0.0)
+        _, estimated, _ = check_cost_budget(tasks, config, state)
+        # Now set remaining budget to exactly the estimated cost
+        state2 = self._make_state(total_cost=10.0 - estimated)
+        allowed, _, remaining = check_cost_budget(tasks, config, state2)
+        self.assertAlmostEqual(remaining, estimated)
+        self.assertTrue(allowed, "Task should be allowed when estimated cost equals remaining budget")
+
 
 if __name__ == "__main__":
     unittest.main()

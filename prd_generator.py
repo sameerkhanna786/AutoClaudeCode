@@ -40,7 +40,7 @@ def generate_prd(tasks: List[Task], config=None, state_manager=None) -> Dict[str
             if performance:
                 prd["metadata"]["strategy_performance"] = performance
         except Exception:
-            pass
+            logger.debug("Failed to load strategy performance for PRD", exc_info=True)
 
     for task in tasks:
         task_entry: Dict[str, Any] = {

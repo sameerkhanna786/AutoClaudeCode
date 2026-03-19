@@ -802,7 +802,7 @@ class TaskDiscovery:
                 except (json.JSONDecodeError, TypeError):
                     continue
         except Exception:
-            pass
+            logger.debug("Failed to detect max_turns exhaustion in discovery output", exc_info=True)
 
         # Extract text content from JSON response
         result_text = _extract_json_text(result_text)

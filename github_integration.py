@@ -85,7 +85,7 @@ class GitHubClient:
             try:
                 error_body = e.read().decode("utf-8")
             except Exception:
-                pass
+                logger.debug("Failed to read HTTP error body", exc_info=True)
             # Sanitize error body to prevent token leakage in logs
             if self._resolved_token and self._resolved_token in error_body:
                 error_body = error_body.replace(self._resolved_token, "***")
