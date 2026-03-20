@@ -1597,6 +1597,25 @@ class TestLoadHistoryReturnsCopy:
         )
 
 
+class TestInternalLoadHistoryReturnsCopy:
+    """_load_history() must also return a copy to prevent cache corruption."""
+
+    def test_internal_load_history_returns_copy(self, state_mgr):
+        """Mutating _load_history() result must not affect the internal cache."""
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Original",
+            success=True,
+        ))
+        first = state_mgr._load_history()
+        first.append({"fake": "injected"})
+
+        second = state_mgr._load_history()
+        assert len(second) == 1, (
+            "_load_history() must return a copy so callers cannot corrupt the cache"
+        )
+
+
 class TestEarlyTerminationInScans:
     """get_cycle_count_last_hour and get_total_cost should break early on old records."""
 

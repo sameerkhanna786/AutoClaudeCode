@@ -484,6 +484,62 @@ class TestGracefulDegradation:
         assert degradation.current_sleep_multiplier == 4.0
 
 
+class TestGracefulDegradationThreadSafety:
+    """GracefulDegradation state must be consistent under concurrent access."""
+
+    @pytest.fixture
+    def degradation(self, default_config):
+        default_config.safety.max_cycles_per_hour = 100
+        default_config.safety.max_cost_usd_per_hour = 100.0
+        return GracefulDegradation(default_config)
+
+    def test_concurrent_reads_see_valid_levels(self, degradation):
+        """Readers never see invalid degradation levels under concurrent writes."""
+        import threading
+
+        invalid_levels = []
+        stop = threading.Event()
+        valid_levels = {0, 1, 2, 3}
+
+        def writer():
+            """Alternate between severe and normal states."""
+            i = 0
+            while not stop.is_set():
+                if i % 2 == 0:
+                    degradation.check_and_adjust(98, 0.0)  # severe
+                else:
+                    degradation.check_and_adjust(50, 0.0)  # normal
+                i += 1
+
+        def reader():
+            """Check that level is always a valid value."""
+            while not stop.is_set():
+                level = degradation.degradation_level
+                if level not in valid_levels:
+                    invalid_levels.append(level)
+
+        threads = [threading.Thread(target=writer)]
+        threads += [threading.Thread(target=reader) for _ in range(4)]
+        for t in threads:
+            t.start()
+
+        import time
+        time.sleep(0.2)
+        stop.set()
+        for t in threads:
+            t.join(timeout=2)
+
+        assert len(invalid_levels) == 0, (
+            f"Saw {len(invalid_levels)} invalid degradation levels"
+        )
+
+    def test_lock_attribute_exists(self, degradation):
+        """GracefulDegradation must have a threading.Lock for state protection."""
+        import threading
+        assert hasattr(degradation, '_lock')
+        assert isinstance(degradation._lock, type(threading.Lock()))
+
+
 class TestActiveGuardsThreadSafety:
     """Tests for thread-safe _active_guards list management."""
 

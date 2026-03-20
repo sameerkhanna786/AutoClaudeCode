@@ -50,25 +50,32 @@ class GracefulDegradation:
 
     Instead of hard-stopping, this reduces batch size and increases sleep
     intervals to allow the system to continue operating at reduced capacity.
+
+    All state mutations are protected by a lock so that concurrent readers
+    (e.g. the coordinator's main loop) never observe a half-updated state.
     """
 
     def __init__(self, config: Config):
         self.config = config
+        self._lock = threading.Lock()
         self._degraded = False
         self._degradation_level = 0  # 0=normal, 1=mild, 2=moderate, 3=severe
 
     @property
     def is_degraded(self) -> bool:
-        return self._degraded
+        with self._lock:
+            return self._degraded
 
     @property
     def degradation_level(self) -> int:
-        return self._degradation_level
+        with self._lock:
+            return self._degradation_level
 
     @property
     def current_sleep_multiplier(self) -> float:
         """Return the sleep multiplier for the current degradation level."""
-        return {0: 1.0, 1: 2.0, 2: 3.0, 3: 4.0}.get(self._degradation_level, 1.0)
+        with self._lock:
+            return {0: 1.0, 1: 2.0, 2: 3.0, 3: 4.0}.get(self._degradation_level, 1.0)
 
     def check_and_adjust(
         self,
@@ -99,8 +106,9 @@ class GracefulDegradation:
             reasons.append(f"cost at {cost_pct:.0f}% of limit (${cost_per_hour:.2f}/${cost_limit:.2f})")
 
         if max_pct >= 95:
-            self._degradation_level = 3
-            self._degraded = True
+            with self._lock:
+                self._degradation_level = 3
+                self._degraded = True
             return {
                 "degraded": True,
                 "level": 3,
@@ -109,8 +117,9 @@ class GracefulDegradation:
                 "reason": "Severe: " + "; ".join(reasons),
             }
         elif max_pct >= 85:
-            self._degradation_level = 2
-            self._degraded = True
+            with self._lock:
+                self._degradation_level = 2
+                self._degraded = True
             return {
                 "degraded": True,
                 "level": 2,
@@ -119,8 +128,9 @@ class GracefulDegradation:
                 "reason": "Moderate: " + "; ".join(reasons),
             }
         elif max_pct >= 70:
-            self._degradation_level = 1
-            self._degraded = True
+            with self._lock:
+                self._degradation_level = 1
+                self._degraded = True
             return {
                 "degraded": True,
                 "level": 1,
@@ -129,8 +139,9 @@ class GracefulDegradation:
                 "reason": "Mild: " + "; ".join(reasons),
             }
         else:
-            self._degradation_level = 0
-            self._degraded = False
+            with self._lock:
+                self._degradation_level = 0
+                self._degraded = False
             return {
                 "degraded": False,
                 "level": 0,

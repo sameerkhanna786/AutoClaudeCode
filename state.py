@@ -103,7 +103,7 @@ class StateManager:
         try:
             current_mtime = self.history_file.stat().st_mtime
             if self._cache is not None and current_mtime == self._cache_mtime:
-                return self._cache
+                return list(self._cache)
             file_size = self.history_file.stat().st_size
             if file_size > self._MAX_HISTORY_FILE_BYTES:
                 logger.error(
@@ -129,7 +129,7 @@ class StateManager:
 
             self._cache = records
             self._cache_mtime = current_mtime
-            return records
+            return list(records)
         except json.JSONDecodeError as e:
             logger.error("History file is corrupt: %s", e)
             # Back up corrupted file so record_cycle won't overwrite it

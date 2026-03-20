@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from process_utils import run_with_group_kill
 from telemetry import compute_metrics
 from task_queue import TaskApprovalQueue
 
@@ -987,11 +988,9 @@ def get_loc_for_commits(
             result[h] = {"error": "invalid hash"}
             continue
         try:
-            proc = subprocess.run(
+            proc = run_with_group_kill(
                 ["git", "log", "--numstat", "--format=", "-1", h],
                 cwd=target_dir,
-                capture_output=True,
-                text=True,
                 timeout=10,
             )
             files = []
