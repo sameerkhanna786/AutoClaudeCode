@@ -239,8 +239,13 @@ class NotificationManager:
 
         # Use the resolved IP in the URL to prevent DNS rebinding attacks
         # (where a second DNS lookup returns a different, private IP).
+        # Replace only the netloc hostname via urlparse/urlunparse to avoid
+        # corrupting paths that happen to contain the hostname string.
         if resolved_ip and hostname:
-            safe_url = webhook.url.replace(hostname, resolved_ip, 1)
+            safe_parsed = parsed_url._replace(
+                netloc=parsed_url.netloc.replace(hostname, resolved_ip, 1),
+            )
+            safe_url = safe_parsed.geturl()
         else:
             safe_url = webhook.url
 

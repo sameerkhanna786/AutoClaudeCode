@@ -558,6 +558,23 @@ class Orchestrator:
             except OSError as e:
                 logger.warning("Failed to backup %s: %s", py_file.name, e)
 
+    def _shutdown_executor(self, wait: bool = False) -> None:
+        """Shut down the current Claude executor and track it for later cleanup.
+
+        When wait=False (timeout scenario), the old executor is kept in a list
+        so its threads can be joined during orchestrator shutdown, preventing
+        thread leaks from accumulating across repeated timeouts.
+        """
+        if self._claude_executor is None:
+            return
+        old = self._claude_executor
+        self._claude_executor = None
+        old.shutdown(wait=wait)
+        if not wait:
+            if not hasattr(self, "_leaked_executors"):
+                self._leaked_executors: List[concurrent.futures.ThreadPoolExecutor] = []
+            self._leaked_executors.append(old)
+
     def _run_claude_with_timeout(self, prompt: str, runner: Optional[ProviderRunner] = None) -> ClaudeResult:
         """Run Claude CLI with a cycle-level timeout safety net.
 
@@ -592,8 +609,7 @@ class Orchestrator:
                         "continuing without blocking"
                     )
                 # Replace the executor since the stuck thread may hold it
-                self._claude_executor.shutdown(wait=False)
-                self._claude_executor = None
+                self._shutdown_executor(wait=False)
                 return ClaudeResult(
                     success=False,
                     error=f"Cycle timeout after {timeout}s (Claude CLI hung)",
@@ -606,8 +622,7 @@ class Orchestrator:
                 return future.result(timeout=timeout)
             except concurrent.futures.TimeoutError:
                 actual_runner.terminate()
-                self._claude_executor.shutdown(wait=False)
-                self._claude_executor = None
+                self._shutdown_executor(wait=False)
                 return ClaudeResult(
                     success=False,
                     error=f"Cycle timeout after {timeout}s (Claude CLI hung)",
@@ -1113,5 +1128,11 @@ class Orchestrator:
             if self._claude_executor is not None:
                 self._claude_executor.shutdown(wait=False)
                 self._claude_executor = None
+            # Clean up any executors leaked by timeout-triggered replacements
+            for leaked in getattr(self, "_leaked_executors", []):
+                try:
+                    leaked.shutdown(wait=False)
+                except Exception:
+                    pass
             self.notifier.shutdown()
             self.safety.release_lock()

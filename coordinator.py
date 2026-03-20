@@ -745,10 +745,20 @@ class ParallelCoordinator:
         thread.join(timeout=timeout)
         if thread.is_alive():
             cancel.set()
-            logger.warning(
-                "Worker %d: cleanup timed out after %.0fs, signalled cancellation",
-                worker.worker_id, timeout,
-            )
+            # Give the thread a short window to respond to cancellation
+            # before abandoning it, so it can release git locks cleanly.
+            thread.join(timeout=5)
+            if thread.is_alive():
+                logger.warning(
+                    "Worker %d: cleanup timed out after %.0fs and did not "
+                    "respond to cancellation within 5s",
+                    worker.worker_id, timeout,
+                )
+            else:
+                logger.info(
+                    "Worker %d: cleanup cancelled after %.0fs timeout",
+                    worker.worker_id, timeout,
+                )
 
     def _cleanup_all_worktrees(self) -> None:
         """Remove all worktree directories on shutdown.

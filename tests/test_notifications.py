@@ -663,5 +663,65 @@ class TestNotificationManagerDel(unittest.TestCase):
         mgr.__del__()
 
 
+class TestDnsRebindingUrlReplacement(unittest.TestCase):
+    """URL hostname-to-IP replacement must only modify the netloc, not the path."""
+
+    def test_hostname_in_path_not_corrupted(self):
+        """When hostname appears in the URL path, only the netloc is replaced."""
+        from notifications import NotificationManager
+        webhook = WebhookConfig(
+            url="https://hooks.slack.com/services/slack.com/abc",
+            type="generic",
+            name="test",
+        )
+        config = _make_config(webhooks=[webhook])
+        mgr = NotificationManager(config)
+
+        # Call _send_webhook with a mocked urlopen and IP resolution
+        with patch("notifications._resolve_and_check_ip", return_value=(False, "1.2.3.4")), \
+             patch("notifications.urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value.__enter__ = MagicMock(
+                return_value=MagicMock(read=MagicMock(return_value=b""))
+            )
+            mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+            mgr._send_webhook(webhook, "test_event", {})
+
+            # The URL passed to urlopen should have the IP only in the netloc
+            req = mock_urlopen.call_args[0][0]
+            url = req.full_url
+            # The path should still contain "slack.com" unchanged
+            self.assertIn("/services/slack.com/abc", url)
+            # The netloc should have the resolved IP
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            self.assertIn("1.2.3.4", parsed.netloc)
+
+    def test_simple_url_replacement_works(self):
+        """Standard URLs (hostname not in path) still work correctly."""
+        from notifications import NotificationManager
+        webhook = WebhookConfig(
+            url="https://hooks.example.com/webhook",
+            type="generic",
+            name="test",
+        )
+        config = _make_config(webhooks=[webhook])
+        mgr = NotificationManager(config)
+
+        with patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34")), \
+             patch("notifications.urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value.__enter__ = MagicMock(
+                return_value=MagicMock(read=MagicMock(return_value=b""))
+            )
+            mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+            mgr._send_webhook(webhook, "test_event", {})
+
+            req = mock_urlopen.call_args[0][0]
+            url = req.full_url
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            self.assertIn("93.184.216.34", parsed.netloc)
+            self.assertEqual(parsed.path, "/webhook")
+
+
 if __name__ == "__main__":
     unittest.main()
