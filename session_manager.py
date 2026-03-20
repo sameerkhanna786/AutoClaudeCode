@@ -19,6 +19,15 @@ logger = logging.getLogger(__name__)
 SESSION_FILE = "session.json"
 
 
+def _is_int(value: str) -> bool:
+    """Check if a string can be converted to an integer."""
+    try:
+        int(value)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 @dataclass
 class SessionState:
     """Persistent session state for crash recovery."""
@@ -40,7 +49,11 @@ class SessionState:
             started_at=data.get("started_at", 0.0),
             tasks=data.get("tasks", []),
             completed_task_ids=data.get("completed_task_ids", []),
-            worker_states={int(k): v for k, v in data.get("worker_states", {}).items()},
+            worker_states={
+                int(k): v
+                for k, v in data.get("worker_states", {}).items()
+                if _is_int(k)
+            },
             total_cost_usd=data.get("total_cost_usd", 0.0),
             phase=data.get("phase", "starting"),
         )

@@ -45,6 +45,7 @@ class CycleStateWriter:
         self._path = Path(state_dir) / filename
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        self._current: Optional[CycleState] = None
 
     @property
     def path(self) -> str:
@@ -56,6 +57,7 @@ class CycleStateWriter:
         Acquires self._lock to prevent races with concurrent update() calls.
         """
         with self._lock:
+            self._current = state
             self._write_unlocked(state)
 
     def _write_unlocked(self, state: CycleState) -> None:
@@ -85,20 +87,24 @@ class CycleStateWriter:
 
     def clear(self) -> None:
         """Remove the cycle state file (cycle completed)."""
+        self._current = None
         try:
             self._path.unlink(missing_ok=True)
         except OSError as e:
             logger.warning("Failed to clear cycle state: %s", e)
 
     def update(self, **kwargs: Any) -> None:
-        """Read current state, merge kwargs, and write back."""
+        """Update in-memory state, merge kwargs, and write back.
+
+        Uses the cached in-memory state instead of reading from disk,
+        avoiding unnecessary file I/O on every update call.
+        """
         with self._lock:
-            current = read_cycle_state(str(self._path.parent), filename=self._path.name)
-            if current is None:
-                current = CycleState()
+            current = self._current if self._current is not None else CycleState()
             for k, v in kwargs.items():
                 if hasattr(current, k):
                     setattr(current, k, v)
+            self._current = current
             self._write_unlocked(current)
 
 

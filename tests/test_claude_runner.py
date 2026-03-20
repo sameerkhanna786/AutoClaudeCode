@@ -1028,3 +1028,30 @@ class TestRateLimitPatternSpecificity:
         result = runner.run("Fix the bug")
         assert result.success is True
         mock_sleep.assert_called_once_with(5)
+
+
+class TestCBErrorPatternsNoFalsePositives:
+    """Circuit breaker error patterns should not match benign text."""
+
+    def test_benign_text_with_number_500_not_matched(self):
+        from claude_runner import _CB_ERROR_PATTERNS
+        benign = "processing 5000 items on port 5032"
+        lower = benign.lower()
+        for pat in _CB_ERROR_PATTERNS:
+            assert pat not in lower, (
+                f"Pattern {pat!r} falsely matches benign text: {benign!r}"
+            )
+
+    def test_real_http_500_matched(self):
+        from claude_runner import _CB_ERROR_PATTERNS
+        error = "HTTP 500 internal server error"
+        lower = error.lower()
+        matched = any(pat in lower for pat in _CB_ERROR_PATTERNS)
+        assert matched, "Real HTTP 500 error should be matched"
+
+    def test_real_rate_limit_matched(self):
+        from claude_runner import _CB_ERROR_PATTERNS
+        error = "rate limit exceeded, retry after 30s"
+        lower = error.lower()
+        matched = any(pat in lower for pat in _CB_ERROR_PATTERNS)
+        assert matched, "Rate limit error should be matched"

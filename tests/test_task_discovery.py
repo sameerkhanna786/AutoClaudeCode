@@ -1039,3 +1039,27 @@ class TestExtractJsonText:
         raw = "no json here at all"
         result = _extract_json_text(raw)
         assert result == raw
+
+
+class TestTaskKeyCaching:
+    """task_key should be cached after first computation."""
+
+    def test_task_key_is_cached(self):
+        """Accessing task_key multiple times should return the same cached value."""
+        task = Task(
+            description="Fix bug in module.py",
+            priority=3,
+            source="claude_idea",
+        )
+        key1 = task.task_key
+        key2 = task.task_key
+        assert key1 == key2
+        # The cached value should be stored in _task_key_cache
+        assert hasattr(task, "_task_key_cache")
+        assert task._task_key_cache == key1
+
+    def test_task_key_stable_for_same_description(self):
+        """Two tasks with same description/source should have same key."""
+        t1 = Task(description="Fix foo.py", priority=3, source="claude_idea")
+        t2 = Task(description="Fix foo.py", priority=3, source="claude_idea")
+        assert t1.task_key == t2.task_key

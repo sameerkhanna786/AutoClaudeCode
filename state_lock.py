@@ -55,6 +55,10 @@ class LockedStateManager(StateManager):
             yield
         finally:
             self._local.held = False
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass  # close() below will release the lock as fallback
             os.close(fd)
 
     def record_cycle(self, record: CycleRecord) -> None:

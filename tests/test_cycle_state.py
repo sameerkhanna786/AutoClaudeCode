@@ -264,3 +264,33 @@ class TestWriteUnlockedExceptionCleanup:
         from cycle_state import CycleStateWriter
         source = inspect.getsource(CycleStateWriter._write_unlocked)
         assert 'encoding="utf-8"' in source or "encoding='utf-8'" in source
+
+
+class TestCycleStateUpdateSkipsDiskRead:
+    """update() should use in-memory state instead of reading from disk."""
+
+    def test_update_uses_cached_state(self, tmp_path):
+        """After write(), subsequent update() should not read from disk."""
+        writer = CycleStateWriter(str(tmp_path))
+        state = CycleState(phase="executing", task_description="Test")
+        writer.write(state)
+
+        # Delete the file on disk to prove update uses in-memory state
+        cycle_path = tmp_path / "current_cycle.json"
+        cycle_path.unlink()
+
+        # update() should still work using cached state
+        writer.update(phase="validating")
+        # File should be re-created from in-memory state
+        assert cycle_path.exists()
+        result = read_cycle_state(str(tmp_path))
+        assert result.phase == "validating"
+        assert result.task_description == "Test"
+
+    def test_update_without_prior_write_creates_default(self, tmp_path):
+        """update() with no prior write should create a default state."""
+        writer = CycleStateWriter(str(tmp_path))
+        writer.update(phase="starting")
+        result = read_cycle_state(str(tmp_path))
+        assert result is not None
+        assert result.phase == "starting"

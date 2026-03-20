@@ -1847,3 +1847,18 @@ class TestEarlyTerminationConsistency:
         files = state_mgr.get_productive_files(lookback_seconds=3600)
         assert "old_file.py" not in files
         assert "recent_file.py" in files
+
+
+class TestLoadHistorySingleStat:
+    """Verify _load_history uses a single stat() call for mtime+size."""
+
+    def test_stat_result_reused_for_mtime_and_size(self, state_mgr, tmp_path):
+        """The main code path should call stat() once and reuse the result."""
+        import inspect
+        source = inspect.getsource(type(state_mgr)._load_history)
+        # Find the main stat assignment — should store result in a variable
+        assert "st = self.history_file.stat()" in source, (
+            "Expected stat() result to be stored in a variable 'st'"
+        )
+        assert "st.st_mtime" in source, "Expected st.st_mtime reuse"
+        assert "st.st_size" in source, "Expected st.st_size reuse"

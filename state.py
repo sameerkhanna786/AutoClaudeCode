@@ -101,10 +101,11 @@ class StateManager:
             self._cache_mtime = 0.0
             return []
         try:
-            current_mtime = self.history_file.stat().st_mtime
+            st = self.history_file.stat()
+            current_mtime = st.st_mtime
             if self._cache is not None and current_mtime == self._cache_mtime:
                 return list(self._cache)
-            file_size = self.history_file.stat().st_size
+            file_size = st.st_size
             if file_size > self._MAX_HISTORY_FILE_BYTES:
                 logger.error(
                     "History file too large (%d bytes, limit %d). "

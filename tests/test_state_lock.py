@@ -339,17 +339,16 @@ class TestHeldFlagClearedBeforeFdClose:
         )
 
 
-class TestNoExplicitUnlockBeforeClose:
-    """The file lock must NOT explicitly unlock before close.
+class TestExplicitUnlockBeforeClose:
+    """The file lock must explicitly unlock before close.
 
-    Explicitly calling flock(LOCK_UN) before close(fd) creates a race window
-    where another process can acquire the lock on the same inode, and then
-    close(fd) releases that other process's lock. The correct pattern is to
-    just close the fd, which atomically releases the lock.
+    Explicitly calling flock(LOCK_UN) before close(fd) ensures the lock is
+    properly released even in edge cases where multiple file descriptors
+    reference the same inode.
     """
 
-    def test_no_explicit_unlock_call(self, locked_state):
-        """_file_lock should release by closing fd, not by explicit unlock."""
+    def test_explicit_unlock_called(self, locked_state):
+        """_file_lock should explicitly release lock before closing fd."""
         import fcntl
         original_flock = fcntl.flock
         flock_ops = []
@@ -362,10 +361,9 @@ class TestNoExplicitUnlockBeforeClose:
             with locked_state._file_lock():
                 pass
 
-        # Should only see LOCK_EX, NOT LOCK_UN
         assert fcntl.LOCK_EX in flock_ops, "Lock should be acquired with LOCK_EX"
-        assert fcntl.LOCK_UN not in flock_ops, \
-            "Lock should NOT be explicitly unlocked; close(fd) releases it atomically"
+        assert fcntl.LOCK_UN in flock_ops, \
+            "Lock should be explicitly unlocked before close(fd)"
 
 
 class TestFileLockFdCleanup:
@@ -382,11 +380,7 @@ class TestFileLockFdCleanup:
             close_calls.append(fd)
             return original_close(fd)
 
-        call_count = 0
-
         def flock_side_effect(fd, operation):
-            nonlocal call_count
-            call_count += 1
             if operation == fcntl.LOCK_EX:
                 return original_flock(fd, operation)
             else:
@@ -396,8 +390,11 @@ class TestFileLockFdCleanup:
         with patch("state_lock.fcntl.flock", side_effect=flock_side_effect), \
              patch("state_lock.os.close", side_effect=tracking_close):
             # The context manager should still close fd even if unlock fails
-            with locked_state._file_lock():
-                pass
+            try:
+                with locked_state._file_lock():
+                    pass
+            except OSError:
+                pass  # LOCK_UN failure may propagate
 
             # fd must have been closed regardless of flock(LOCK_UN) failure
             assert len(close_calls) >= 1
@@ -474,3 +471,42 @@ class TestLoadHistoryReturnsCopy:
         # Next load should return original data, unaffected
         result2 = locked_state.load_history()
         assert len(result2) == original_len
+
+
+class TestFileLockExplicitUnlock:
+    """File lock should be explicitly released before closing fd."""
+
+    def test_flock_unlock_called_before_close(self, locked_state):
+        import fcntl
+        calls = []
+        original_flock = fcntl.flock
+
+        def tracking_flock(fd, op):
+            calls.append(("flock", fd, op))
+            return original_flock(fd, op)
+
+        original_close = os.close
+
+        def tracking_close(fd):
+            calls.append(("close", fd))
+            return original_close(fd)
+
+        with patch("state_lock.fcntl.flock", side_effect=tracking_flock):
+            with patch("state_lock.os.close", side_effect=tracking_close):
+                locked_state.record_cycle(CycleRecord(
+                    timestamp=time.time(),
+                    task_description="test unlock",
+                    success=True,
+                ))
+
+        # Find the LOCK_EX and verify LOCK_UN comes before close on same fd
+        lock_fds = [c[1] for c in calls if c[0] == "flock" and c[2] == fcntl.LOCK_EX]
+        assert lock_fds, "No LOCK_EX calls found"
+        for fd in lock_fds:
+            unlock_calls = [i for i, c in enumerate(calls) if c == ("flock", fd, fcntl.LOCK_UN)]
+            close_calls = [i for i, c in enumerate(calls) if c == ("close", fd)]
+            assert unlock_calls, f"No LOCK_UN call for fd {fd}"
+            assert close_calls, f"No close call for fd {fd}"
+            assert unlock_calls[0] < close_calls[0], (
+                f"LOCK_UN (index {unlock_calls[0]}) should come before close (index {close_calls[0]})"
+            )

@@ -340,5 +340,35 @@ class TestSaveSessionFdCleanup(unittest.TestCase):
             self.assertGreaterEqual(len(close_calls), 1)
 
 
+class TestSessionStateCorruptWorkerKeys(unittest.TestCase):
+    """from_dict should handle non-integer worker_states keys gracefully."""
+
+    def test_non_integer_keys_skipped(self):
+        data = {
+            "session_id": "test",
+            "worker_states": {"0": "idle", "bad_key": "broken", "1": "busy"},
+        }
+        state = SessionState.from_dict(data)
+        assert 0 in state.worker_states
+        assert 1 in state.worker_states
+        assert len(state.worker_states) == 2
+
+    def test_all_corrupt_keys_produces_empty_dict(self):
+        data = {
+            "session_id": "test",
+            "worker_states": {"abc": "x", "def": "y"},
+        }
+        state = SessionState.from_dict(data)
+        assert state.worker_states == {}
+
+    def test_valid_keys_still_work(self):
+        data = {
+            "session_id": "test",
+            "worker_states": {"0": "idle", "2": "busy"},
+        }
+        state = SessionState.from_dict(data)
+        assert state.worker_states == {0: "idle", 2: "busy"}
+
+
 if __name__ == "__main__":
     unittest.main()

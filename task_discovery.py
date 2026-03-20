@@ -162,6 +162,7 @@ class Task:
     context: str = ""  # rich context: tracebacks, file snippets, error details
     task_id: str = ""
     depends_on: List[str] = field(default_factory=list)
+    _task_key_cache: Optional[str] = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         self.description = _sanitize_description(self.description)
@@ -173,6 +174,14 @@ class Task:
     @property
     def task_key(self) -> str:
         """Stable dedup key — same underlying issue produces the same key."""
+        if self._task_key_cache is not None:
+            return self._task_key_cache
+        result = self._compute_task_key()
+        self._task_key_cache = result
+        return result
+
+    def _compute_task_key(self) -> str:
+        """Compute the dedup key (called once, then cached)."""
         if self.source == "todo" and self.source_file:
             if self.line_number is not None:
                 return f"todo:{self.source_file}:{self.line_number}"
