@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from feedback import sanitize_feedback_content
 from process_utils import run_with_group_kill
 from telemetry import compute_metrics
 from task_queue import TaskApprovalQueue
@@ -1215,6 +1216,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if ".." in filename or "/" in filename:
                 self._send_error(400, "Invalid filename: path traversal not allowed")
                 return
+
+        # Sanitize content to prevent prompt injection (same filter as feedback.py)
+        content = sanitize_feedback_content(content)
+        if not content:
+            self._send_error(400, "content is empty after sanitization")
+            return
 
         if len(content) > MAX_FEEDBACK_CONTENT_SIZE:
             self._send_error(400, f"Content too large (max {MAX_FEEDBACK_CONTENT_SIZE // 1024}KB)")

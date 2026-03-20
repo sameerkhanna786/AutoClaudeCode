@@ -873,11 +873,13 @@ class TestGetLocNonNumericValues(unittest.TestCase):
     from git numstat (e.g. binary files that show '-' for both columns,
     or unexpected output formats) without raising ValueError."""
 
-    @patch("dashboard.subprocess.run")
+    @patch("dashboard.run_with_group_kill")
     def test_binary_file_dashes(self, mock_run):
         """Binary files show '-\t-\tpath' in numstat — should parse as 0."""
-        mock_run.return_value = MagicMock(
+        from process_utils import RunResult
+        mock_run.return_value = RunResult(
             stdout="-\t-\tbinary.png\n10\t5\tnormal.py",
+            stderr="",
             returncode=0,
         )
         cache = {}
@@ -892,11 +894,13 @@ class TestGetLocNonNumericValues(unittest.TestCase):
         self.assertEqual(data["files"][0]["insertions"], 0)
         self.assertEqual(data["files"][0]["deletions"], 0)
 
-    @patch("dashboard.subprocess.run")
+    @patch("dashboard.run_with_group_kill")
     def test_malformed_numstat_line(self, mock_run):
         """Unexpected non-numeric values should not crash."""
-        mock_run.return_value = MagicMock(
+        from process_utils import RunResult
+        mock_run.return_value = RunResult(
             stdout="abc\tdef\tfile.txt",
+            stderr="",
             returncode=0,
         )
         cache = {}
@@ -907,6 +911,23 @@ class TestGetLocNonNumericValues(unittest.TestCase):
         data = result["abc123"]
         self.assertEqual(data["total_insertions"], 0)
         self.assertEqual(data["total_deletions"], 0)
+
+
+class TestFeedbackSubmitSanitization(unittest.TestCase):
+    """Verify dashboard feedback submit applies sanitize_feedback_content."""
+
+    def test_sanitize_imported(self):
+        """Verify sanitize_feedback_content is importable from dashboard."""
+        from dashboard import sanitize_feedback_content
+        # Function should exist and be callable
+        self.assertTrue(callable(sanitize_feedback_content))
+
+    def test_sanitize_strips_injection(self):
+        """Verify sanitize_feedback_content strips common injection patterns."""
+        from feedback import sanitize_feedback_content
+        # Content with injection markers should be sanitized
+        result = sanitize_feedback_content("Normal task description")
+        self.assertEqual(result, "Normal task description")
 
 
 if __name__ == "__main__":

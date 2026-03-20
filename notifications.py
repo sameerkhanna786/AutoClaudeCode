@@ -40,6 +40,11 @@ def _resolve_and_check_ip(hostname: str) -> "tuple[bool, str]":
             addr = ipaddress.ip_address(ip_str)
         except ValueError:
             continue
+        # Check IPv6-mapped IPv4 addresses (e.g. ::ffff:127.0.0.1)
+        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+            mapped = addr.ipv4_mapped
+            if mapped.is_private or mapped.is_loopback or mapped.is_link_local or mapped.is_reserved:
+                return True, ip_str
         if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
             return True, ip_str
     return False, resolved_ip

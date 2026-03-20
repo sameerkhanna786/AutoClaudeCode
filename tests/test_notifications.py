@@ -521,6 +521,37 @@ class TestResolveAndCheckIp(unittest.TestCase):
         self.assertEqual(resolved_ip, "")
 
     @patch("notifications.socket.getaddrinfo")
+    def test_ipv6_mapped_ipv4_loopback_blocked(self, mock_getaddrinfo):
+        """IPv6-mapped IPv4 loopback (::ffff:127.0.0.1) must be blocked."""
+        from notifications import _resolve_and_check_ip
+        mock_getaddrinfo.return_value = [
+            (10, 1, 6, "", ("::ffff:127.0.0.1", 0, 0, 0)),
+        ]
+        is_private, resolved_ip = _resolve_and_check_ip("evil.com")
+        self.assertTrue(is_private)
+        self.assertEqual(resolved_ip, "::ffff:127.0.0.1")
+
+    @patch("notifications.socket.getaddrinfo")
+    def test_ipv6_mapped_ipv4_private_blocked(self, mock_getaddrinfo):
+        """IPv6-mapped IPv4 private (::ffff:192.168.1.1) must be blocked."""
+        from notifications import _resolve_and_check_ip
+        mock_getaddrinfo.return_value = [
+            (10, 1, 6, "", ("::ffff:192.168.1.1", 0, 0, 0)),
+        ]
+        is_private, resolved_ip = _resolve_and_check_ip("evil.com")
+        self.assertTrue(is_private)
+
+    @patch("notifications.socket.getaddrinfo")
+    def test_ipv6_mapped_ipv4_public_allowed(self, mock_getaddrinfo):
+        """IPv6-mapped IPv4 public (::ffff:8.8.8.8) should be allowed."""
+        from notifications import _resolve_and_check_ip
+        mock_getaddrinfo.return_value = [
+            (10, 1, 6, "", ("::ffff:8.8.8.8", 0, 0, 0)),
+        ]
+        is_private, resolved_ip = _resolve_and_check_ip("dns.google")
+        self.assertFalse(is_private)
+
+    @patch("notifications.socket.getaddrinfo")
     def test_backward_compatible_with_is_private_ip(self, mock_getaddrinfo):
         """_is_private_ip still works correctly using _resolve_and_check_ip."""
         from notifications import _is_private_ip
