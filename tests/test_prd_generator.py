@@ -332,5 +332,18 @@ class TestPrdNonAsciiEncoding(unittest.TestCase):
             self.assertIn("Ñoño", loaded["tasks"][0]["description"])
 
 
+class TestExportPrdAtomicWrite(unittest.TestCase):
+    """export_prd must use atomic write (tempfile + os.replace) to prevent corruption."""
+
+    def test_export_uses_atomic_write(self):
+        """export_prd should use os.replace for atomic writes, not plain write_text."""
+        import inspect
+        source = inspect.getsource(export_prd)
+        assert "os.replace" in source or "replace(" in source, (
+            "export_prd should use atomic write (tempfile + os.replace) "
+            "to prevent corruption on crash"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

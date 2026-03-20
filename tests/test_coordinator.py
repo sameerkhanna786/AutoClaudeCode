@@ -921,6 +921,51 @@ class TestPartitionTasksDependencyOptimization:
             mock_load.assert_called_once()
 
 
+class TestLogCycleSummaryAccuracy:
+    """_log_cycle_summary must reflect merge failures, not stale success status."""
+
+    def test_merge_failure_counted_as_failure(self, parallel_config):
+        """When _process_result reassigns result after merge failure,
+        _log_cycle_summary must see the updated failure status."""
+        from coordinator import ParallelCoordinator
+        coord = ParallelCoordinator.__new__(ParallelCoordinator)
+        coord.config = parallel_config
+        coord.state = MagicMock()
+        coord.feedback = MagicMock()
+        coord.git = MagicMock()
+        coord._consecutive_merge_failures = 0
+
+        task = Task(description="test task", priority=1, source="lint")
+        original_result = WorkerResult(
+            success=True,
+            branch_name="worker-1",
+            cost_usd=0.5,
+            tasks=[task],
+        )
+        mock_worker = MagicMock()
+        mock_worker.worker_id = 1
+        mock_worker.tasks = [task]
+
+        results = [(original_result, mock_worker)]
+
+        # Simulate merge failure
+        with patch.object(coord, "_merge_worker_branch", return_value=False):
+            coord._process_result(original_result, mock_worker)
+
+        # The results list still has the original tuple
+        # _log_cycle_summary should correctly count this as a failure
+        # after we fix it to use the recorded cycle data
+        coord._log_cycle_summary(results, time.time() - 10)
+
+        # Verify the cycle was recorded as a failure
+        record_call = coord.state.record_cycle.call_args
+        assert record_call is not None
+        recorded = record_call[0][0]
+        assert recorded.success is False, (
+            "_process_result should record the merge failure, not the original success"
+        )
+
+
 class TestMergeRollbackProtection:
     """Rollback failures after merge validation must be caught, not propagated."""
 

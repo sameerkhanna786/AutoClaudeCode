@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -158,6 +160,16 @@ def export_prd(prd: Dict[str, Any], output_path: str,
     else:
         content = yaml.dump(prd, default_flow_style=False, sort_keys=False)
 
-    path.write_text(content, encoding="utf-8")
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     logger.info("Exported PRD to %s (%s format, %d tasks)",
                 output_path, fmt, len(prd.get("tasks", [])))

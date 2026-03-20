@@ -202,6 +202,12 @@ class SafetyGuard:
             # it so release_lock() won't try to double-close.
             if self._lock_fd == fd:
                 self._lock_fd = None
+            # Remove from _active_guards if we were added before the failure.
+            with _active_guards_lock:
+                try:
+                    _active_guards.remove(self)
+                except ValueError:
+                    pass
             try:
                 os.close(fd)
             except OSError:

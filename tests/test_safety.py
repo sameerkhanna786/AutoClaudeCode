@@ -534,6 +534,26 @@ class TestActiveGuardsThreadSafety:
             assert g not in _active_guards
 
 
+class TestActiveGuardsCleanupOnFailure:
+    """_active_guards must be cleaned up if lock acquisition fails after append."""
+
+    def test_guard_removed_from_active_guards_on_ftruncate_failure(
+        self, tmp_path, default_config, state_mgr,
+    ):
+        """If os.ftruncate raises after _active_guards.append, guard must be removed."""
+        from safety import _active_guards
+        default_config.paths.lock_file = str(tmp_path / "fail_lock.pid")
+        g = SafetyGuard(default_config, state_mgr)
+
+        with patch("safety.os.ftruncate", side_effect=OSError("disk full")):
+            with pytest.raises(OSError, match="disk full"):
+                g.acquire_lock()
+
+        assert g not in _active_guards, (
+            "Guard should be removed from _active_guards when acquisition fails"
+        )
+
+
 class TestDiskSpaceOSError:
     """Tests for OSError handling in check_disk_space."""
 
