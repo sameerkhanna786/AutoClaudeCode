@@ -1000,3 +1000,16 @@ class TestReadFileSnippetPathTraversal:
 
         snippet = discovery._read_file_snippet("app.py", 1)
         assert "hello" in snippet
+
+    def test_discover_todos_early_exit_on_limit(self, tmp_path, default_config):
+        """TODO scan should stop scanning files once max_todo_tasks is reached."""
+        default_config.target_dir = str(tmp_path)
+        default_config.discovery.max_todo_tasks = 3
+        discovery = TaskDiscovery(default_config)
+
+        # Create many files, each with a TODO
+        for i in range(20):
+            (tmp_path / f"file_{i:02d}.py").write_text(f"# TODO: fix item {i}\n")
+
+        tasks = discovery._discover_todos()
+        assert len(tasks) == 3

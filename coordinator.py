@@ -604,16 +604,20 @@ class ParallelCoordinator:
             degradation: Pre-computed degradation result from _run_cycle.
                          Avoids redundant history loading and recomputation.
         """
-        # Filter out tasks with unmet dependencies
-        completed_keys = set()
-        try:
-            history = self.state.load_history()
-            for record in history:
-                if record.get("success"):
-                    for key in record.get("task_keys", []):
-                        completed_keys.add(key)
-        except Exception:
-            logger.warning("Failed to load history for dependency check; skipping dependency filtering", exc_info=True)
+        # Filter out tasks with unmet dependencies.
+        # Only load history if at least one task declares dependencies,
+        # avoiding unnecessary file I/O on every cycle.
+        has_deps = any(t.depends_on for t in tasks)
+        completed_keys: set = set()
+        if has_deps:
+            try:
+                history = self.state.load_history()
+                for record in history:
+                    if record.get("success"):
+                        for key in record.get("task_keys", []):
+                            completed_keys.add(key)
+            except Exception:
+                logger.warning("Failed to load history for dependency check; skipping dependency filtering", exc_info=True)
 
         eligible = []
         for t in tasks:

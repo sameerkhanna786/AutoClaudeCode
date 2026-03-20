@@ -235,20 +235,21 @@ class FeedbackManager:
                 # Use O_NOFOLLOW to atomically reject symlinks at the kernel
                 # level, preventing TOCTOU races between the is_symlink()
                 # check above and the actual file open.
+                # Read as bytes first, then decode with lossy fallback in a
+                # single pass to avoid re-reading the file on UnicodeDecodeError.
                 fd = os.open(str(fpath), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-                with os.fdopen(fd, 'r', encoding='utf-8') as f:
-                    content = f.read(MAX_FEEDBACK_CONTENT_LENGTH)
-            except UnicodeDecodeError:
-                logger.warning(
-                    "Feedback file %s is not valid UTF-8, attempting lossy decode",
-                    fpath,
-                )
                 try:
-                    raw = fpath.read_bytes()[:MAX_FEEDBACK_CONTENT_LENGTH]
+                    raw = os.read(fd, MAX_FEEDBACK_CONTENT_LENGTH)
+                finally:
+                    os.close(fd)
+                try:
+                    content = raw.decode('utf-8')
+                except UnicodeDecodeError:
+                    logger.warning(
+                        "Feedback file %s is not valid UTF-8, using lossy decode",
+                        fpath,
+                    )
                     content = raw.decode('utf-8', errors='replace')
-                except OSError as e:
-                    logger.warning("Failed to read feedback file %s: %s", fpath, e)
-                    continue
             except OSError as e:
                 logger.warning("Failed to read feedback file %s: %s", fpath, e)
                 continue

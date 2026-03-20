@@ -632,6 +632,7 @@ class TaskDiscovery:
         keyword_pat = r"^\s*(" + escaped + r")\b"
         keyword_re = re.compile(keyword_pat, re.IGNORECASE)
 
+        max_tasks = self.config.discovery.max_todo_tasks
         target = Path(self.target_dir)
         deadline = time.monotonic() + timeout
         timed_out = False
@@ -642,6 +643,10 @@ class TaskDiscovery:
                 timed_out = True
                 break
 
+            # Early exit when we already have enough tasks
+            if len(tasks) >= max_tasks:
+                break
+
             # Filter out excluded directories
             dirs[:] = [d for d in dirs if d not in exclude_dirs]
 
@@ -649,6 +654,10 @@ class TaskDiscovery:
                 # Check deadline periodically (every file)
                 if time.monotonic() > deadline:
                     timed_out = True
+                    break
+
+                # Stop scanning files once we have enough tasks
+                if len(tasks) >= max_tasks:
                     break
 
                 ext = Path(fname).suffix

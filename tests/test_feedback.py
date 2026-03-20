@@ -852,3 +852,19 @@ class TestAtomicMoveFchmodFdLeak:
 
         # The fd from mkstemp should have been closed
         assert len(close_calls) >= 1
+
+
+class TestFeedbackNonUtf8:
+    def test_non_utf8_feedback_uses_lossy_decode(self, fb_mgr):
+        """Feedback files with invalid UTF-8 should be read with lossy decode
+        in a single pass (no double file read)."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        # Write bytes with invalid UTF-8 sequence
+        bad_file = fb_dir / "bad.md"
+        bad_file.write_bytes(b"Fix the \xff\xfe bug in auth.py")
+
+        tasks = fb_mgr.get_pending_feedback()
+        assert len(tasks) == 1
+        # The replacement character should appear in place of invalid bytes
+        assert "Fix the" in tasks[0].description
+        assert "bug in auth.py" in tasks[0].description

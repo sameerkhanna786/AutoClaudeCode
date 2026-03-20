@@ -261,7 +261,14 @@ class GitManager:
                 # Checkout only tracked files, respecting the rollback deadline
                 tracked_to_revert = sorted(files_to_revert - untracked)
                 if tracked_to_revert:
-                    remaining = max(1, int(deadline - time.monotonic()))
+                    remaining = int(deadline - time.monotonic())
+                    if remaining <= 0:
+                        logger.warning(
+                            "Rollback timeout: deadline exceeded before checkout "
+                            "(%d tracked files not reverted)",
+                            len(tracked_to_revert),
+                        )
+                        return
                     self._run("checkout", "--", *tracked_to_revert, check=False, timeout=remaining)
                 # Clean untracked files in the allowed set
                 reverted_count = 0

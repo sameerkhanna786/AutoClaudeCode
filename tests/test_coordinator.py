@@ -895,3 +895,27 @@ class TestCleanupAllWorktreesBranchDeletion:
             assert mock_del.call_count == 2
             mock_del.assert_any_call("auto-claude/123-0", force=True)
             mock_del.assert_any_call("auto-claude/456-1", force=True)
+
+
+class TestPartitionTasksDependencyOptimization:
+    def test_no_history_load_when_no_deps(self, parallel_config):
+        """_partition_tasks should skip history loading when no tasks have dependencies."""
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description="Lint fix", priority=3, source="lint"),
+            Task(description="Todo fix", priority=4, source="todo"),
+        ]
+        with patch.object(coord.state, "load_history") as mock_load:
+            coord._partition_tasks(tasks)
+            mock_load.assert_not_called()
+
+    def test_history_loaded_when_deps_present(self, parallel_config):
+        """_partition_tasks should load history when at least one task has dependencies."""
+        coord = ParallelCoordinator(parallel_config)
+        tasks = [
+            Task(description="Lint fix", priority=3, source="lint"),
+            Task(description="Depends task", priority=4, source="todo", depends_on=["key1"]),
+        ]
+        with patch.object(coord.state, "load_history", return_value=[]) as mock_load:
+            coord._partition_tasks(tasks)
+            mock_load.assert_called_once()

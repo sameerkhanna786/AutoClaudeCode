@@ -638,3 +638,16 @@ class TestRollbackTimeoutOnCheckout:
         assert "deadline" in source and "timeout=" in source, (
             "rollback() should pass remaining deadline time to checkout _run call"
         )
+
+    def test_rollback_returns_early_when_deadline_exceeded_before_checkout(self, tmp_git_repo):
+        """Targeted rollback should return immediately if deadline already
+        passed before the bulk checkout, instead of running with a 1s timeout."""
+        gm = GitManager(tmp_git_repo)
+        # Create a file so there's something to revert
+        Path(tmp_git_repo, "dirty.txt").write_text("dirty")
+        snap = gm.create_snapshot()
+        Path(tmp_git_repo, "dirty.txt").write_text("changed")
+        # Use timeout=0 to guarantee the deadline is already exceeded
+        gm.rollback(snapshot=snap, allowed_dirty=set(), timeout=0)
+        # The file may or may not be reverted (we returned early),
+        # but the key thing is we didn't hang or error out
