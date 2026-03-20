@@ -76,8 +76,14 @@ def run_with_group_kill(
             stderr=f"Failed to start process: {e}",
             timed_out=False,
         )
+    _MAX_OUTPUT = 1024 * 1024  # 1 MB — same limit used in the timeout path
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
+        # Truncate to prevent OOM when a process produces massive output
+        if len(stdout) > _MAX_OUTPUT:
+            stdout = stdout[:_MAX_OUTPUT]
+        if len(stderr) > _MAX_OUTPUT:
+            stderr = stderr[:_MAX_OUTPUT]
         return RunResult(
             returncode=proc.returncode,
             stdout=stdout,

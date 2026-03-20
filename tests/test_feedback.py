@@ -924,3 +924,30 @@ class TestDependsOnBracketParsing:
         assert len(tasks) == 1
         for dep in tasks[0].depends_on:
             assert not dep.endswith("]"), f"Bracket leaked into dependency name: {dep!r}"
+
+
+class TestRunPeriodicCleanup:
+    """Tests for the public run_periodic_cleanup method."""
+
+    def test_run_periodic_cleanup_removes_stale_claims(self, fb_mgr):
+        """run_periodic_cleanup should clean up stale .claimed files."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        claimed = fb_dir / "stale-task.md.claimed"
+        claimed.write_text("stale")
+        old_time = time.time() - 7200
+        os.utime(claimed, (old_time, old_time))
+        fb_mgr._last_cleanup_time = 0.0
+        fb_mgr.run_periodic_cleanup()
+        assert not claimed.exists()
+
+    def test_run_periodic_cleanup_rate_limited(self, fb_mgr):
+        """run_periodic_cleanup should not run if called within the hour."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        claimed = fb_dir / "task.md.claimed"
+        claimed.write_text("stale")
+        old_time = time.time() - 7200
+        os.utime(claimed, (old_time, old_time))
+        # Set last cleanup to now — should skip cleanup
+        fb_mgr._last_cleanup_time = time.time()
+        fb_mgr.run_periodic_cleanup()
+        assert claimed.exists()  # Not cleaned because rate-limited

@@ -702,5 +702,51 @@ class TestProviderRunnerCircuitBreaker(unittest.TestCase):
         self.assertFalse(runner.circuit_breaker.allow_request())
 
 
+class TestBoundedResponseRead(unittest.TestCase):
+    """HTTP response reads must pass a size limit to prevent OOM."""
+
+    @patch("urllib.request.urlopen")
+    def test_openai_read_passes_size_limit(self, mock_urlopen):
+        """OpenAI runner should call resp.read() with a max size argument."""
+        config = _make_config("openai")
+        response_data = {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(response_data).encode()
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        runner = OpenAIRunner(config)
+        runner._api_key = "test-key"
+        runner.run("Hello")
+
+        # Verify read() was called with a size limit (10 MB)
+        mock_response.read.assert_called_once_with(10 * 1024 * 1024)
+
+    @patch("urllib.request.urlopen")
+    def test_gemini_read_passes_size_limit(self, mock_urlopen):
+        """Gemini runner should call resp.read() with a max size argument."""
+        config = _make_config("gemini")
+        response_data = {
+            "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1},
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(response_data).encode()
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        runner = GeminiRunner(config)
+        runner._api_key = "test-key"
+        runner.run("Hello")
+
+        # Verify read() was called with a size limit (10 MB)
+        mock_response.read.assert_called_once_with(10 * 1024 * 1024)
+
+
 if __name__ == "__main__":
     unittest.main()

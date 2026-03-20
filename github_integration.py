@@ -74,9 +74,10 @@ class GitHubClient:
             },
         )
 
+        _MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                response_data = resp.read().decode("utf-8")
+                response_data = resp.read(_MAX_RESPONSE_BYTES).decode("utf-8")
                 if response_data:
                     return json.loads(response_data)
                 return {}

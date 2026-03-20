@@ -138,8 +138,9 @@ class OpenAIRunner:
                         "Authorization": f"Bearer {self._api_key}",
                     },
                 )
+                _MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB
                 with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                    response_data = json.loads(resp.read().decode("utf-8"))
+                    response_data = json.loads(resp.read(_MAX_RESPONSE_BYTES).decode("utf-8"))
                 break  # Success
 
             except urllib.error.HTTPError as e:
@@ -287,8 +288,9 @@ class GeminiRunner:
                         "x-goog-api-key": self._api_key,
                     },
                 )
+                _MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB
                 with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                    response_data = json.loads(resp.read().decode("utf-8"))
+                    response_data = json.loads(resp.read(_MAX_RESPONSE_BYTES).decode("utf-8"))
                 break  # Success
 
             except urllib.error.HTTPError as e:

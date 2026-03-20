@@ -171,5 +171,32 @@ class TestPlaintextTokenWarning(unittest.TestCase):
         mock_logger.warning.assert_not_called()
 
 
+class TestBoundedResponseRead(unittest.TestCase):
+    """GitHub API response reads must pass a size limit to prevent OOM."""
+
+    @patch("github_integration.urllib.request.urlopen")
+    def test_read_passes_size_limit(self, mock_urlopen):
+        """_request should call resp.read() with a max size argument."""
+        import json as _json
+        config = GitHubConfig(
+            enabled=True,
+            token="ghp_testtoken",
+            repo_owner="test",
+            repo_name="repo",
+        )
+        client = GitHubClient(config)
+
+        mock_response = MagicMock()
+        mock_response.read.return_value = _json.dumps({"id": 1}).encode("utf-8")
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        client._request("GET", "/repos/test/repo")
+
+        # Verify read() was called with a size limit (10 MB)
+        mock_response.read.assert_called_once_with(10 * 1024 * 1024)
+
+
 if __name__ == "__main__":
     unittest.main()

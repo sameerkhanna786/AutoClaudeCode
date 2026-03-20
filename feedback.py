@@ -310,14 +310,23 @@ class FeedbackManager:
             tasks.append(task)
 
         # Clean up old done/failed files and stale claims (at most once per hour)
+        self.run_periodic_cleanup()
+
+        return tasks
+
+    def run_periodic_cleanup(self) -> None:
+        """Run periodic cleanup of old done/failed files and stale claims.
+
+        Rate-limited to at most once per hour. Safe to call from any code
+        path (not only get_pending_feedback) so stale claims are cleaned
+        even when the orchestrator only runs auto-discovered tasks.
+        """
         now = time.time()
         if now - self._last_cleanup_time > 3600:
             self._cleanup_old_files(self.done_dir)
             self._cleanup_old_files(self.failed_dir)
             self._cleanup_stale_claims()
             self._last_cleanup_time = now
-
-        return tasks
 
     def _cleanup_old_files(self, directory: Path, max_age_days: int = 7) -> None:
         """Remove files older than max_age_days from a directory."""
