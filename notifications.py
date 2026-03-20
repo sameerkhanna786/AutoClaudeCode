@@ -244,14 +244,23 @@ class NotificationManager:
 
         # Use the resolved IP in the URL to prevent DNS rebinding attacks
         # (where a second DNS lookup returns a different, private IP).
-        # Replace only the netloc hostname via urlparse/urlunparse to avoid
-        # corrupting paths that happen to contain the hostname string.
+        # Reconstruct the netloc from parsed components instead of using
+        # string replace, which could corrupt auth info if the hostname
+        # string appears in the username or password portion of the URL.
         if resolved_ip and hostname:
             # IPv6 addresses must be wrapped in brackets in URL netloc
             display_ip = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
-            safe_parsed = parsed_url._replace(
-                netloc=parsed_url.netloc.replace(hostname, display_ip, 1),
-            )
+            # Reconstruct netloc: [user[:password]@]host[:port]
+            new_host = display_ip
+            if parsed_url.port:
+                new_host = f"{display_ip}:{parsed_url.port}"
+            auth = ""
+            if parsed_url.username:
+                auth = parsed_url.username
+                if parsed_url.password:
+                    auth += f":{parsed_url.password}"
+                auth += "@"
+            safe_parsed = parsed_url._replace(netloc=f"{auth}{new_host}")
             safe_url = safe_parsed.geturl()
         else:
             safe_url = webhook.url

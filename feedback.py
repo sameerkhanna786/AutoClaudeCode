@@ -334,16 +334,16 @@ class FeedbackManager:
         if not directory.exists():
             return
         try:
-            entries = list(directory.iterdir())
+            with os.scandir(str(directory)) as entries:
+                for entry in entries:
+                    if entry.is_file() and entry.name != ".gitkeep":
+                        try:
+                            if entry.stat().st_mtime < cutoff:
+                                Path(entry.path).unlink()
+                        except OSError:
+                            pass
         except OSError:
             return
-        for fpath in entries:
-            if fpath.is_file() and fpath.name != ".gitkeep":
-                try:
-                    if fpath.stat().st_mtime < cutoff:
-                        fpath.unlink()
-                except OSError:
-                    pass
 
     def _cleanup_stale_claims(self, max_age_seconds: int = 3600) -> None:
         """Remove .claimed files older than max_age_seconds.
@@ -355,17 +355,17 @@ class FeedbackManager:
             return
         cutoff = time.time() - max_age_seconds
         try:
-            entries = list(self.feedback_dir.iterdir())
+            with os.scandir(str(self.feedback_dir)) as entries:
+                for entry in entries:
+                    if entry.is_file() and entry.name.endswith(".claimed"):
+                        try:
+                            if entry.stat().st_mtime < cutoff:
+                                logger.warning("Removing stale claimed file: %s", entry.name)
+                                Path(entry.path).unlink()
+                        except OSError:
+                            pass
         except OSError:
             return
-        for fpath in entries:
-            if fpath.is_file() and fpath.name.endswith(".claimed"):
-                try:
-                    if fpath.stat().st_mtime < cutoff:
-                        logger.warning("Removing stale claimed file: %s", fpath.name)
-                        fpath.unlink()
-                except OSError:
-                    pass
 
     def _extract_priority(self, filename: str) -> int:
         """Extract priority from filename prefix number. Default is 1."""

@@ -233,7 +233,7 @@ class TestErrorBodyReadBounded(unittest.TestCase):
         args = mock_error_fp.read.call_args
         assert args is not None
         assert len(args[0]) > 0, "read() must be called with a size limit"
-        assert args[0][0] == 1024 * 1024  # 1 MB
+        assert args[0][0] == 8192  # 8 KB
 
 
 if __name__ == "__main__":

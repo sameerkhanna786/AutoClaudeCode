@@ -271,11 +271,12 @@ class StateManager:
                     "Disk full: unable to save cycle history. "
                     "Cycle data will be lost. Free disk space to resume normal operation."
                 )
-                # Invalidate cache so next _load_history() re-reads from
-                # disk rather than trusting stale in-memory data that was
-                # never persisted.
-                self._cache = None
-                self._cache_mtime = 0.0
+                # Keep the existing cache intact: since the write failed
+                # before os.replace, the on-disk file is unchanged and the
+                # cache still matches it.  Invalidating would force a
+                # re-read; if that also fails the fallback returns [],
+                # which could cause the next successful record_cycle to
+                # overwrite the entire history with a single entry.
                 return
             raise
         except Exception:

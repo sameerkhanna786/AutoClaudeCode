@@ -907,5 +907,101 @@ class TestGenericPayloadNLSummary(unittest.TestCase):
         self.assertNotIn("summary", payload)
 
 
+class TestNetlocAuthPreservation(unittest.TestCase):
+    """URL hostname replacement must not corrupt auth credentials in netloc."""
+
+    def test_hostname_in_password_not_corrupted(self):
+        """When password contains the hostname string, only the host is replaced."""
+        from notifications import NotificationManager
+        # URL with auth: user:example.com@example.com/path
+        webhook = WebhookConfig(
+            url="https://user:example.com@example.com/webhook",
+            type="generic",
+            name="test",
+        )
+        config = _make_config(webhooks=[webhook])
+        mgr = NotificationManager(config)
+
+        with patch("notifications._resolve_and_check_ip", return_value=(False, "1.2.3.4")), \
+             patch("notifications.urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value.__enter__ = MagicMock(
+                return_value=MagicMock(read=MagicMock(return_value=b""))
+            )
+            mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+            mgr._send_webhook(webhook, "test_event", {})
+
+            req = mock_urlopen.call_args[0][0]
+            url = req.full_url
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            # The host should be the resolved IP
+            self.assertEqual(parsed.hostname, "1.2.3.4")
+            # The password should still be "example.com" (not replaced)
+            self.assertEqual(parsed.password, "example.com")
+            self.assertEqual(parsed.username, "user")
+
+    def test_url_with_port_preserved(self):
+        """Port number must be preserved when replacing hostname with IP."""
+        from notifications import NotificationManager
+        webhook = WebhookConfig(
+            url="https://hooks.example.com:8443/webhook",
+            type="generic",
+            name="test",
+        )
+        config = _make_config(webhooks=[webhook])
+        mgr = NotificationManager(config)
+
+        with patch("notifications._resolve_and_check_ip", return_value=(False, "1.2.3.4")), \
+             patch("notifications.urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value.__enter__ = MagicMock(
+                return_value=MagicMock(read=MagicMock(return_value=b""))
+            )
+            mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+            mgr._send_webhook(webhook, "test_event", {})
+
+            req = mock_urlopen.call_args[0][0]
+            url = req.full_url
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            self.assertEqual(parsed.hostname, "1.2.3.4")
+            self.assertEqual(parsed.port, 8443)
+
+
+class TestProviderErrorBodyBounded(unittest.TestCase):
+    """Provider runner error body reads must be bounded."""
+
+    def test_openai_error_body_read_bounded(self):
+        """OpenAI HTTPError body should be read with a size limit."""
+        import urllib.error
+        from provider_runner import OpenAIRunner
+
+        config = MagicMock()
+        config.claude.model = "gpt-4"
+        config.claude.resolved_model = ""
+        config.claude.timeout_seconds = 30
+        config.claude.api_key_env = ""
+        config.claude.provider = "openai"
+        config.pricing.cost_per_million_input_tokens = {"sonnet": 3.0}
+        config.pricing.output_cost_multiplier = 5.0
+
+        runner = OpenAIRunner(config)
+        runner._api_key = "test-key"
+
+        mock_error = urllib.error.HTTPError(
+            url="https://api.openai.com/v1/chat/completions",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=None,
+        )
+        mock_error.read = MagicMock(return_value=b"error body")
+
+        with patch("provider_runner.urllib.request.urlopen", side_effect=mock_error):
+            result = runner.run("test")
+
+        # Verify read was called with a size limit (not unlimited)
+        mock_error.read.assert_called_once_with(512)
+
+
 if __name__ == "__main__":
     unittest.main()

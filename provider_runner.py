@@ -146,7 +146,7 @@ class OpenAIRunner:
             except urllib.error.HTTPError as e:
                 body = ""
                 try:
-                    body = e.read().decode("utf-8")[:500]
+                    body = e.read(512).decode("utf-8")
                 except Exception:
                     pass
                 last_error = self._sanitize_error(f"OpenAI API error {e.code}: {body}")
@@ -296,7 +296,7 @@ class GeminiRunner:
             except urllib.error.HTTPError as e:
                 body = ""
                 try:
-                    body = e.read().decode("utf-8")[:500]
+                    body = e.read(512).decode("utf-8")
                 except Exception:
                     pass
                 last_error = self._sanitize_error(f"Gemini API error {e.code}: {body}")

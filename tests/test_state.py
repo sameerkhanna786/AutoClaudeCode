@@ -740,8 +740,8 @@ class TestSaveHistoryENOSPC:
             with pytest.raises(OSError, match="Permission denied"):
                 state_mgr._save_history([{"test": True}])
 
-    def test_save_history_enospc_invalidates_cache(self, state_mgr):
-        """ENOSPC must invalidate the in-memory cache to prevent stale reads."""
+    def test_save_history_enospc_preserves_cache(self, state_mgr):
+        """ENOSPC must preserve cache to prevent history loss on next load failure."""
         # Prime the cache with some data
         state_mgr._cache = [{"old": "data"}]
         state_mgr._cache_mtime = 12345.0
@@ -750,9 +750,12 @@ class TestSaveHistoryENOSPC:
         with patch("state.os.replace", side_effect=enospc_err):
             state_mgr._save_history([{"new": "data"}])
 
-        # Cache must be invalidated so next _load_history re-reads from disk
-        assert state_mgr._cache is None
-        assert state_mgr._cache_mtime == 0.0
+        # Cache must be preserved: the write failed so the on-disk file is
+        # unchanged and the cache still matches it.  Invalidating would risk
+        # returning [] if the next disk read also fails, which could cause
+        # record_cycle to overwrite history with a single entry.
+        assert state_mgr._cache == [{"old": "data"}]
+        assert state_mgr._cache_mtime == 12345.0
 
 
 class TestDiskSpacePreCheck:
