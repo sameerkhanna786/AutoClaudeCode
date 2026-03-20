@@ -94,11 +94,13 @@ def run_with_group_kill(
             partial_stdout = remaining_out or ""
             partial_stderr = remaining_err or ""
         except (subprocess.TimeoutExpired, OSError, ValueError):
-            # Process may already be dead or pipes closed
+            # Process may already be dead or pipes closed.
+            # Limit read size to prevent OOM on large output buffers.
+            _MAX_PARTIAL_READ = 1024 * 1024  # 1 MB
             for stream_name, stream in [("stdout", proc.stdout), ("stderr", proc.stderr)]:
                 if stream is not None:
                     try:
-                        data = stream.read()
+                        data = stream.read(_MAX_PARTIAL_READ)
                         if data:
                             if stream_name == "stdout":
                                 partial_stdout = data

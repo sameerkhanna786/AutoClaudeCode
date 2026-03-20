@@ -294,14 +294,22 @@ class StateManager:
         )
 
     def was_recently_attempted(self, task_description: str, lookback_seconds: int = 3600, task_key: str = "") -> bool:
-        """Check if a task was attempted in the last lookback_seconds."""
+        """Check if a task was attempted in the last lookback_seconds.
+
+        Iterates in reverse since recent records are at the end.
+        Stops early after seeing several consecutive old records,
+        tolerating minor timestamp disorder from concurrent writes.
+        """
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
-        # Scan all records for robustness with unordered timestamps
-        # (parallel workers may record cycles slightly out of order).
+        consecutive_old = 0
         for r in reversed(records):
             if r.get("timestamp", 0) < cutoff:
+                consecutive_old += 1
+                if consecutive_old >= 5:
+                    break
                 continue
+            consecutive_old = 0
             if r.get("task_description") == task_description:
                 return True
             if task_description in r.get("task_descriptions", []):

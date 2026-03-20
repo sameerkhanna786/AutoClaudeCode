@@ -483,7 +483,11 @@ class ParallelCoordinator:
                         logger.warning("Worker %d: validation failed after clean merge: %s",
                                        worker.worker_id, validation.summary)
                 # Clean merge failed validation — rollback
-                self.git.rollback(ai_snapshot)
+                try:
+                    self.git.rollback(ai_snapshot)
+                except Exception:
+                    logger.error("Worker %d: rollback failed after merge validation failure",
+                                 worker.worker_id, exc_info=True)
 
             conflicted = self.git.get_conflicted_files() if not merge_clean else []
             if conflicted:
@@ -506,7 +510,12 @@ class ParallelCoordinator:
                                            worker.worker_id, validation.summary)
 
                 # AI resolution failed — rollback
-                self.git.rollback(ai_snapshot)
+                try:
+                    self.git.rollback(ai_snapshot)
+                except Exception:
+                    logger.error("Worker %d: rollback failed after AI resolution failure",
+                                 worker.worker_id, exc_info=True)
+
             else:
                 self.git.abort_merge()
 

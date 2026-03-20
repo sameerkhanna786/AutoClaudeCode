@@ -143,6 +143,37 @@ class TestPopenFailure(unittest.TestCase):
         self.assertIn("Failed to start process", result.stderr)
 
 
+class TestTimeoutPartialReadBounded(unittest.TestCase):
+    """stream.read() after timeout must be bounded to prevent OOM."""
+
+    @patch("process_utils.subprocess.Popen")
+    @patch("process_utils.kill_process_group")
+    def test_stream_read_called_with_size_limit(self, mock_kill, mock_popen):
+        """After timeout, fallback stream.read() should pass a max size argument."""
+        import subprocess as _subprocess
+
+        mock_proc = MagicMock()
+        # First communicate() raises timeout
+        mock_proc.communicate.side_effect = [
+            _subprocess.TimeoutExpired(cmd="test", timeout=1),
+            _subprocess.TimeoutExpired(cmd="test", timeout=5),
+        ]
+        mock_stdout = MagicMock()
+        mock_stdout.read.return_value = "partial out"
+        mock_stderr = MagicMock()
+        mock_stderr.read.return_value = "partial err"
+        mock_proc.stdout = mock_stdout
+        mock_proc.stderr = mock_stderr
+        mock_popen.return_value = mock_proc
+
+        result = run_with_group_kill(["test"], timeout=1)
+
+        self.assertTrue(result.timed_out)
+        # Verify read was called with a size limit (1 MB)
+        mock_stdout.read.assert_called_once_with(1024 * 1024)
+        mock_stderr.read.assert_called_once_with(1024 * 1024)
+
+
 class TestKillProcessGroup(unittest.TestCase):
 
     def test_already_dead_process(self):

@@ -1649,3 +1649,54 @@ class TestEarlyTerminationInScans:
         assert count == 4
         total = state_mgr.get_total_cost()
         assert total == pytest.approx(2.0)
+
+    def test_was_recently_attempted_terminates_early(self, state_mgr):
+        """was_recently_attempted should break early after consecutive old records."""
+        now = time.time()
+        # Insert many old records followed by recent records
+        for i in range(100):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 7200 + i,  # 2 hours ago
+                task_description=f"Old task {i}",
+                success=True,
+            ))
+        for i in range(5):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 60 + i,  # recent
+                task_description=f"Recent task {i}",
+                success=True,
+            ))
+        # Recent task should be found
+        assert state_mgr.was_recently_attempted("Recent task 3", lookback_seconds=3600)
+        # Old task should not be found
+        assert not state_mgr.was_recently_attempted("Old task 0", lookback_seconds=3600)
+
+    def test_was_recently_attempted_tolerates_out_of_order(self, state_mgr):
+        """A few out-of-order old records don't cause premature termination."""
+        now = time.time()
+        # 3 old, then 1 recent, then 2 old, then 3 recent
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 7200 + i,
+                task_description=f"Old batch1 {i}",
+                success=True,
+            ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 30,
+            task_description="Target recent",
+            success=True,
+        ))
+        for i in range(2):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 7200 + i,
+                task_description=f"Old batch2 {i}",
+                success=True,
+            ))
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 10 + i,
+                task_description=f"Recent {i}",
+                success=True,
+            ))
+        # "Target recent" should still be found despite interleaved old records
+        assert state_mgr.was_recently_attempted("Target recent", lookback_seconds=3600)

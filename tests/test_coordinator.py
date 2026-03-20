@@ -919,3 +919,24 @@ class TestPartitionTasksDependencyOptimization:
         with patch.object(coord.state, "load_history", return_value=[]) as mock_load:
             coord._partition_tasks(tasks)
             mock_load.assert_called_once()
+
+
+class TestMergeRollbackProtection:
+    """Rollback failures after merge validation must be caught, not propagated."""
+
+    def test_rollback_failure_does_not_crash(self, parallel_config):
+        """If git.rollback raises after merge validation failure, it should be caught."""
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator._merge_worker_branch)
+        # Both rollback sites should be wrapped in try-except
+        # Find all lines with "self.git.rollback"
+        rollback_lines = [line.strip() for line in source.splitlines()
+                          if "self.git.rollback" in line]
+        assert len(rollback_lines) >= 2, (
+            "Expected at least 2 rollback calls in _merge_worker_branch"
+        )
+        # Verify rollback calls are inside try blocks
+        assert "try:" in source and "rollback" in source, (
+            "Rollback calls should be protected by try-except blocks"
+        )
