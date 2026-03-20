@@ -154,10 +154,12 @@ class Worker:
                     "Worker %d: planning with max_turns=%d",
                     self.worker_id, effective_turns,
                 )
-                # Create a worker-local ClaudeRunner with overridden max_turns
+                # Create a worker-local config with overridden max_turns.
+                # self.config is already a per-worker deep copy (from __init__),
+                # so we only need to shallow-copy and override the claude attr.
                 import copy
-                plan_config = copy.deepcopy(self.config)
-                plan_config.claude = copy.deepcopy(self.config.claude)
+                plan_config = copy.copy(self.config)
+                plan_config.claude = copy.copy(self.config.claude)
                 plan_config.claude.max_turns = effective_turns
                 from provider_runner import create_runner
                 plan_runner = create_runner(plan_config)

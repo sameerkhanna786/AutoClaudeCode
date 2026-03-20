@@ -46,6 +46,28 @@ class TestStateManager:
         data = json.loads(Path(state_mgr.history_file).read_text())
         assert len(data) == 3
 
+    def test_record_cycle_does_not_mutate_cache(self, state_mgr):
+        """record_cycle must not mutate the in-memory cache before save succeeds."""
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="First",
+            success=True,
+        ))
+        # Load cache
+        cached = state_mgr._load_history()
+        cached_len_before = len(cached)
+
+        # Record another cycle
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Second",
+            success=True,
+        ))
+        # The previously returned cache reference should not have been mutated
+        assert len(cached) == cached_len_before, (
+            "record_cycle must not append to the cached list directly"
+        )
+
     def test_was_recently_attempted(self, state_mgr):
         state_mgr.record_cycle(CycleRecord(
             timestamp=time.time(),

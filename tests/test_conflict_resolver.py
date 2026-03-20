@@ -526,6 +526,62 @@ class TestResolveConflictsFileErrors:
         assert success is False
 
 
+class TestPathTraversalGuard:
+    """Path traversal: filenames like ../../etc/cron.d/evil must be rejected."""
+
+    def test_rejects_path_traversal(self, tmp_path):
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        # Create a file outside the repo via traversal
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "evil.py").write_text("evil content")
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        with patch.object(resolver, "runner") as mock_runner:
+            success, cost = resolver.resolve_conflicts(
+                str(repo), ["../outside/evil.py"], "feat", "main",
+            )
+            mock_runner.run.assert_not_called()
+
+        assert success is False
+
+    def test_allows_normal_paths(self, tmp_path):
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> feat\n")
+
+        mock_result = ClaudeResult(
+            success=True,
+            result_text="```python\ndef merged():\n    pass\n```",
+            cost_usd=0.01,
+        )
+        with patch.object(resolver, "runner") as mock_runner:
+            mock_runner.run.return_value = mock_result
+            success, cost = resolver.resolve_conflicts(
+                str(tmp_path), ["src/app.py"], "feat", "main",
+            )
+
+        assert success is True
+
+    def test_rejects_absolute_path_outside_repo(self, tmp_path):
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        with patch.object(resolver, "runner") as mock_runner:
+            success, cost = resolver.resolve_conflicts(
+                str(tmp_path), ["/etc/passwd"], "feat", "main",
+            )
+            mock_runner.run.assert_not_called()
+
+        assert success is False
+
+
 class TestCostResetOnReuse:
     """Test that _total_cost resets on each resolve_conflicts call."""
 

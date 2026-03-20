@@ -285,7 +285,8 @@ class StateManager:
         _save_history succeeds — otherwise a failed save would leave
         the cache in an inconsistent state.
         """
-        records = self._load_history() + [asdict(record)]
+        records = list(self._load_history())
+        records.append(asdict(record))
         records = self._prune_history(records)
         self._save_history(records)
         logger.info(

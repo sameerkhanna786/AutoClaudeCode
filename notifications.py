@@ -20,21 +20,35 @@ from config_schema import WebhookConfig, NotificationEventsConfig, Notifications
 logger = logging.getLogger(__name__)
 
 
-def _is_private_ip(hostname: str) -> bool:
-    """Check if a hostname resolves to a private/loopback/link-local IP address."""
+def _resolve_and_check_ip(hostname: str) -> "tuple[bool, str]":
+    """Resolve hostname and check if it maps to a private/loopback/link-local IP.
+
+    Returns (is_private, resolved_ip). Resolves DNS once to prevent DNS rebinding
+    attacks where a hostname returns a public IP on first lookup but a private IP
+    on the second lookup used by urlopen.
+    """
     try:
         addr_infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
     except (socket.gaierror, OSError):
-        return True  # Block on DNS failure to prevent SSRF via unresolvable hosts
+        return True, ""  # Block on DNS failure to prevent SSRF via unresolvable hosts
+    resolved_ip = ""
     for family, _type, _proto, _canonname, sockaddr in addr_infos:
         ip_str = sockaddr[0]
+        if not resolved_ip:
+            resolved_ip = ip_str
         try:
             addr = ipaddress.ip_address(ip_str)
         except ValueError:
             continue
         if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            return True
-    return False
+            return True, ip_str
+    return False, resolved_ip
+
+
+def _is_private_ip(hostname: str) -> bool:
+    """Check if a hostname resolves to a private/loopback/link-local IP address."""
+    is_private, _ = _resolve_and_check_ip(hostname)
+    return is_private
 
 
 # Map event names to NotificationEventsConfig field names
@@ -215,21 +229,32 @@ class NotificationManager:
             )
 
         hostname = parsed_url.hostname or ""
-        if _is_private_ip(hostname):
+        is_private, resolved_ip = _resolve_and_check_ip(hostname)
+        if is_private:
             logger.warning(
                 "Rejecting webhook targeting private/loopback address: %s",
                 webhook.url,
             )
             return
 
+        # Use the resolved IP in the URL to prevent DNS rebinding attacks
+        # (where a second DNS lookup returns a different, private IP).
+        if resolved_ip and hostname:
+            safe_url = webhook.url.replace(hostname, resolved_ip, 1)
+        else:
+            safe_url = webhook.url
+
         data = json.dumps(payload).encode("utf-8")
 
         for attempt in range(max_attempts):
             try:
                 req = urllib.request.Request(
-                    webhook.url,
+                    safe_url,
                     data=data,
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Host": hostname,  # Preserve original Host header
+                    },
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:

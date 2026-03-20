@@ -36,7 +36,7 @@ class TestNotificationManagerDisabled(unittest.TestCase):
 
 class TestNotifySlackFormat(unittest.TestCase):
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_slack_payload(self, mock_urlopen, _mock_ip):
         mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
@@ -59,7 +59,7 @@ class TestNotifySlackFormat(unittest.TestCase):
 
 class TestNotifyDiscordFormat(unittest.TestCase):
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_discord_payload(self, mock_urlopen, _mock_ip):
         mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
@@ -81,7 +81,7 @@ class TestNotifyDiscordFormat(unittest.TestCase):
 
 class TestNotifyGenericFormat(unittest.TestCase):
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_generic_payload(self, mock_urlopen, _mock_ip):
         mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
@@ -103,7 +103,7 @@ class TestNotifyGenericFormat(unittest.TestCase):
 
 class TestNotifyHandlesHTTPError(unittest.TestCase):
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_error_does_not_propagate(self, mock_urlopen, _mock_ip):
         mock_urlopen.side_effect = Exception("Connection refused")
@@ -133,7 +133,7 @@ class TestNotifyRespectsEventConfig(unittest.TestCase):
 
 class TestNotifyRateLimiting(unittest.TestCase):
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_duplicate_event_rate_limited(self, mock_urlopen, _mock_ip):
         mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
@@ -153,7 +153,7 @@ class TestNotifyRateLimiting(unittest.TestCase):
 
 class TestWebhookConfigValidation(unittest.TestCase):
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_empty_url_skipped(self, mock_urlopen, _mock_ip):
         webhooks = [
@@ -233,7 +233,7 @@ class TestNaturalLanguageSummarizerFailure(unittest.TestCase):
 class TestNotifyDedupWithHashedKey(unittest.TestCase):
     """Tests that rate-limiting dedup uses hashed keys (not raw details)."""
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_large_details_still_deduped(self, mock_urlopen, _mock_ip):
         """Large payloads should be deduped via hash, not stored as raw keys."""
@@ -251,7 +251,7 @@ class TestNotifyDedupWithHashedKey(unittest.TestCase):
         # Only one call — second should be rate-limited
         self.assertEqual(mock_urlopen.call_count, 1)
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_different_details_not_deduped(self, mock_urlopen, _mock_ip):
         """Different details produce different hashes, so both should send."""
@@ -267,7 +267,7 @@ class TestNotifyDedupWithHashedKey(unittest.TestCase):
         time.sleep(0.2)
         self.assertEqual(mock_urlopen.call_count, 2)
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     def test_dedup_keys_are_bounded_size(self, _mock_ip):
         """Dedup keys should use MD5 hashes, not raw JSON strings."""
         config = _make_config()
@@ -294,7 +294,7 @@ class TestPeriodicSummaryEvent(unittest.TestCase):
         mgr.notify("periodic_summary", {"summary": "test"})
         mock_urlopen.assert_not_called()
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_periodic_summary_enabled_sends(self, mock_urlopen, _mock_ip):
         """periodic_summary sends notification when enabled."""
@@ -317,7 +317,7 @@ class TestWebhookThreadPool(unittest.TestCase):
         from concurrent.futures import ThreadPoolExecutor
         self.assertIsInstance(mgr._webhook_pool, ThreadPoolExecutor)
 
-    @patch("notifications._is_private_ip", return_value=False)
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
     @patch("notifications.urllib.request.urlopen")
     def test_thread_pool_sends_webhook(self, mock_urlopen, _mock_ip):
         """Webhooks should still be sent via the thread pool."""
@@ -486,6 +486,48 @@ class TestIsPrivateIpFunction(unittest.TestCase):
         from notifications import _is_private_ip
         mock_getaddrinfo.side_effect = OSError("Network unreachable")
         self.assertTrue(_is_private_ip("unreachable.host"))
+
+
+class TestResolveAndCheckIp(unittest.TestCase):
+    """Tests for _resolve_and_check_ip which resolves DNS once to prevent rebinding."""
+
+    @patch("notifications.socket.getaddrinfo")
+    def test_returns_resolved_ip(self, mock_getaddrinfo):
+        from notifications import _resolve_and_check_ip
+        mock_getaddrinfo.return_value = [
+            (2, 1, 6, "", ("93.184.216.34", 0)),
+        ]
+        is_private, resolved_ip = _resolve_and_check_ip("example.com")
+        self.assertFalse(is_private)
+        self.assertEqual(resolved_ip, "93.184.216.34")
+
+    @patch("notifications.socket.getaddrinfo")
+    def test_detects_private_ip(self, mock_getaddrinfo):
+        from notifications import _resolve_and_check_ip
+        mock_getaddrinfo.return_value = [
+            (2, 1, 6, "", ("192.168.1.1", 0)),
+        ]
+        is_private, resolved_ip = _resolve_and_check_ip("internal.local")
+        self.assertTrue(is_private)
+        self.assertEqual(resolved_ip, "192.168.1.1")
+
+    @patch("notifications.socket.getaddrinfo")
+    def test_dns_failure_returns_private(self, mock_getaddrinfo):
+        from notifications import _resolve_and_check_ip
+        import socket
+        mock_getaddrinfo.side_effect = socket.gaierror("DNS failed")
+        is_private, resolved_ip = _resolve_and_check_ip("nonexistent.host")
+        self.assertTrue(is_private)
+        self.assertEqual(resolved_ip, "")
+
+    @patch("notifications.socket.getaddrinfo")
+    def test_backward_compatible_with_is_private_ip(self, mock_getaddrinfo):
+        """_is_private_ip still works correctly using _resolve_and_check_ip."""
+        from notifications import _is_private_ip
+        mock_getaddrinfo.return_value = [
+            (2, 1, 6, "", ("10.0.0.5", 0)),
+        ]
+        self.assertTrue(_is_private_ip("internal.corp"))
 
 
 class TestHttpWebhookWarning(unittest.TestCase):

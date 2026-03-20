@@ -61,7 +61,11 @@ class ConflictResolver:
                 )
                 return False, self._total_cost
 
-            abs_path = Path(repo_dir) / filepath
+            abs_path = (Path(repo_dir) / filepath).resolve()
+            # Guard against path traversal: resolved path must stay within repo
+            if not str(abs_path).startswith(str(Path(repo_dir).resolve())):
+                logger.warning("Path traversal detected, rejecting: %s", filepath)
+                return False, self._total_cost
             if not abs_path.exists():
                 logger.warning("Conflicted file not found: %s", abs_path)
                 return False, self._total_cost
