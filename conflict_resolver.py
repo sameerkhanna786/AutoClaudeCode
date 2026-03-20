@@ -62,8 +62,10 @@ class ConflictResolver:
                 return False, self._total_cost
 
             abs_path = (Path(repo_dir) / filepath).resolve()
+            repo_resolved = Path(repo_dir).resolve()
             # Guard against path traversal: resolved path must stay within repo
-            if not str(abs_path).startswith(str(Path(repo_dir).resolve())):
+            # Use os.sep suffix to prevent prefix confusion (e.g. /repo vs /repo_evil)
+            if abs_path != repo_resolved and not str(abs_path).startswith(str(repo_resolved) + os.sep):
                 logger.warning("Path traversal detected, rejecting: %s", filepath)
                 return False, self._total_cost
             if not abs_path.exists():

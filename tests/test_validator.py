@@ -517,3 +517,47 @@ class TestValidateIncremental:
         assert cmd.startswith("python3 -m pytest tests/ -v"), (
             f"Expected command to start with configured test_command, got: {cmd}"
         )
+
+    @patch("validator.run_with_group_kill")
+    def test_non_pytest_command_omits_pytest_flags(self, mock_run, default_config, tmp_path):
+        """Non-pytest test commands should not get -x -q flags appended."""
+        default_config.validation.test_command = "npm test"
+        default_config.validation.lint_command = ""
+        default_config.validation.build_command = ""
+        default_config.target_dir = str(tmp_path)
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_foo.py").write_text("def test_ok(): pass\n")
+        v = Validator(default_config)
+        mock_run.return_value = RunResult(returncode=0, stdout="OK", stderr="", timed_out=False)
+        v.validate_incremental(str(tmp_path), ["foo.py"])
+        targeted_calls = [
+            c for c in mock_run.call_args_list
+            if isinstance(c[0][0], str) and "test_foo" in c[0][0]
+        ]
+        assert len(targeted_calls) >= 1
+        cmd = targeted_calls[0][0][0]
+        assert "-x" not in cmd, f"Non-pytest command should not have -x flag: {cmd}"
+        assert "-q" not in cmd, f"Non-pytest command should not have -q flag: {cmd}"
+
+    @patch("validator.run_with_group_kill")
+    def test_pytest_command_gets_xq_flags(self, mock_run, default_config, tmp_path):
+        """Pytest-based test commands should still get -x -q flags."""
+        default_config.validation.test_command = "python3 -m pytest tests/"
+        default_config.validation.lint_command = ""
+        default_config.validation.build_command = ""
+        default_config.target_dir = str(tmp_path)
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_bar.py").write_text("def test_ok(): pass\n")
+        v = Validator(default_config)
+        mock_run.return_value = RunResult(returncode=0, stdout="OK", stderr="", timed_out=False)
+        v.validate_incremental(str(tmp_path), ["bar.py"])
+        targeted_calls = [
+            c for c in mock_run.call_args_list
+            if isinstance(c[0][0], str) and "test_bar" in c[0][0]
+        ]
+        assert len(targeted_calls) >= 1
+        cmd = targeted_calls[0][0][0]
+        assert "-x" in cmd, f"Pytest command should have -x flag: {cmd}"
+        assert "-q" in cmd, f"Pytest command should have -q flag: {cmd}"

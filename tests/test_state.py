@@ -1541,3 +1541,35 @@ class TestOutOfOrderTimestamps:
 
         # Both failures should be counted
         assert state_mgr.get_task_failure_count("flaky", lookback_seconds=86400) == 2
+
+
+class TestLoadHistoryReturnsCopy:
+    """load_history() must return a copy so callers cannot corrupt the cache."""
+
+    def test_mutating_returned_list_does_not_affect_cache(self, state_mgr):
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Original",
+            success=True,
+        ))
+        first = state_mgr.load_history()
+        first.append({"fake": "record"})
+
+        second = state_mgr.load_history()
+        assert len(second) == 1, (
+            "Appending to load_history() result must not mutate the cache"
+        )
+
+    def test_clearing_returned_list_does_not_affect_cache(self, state_mgr):
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(),
+            task_description="Keep me",
+            success=True,
+        ))
+        result = state_mgr.load_history()
+        result.clear()
+
+        reloaded = state_mgr.load_history()
+        assert len(reloaded) == 1, (
+            "Clearing load_history() result must not wipe the cache"
+        )

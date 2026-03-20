@@ -556,5 +556,8 @@ class StateManager:
         return "\n".join(lines)
 
     def load_history(self) -> List[Dict[str, Any]]:
-        """Public API for loading history (safe for external callers)."""
-        return self._load_history()
+        """Public API for loading history (safe for external callers).
+
+        Returns a shallow copy so callers cannot mutate the internal cache.
+        """
+        return list(self._load_history())

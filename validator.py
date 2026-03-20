@@ -380,7 +380,10 @@ class Validator:
 
         # Phase 1: Run targeted tests using the configured test command
         base_test_cmd = vc.test_command.strip()
-        targeted_cmd = f"{base_test_cmd} {' '.join(shlex.quote(f) for f in test_files)} -x -q"
+        quoted_files = ' '.join(shlex.quote(f) for f in test_files)
+        # Only append pytest-specific flags (-x -q) when the test command is pytest-based
+        is_pytest = "pytest" in base_test_cmd
+        targeted_cmd = f"{base_test_cmd} {quoted_files} -x -q" if is_pytest else f"{base_test_cmd} {quoted_files}"
         steps: List[ValidationStep] = []
 
         # Run lint first

@@ -365,16 +365,18 @@ class ClaudeRunner:
                 pos = stripped.find("{", pos + 1)
 
         # Strategy 3: raw_decode for multi-line JSON
+        # Use str.find() to jump between '{' positions instead of scanning
+        # every character, avoiding O(n^2) behavior on large outputs.
         decoder = json.JSONDecoder()
-        for i, ch in enumerate(text):
-            if ch != "{":
-                continue
+        idx = text.find("{")
+        while idx != -1:
             try:
-                obj, _ = decoder.raw_decode(text, i)
+                obj, _ = decoder.raw_decode(text, idx)
                 if isinstance(obj, dict):
                     return obj
             except json.JSONDecodeError:
                 pass
+            idx = text.find("{", idx + 1)
 
         return None
 

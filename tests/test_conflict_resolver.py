@@ -618,3 +618,46 @@ class TestCostResetOnReuse:
         # Each call should report only its own cost
         assert cost1 == pytest.approx(0.05)
         assert cost2 == pytest.approx(0.05)
+
+
+class TestPathTraversalPrefixConfusion:
+    """Ensure the path traversal guard is not confused by sibling directory prefixes."""
+
+    def test_rejects_sibling_dir_with_shared_prefix(self, tmp_path):
+        """A repo at /tmp/repo should NOT match /tmp/repo_evil/file."""
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        evil = tmp_path / "repo_evil"
+        evil.mkdir()
+        (evil / "steal.py").write_text("evil content")
+
+        with patch.object(resolver, "runner") as mock_runner:
+            success, cost = resolver.resolve_conflicts(
+                str(repo), ["../repo_evil/steal.py"], "feat", "main",
+            )
+            mock_runner.run.assert_not_called()
+
+        assert success is False
+
+    def test_allows_file_at_repo_root(self, tmp_path):
+        """A file directly in the repo root should be accepted."""
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        (tmp_path / "root_file.py").write_text("<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> feat\n")
+
+        mock_result = ClaudeResult(
+            success=True,
+            result_text="```python\nresolved\n```",
+            cost_usd=0.01,
+        )
+        with patch.object(resolver, "runner") as mock_runner:
+            mock_runner.run.return_value = mock_result
+            success, cost = resolver.resolve_conflicts(
+                str(tmp_path), ["root_file.py"], "feat", "main",
+            )
+
+        assert success is True

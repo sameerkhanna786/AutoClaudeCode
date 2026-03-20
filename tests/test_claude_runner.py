@@ -954,3 +954,33 @@ class TestProcResult:
         proc = _ProcResult()
         with pytest.raises(AttributeError):
             proc.unexpected = "should fail"
+
+
+class TestTryParseJsonStrategy3Performance:
+    """Strategy 3 should use str.find() to skip non-'{' characters efficiently."""
+
+    def test_multiline_json_parsed_correctly(self, runner):
+        text = "Some preamble\n{\n  \"result\": \"hello\",\n  \"cost_usd\": 0.01\n}\nEpilogue"
+        result = runner._try_parse_json(text)
+        assert result is not None
+        assert result["result"] == "hello"
+
+    def test_no_json_returns_none(self, runner):
+        text = "This has no JSON at all, just plain text with no braces"
+        result = runner._try_parse_json(text)
+        assert result is None
+
+    def test_large_text_with_late_json(self, runner):
+        """JSON near the end of a large string should still be found."""
+        padding = "x" * 50000
+        json_obj = '{"result": "found", "cost_usd": 0.05}'
+        text = padding + "\n" + json_obj + "\nmore text"
+        result = runner._try_parse_json(text)
+        assert result is not None
+        assert result["result"] == "found"
+
+    def test_multiple_braces_finds_first_valid(self, runner):
+        text = "prefix { invalid } middle {also invalid\n{\"result\": \"ok\"}\nend"
+        result = runner._try_parse_json(text)
+        assert result is not None
+        assert result["result"] == "ok"
