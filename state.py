@@ -500,14 +500,23 @@ class StateManager:
 
         Returns a dict mapping task_type -> success_rate (0.0-1.0).
         Types with fewer than 2 attempts are not included.
+
+        Iterates in reverse since recent records are at the end.
+        Stops early after seeing several consecutive old records,
+        tolerating minor timestamp disorder from concurrent writes.
         """
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
 
         type_counts: Dict[str, Dict[str, int]] = {}  # type -> {total, successes}
-        for r in records:
+        consecutive_old = 0
+        for r in reversed(records):
             if r.get("timestamp", 0) < cutoff:
+                consecutive_old += 1
+                if consecutive_old >= 5:
+                    break
                 continue
+            consecutive_old = 0
             task_type = r.get("task_type", "unknown")
             if task_type not in type_counts:
                 type_counts[task_type] = {"total": 0, "successes": 0}
@@ -523,13 +532,23 @@ class StateManager:
         return rates
 
     def get_strategy_performance(self, lookback_seconds: int = 86400) -> Dict[str, Dict[str, Any]]:
-        """Return per-source performance metrics: source -> {total, successes, success_rate, avg_cost, avg_duration}"""
+        """Return per-source performance metrics: source -> {total, successes, success_rate, avg_cost, avg_duration}
+
+        Iterates in reverse since recent records are at the end.
+        Stops early after seeing several consecutive old records,
+        tolerating minor timestamp disorder from concurrent writes.
+        """
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
         performance: Dict[str, Dict[str, Any]] = {}
-        for r in records:
+        consecutive_old = 0
+        for r in reversed(records):
             if r.get("timestamp", 0) < cutoff:
+                consecutive_old += 1
+                if consecutive_old >= 5:
+                    break
                 continue
+            consecutive_old = 0
             source = r.get("task_type", "unknown")
             if source not in performance:
                 performance[source] = {"total": 0, "successes": 0, "total_cost": 0.0, "total_duration": 0.0}
@@ -547,12 +566,24 @@ class StateManager:
         return performance
 
     def get_productive_files(self, lookback_seconds: int = 86400) -> List[str]:
-        """Return files successfully modified most often, sorted by frequency."""
+        """Return files successfully modified most often, sorted by frequency.
+
+        Iterates in reverse since recent records are at the end.
+        Stops early after seeing several consecutive old records,
+        tolerating minor timestamp disorder from concurrent writes.
+        """
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
         file_counts: Dict[str, int] = {}
-        for r in records:
-            if r.get("timestamp", 0) < cutoff or not r.get("success", False):
+        consecutive_old = 0
+        for r in reversed(records):
+            if r.get("timestamp", 0) < cutoff:
+                consecutive_old += 1
+                if consecutive_old >= 5:
+                    break
+                continue
+            consecutive_old = 0
+            if not r.get("success", False):
                 continue
             for task_desc in (r.get("task_descriptions") or [r.get("task_description", "")]):
                 matches = _FILE_PATTERN_RE.findall(task_desc)

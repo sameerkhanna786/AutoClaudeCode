@@ -359,14 +359,20 @@ class NotificationManager:
             except Exception:
                 pass
 
-    @staticmethod
     def _format_generic_payload(
-        event: str, details: Dict[str, Any],
+        self, event: str, details: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Format a generic JSON webhook payload."""
-        return {
+        payload: Dict[str, Any] = {
             "event": event,
             "source": "auto_claude_code",
             "details": details,
             "timestamp": time.time(),
         }
+        if self._config.nl_summaries and event in ("cycle_success", "cycle_failure"):
+            tasks = details.get("tasks", [])
+            task_objs = [{"source": "unknown", "description": t} if isinstance(t, str) else t for t in tasks]
+            success = event == "cycle_success"
+            cost = details.get("cost_usd", 0.0)
+            payload["summary"] = NaturalLanguageSummarizer().summarize(task_objs, success=success, cost_usd=cost)
+        return payload

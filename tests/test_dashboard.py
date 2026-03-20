@@ -61,6 +61,21 @@ class TestLoadHistory(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_refuses_oversized_file(self):
+        """Files larger than _MAX_HISTORY_FILE_BYTES should return [] to prevent OOM."""
+        from dashboard import _MAX_HISTORY_FILE_BYTES
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            path = f.name
+        try:
+            # Create a file that exceeds the limit by writing enough data
+            with open(path, "wb") as f:
+                f.write(b"[" + b'{"x":1},' * ((_MAX_HISTORY_FILE_BYTES // 8) + 1) + b'{"x":1}]')
+            file_size = os.path.getsize(path)
+            self.assertGreater(file_size, _MAX_HISTORY_FILE_BYTES)
+            self.assertEqual(load_history(path), [])
+        finally:
+            os.unlink(path)
+
 
 class TestReadCycleState(unittest.TestCase):
 

@@ -835,5 +835,77 @@ class TestWebhookResponseBounded(unittest.TestCase):
         assert args[0][0] == 1024 * 1024  # 1 MB
 
 
+class TestGenericPayloadNLSummary(unittest.TestCase):
+    """Verify that generic webhook payloads include NL summaries when enabled."""
+
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
+    @patch("notifications.urllib.request.urlopen")
+    def test_generic_payload_includes_nl_summary_when_enabled(self, mock_urlopen, _mock_ip):
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+
+        config = NotificationsConfig(
+            enabled=True,
+            webhooks=[WebhookConfig(url="https://hooks.example.com/test", type="generic", name="test")],
+            events=NotificationEventsConfig(),
+            nl_summaries=True,
+        )
+        mgr = NotificationManager(config)
+        mgr.notify("cycle_success", {"tasks": ["fix tests"]})
+
+        time.sleep(0.2)
+
+        mock_urlopen.assert_called_once()
+        req = mock_urlopen.call_args[0][0]
+        payload = json.loads(req.data.decode())
+        self.assertIn("summary", payload)
+        self.assertIsInstance(payload["summary"], str)
+        self.assertTrue(len(payload["summary"]) > 0)
+
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
+    @patch("notifications.urllib.request.urlopen")
+    def test_generic_payload_no_summary_when_disabled(self, mock_urlopen, _mock_ip):
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+
+        config = NotificationsConfig(
+            enabled=True,
+            webhooks=[WebhookConfig(url="https://hooks.example.com/test", type="generic", name="test")],
+            events=NotificationEventsConfig(),
+            nl_summaries=False,
+        )
+        mgr = NotificationManager(config)
+        mgr.notify("cycle_success", {"tasks": ["fix tests"]})
+
+        time.sleep(0.2)
+
+        mock_urlopen.assert_called_once()
+        req = mock_urlopen.call_args[0][0]
+        payload = json.loads(req.data.decode())
+        self.assertNotIn("summary", payload)
+
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
+    @patch("notifications.urllib.request.urlopen")
+    def test_generic_payload_no_summary_for_non_cycle_events(self, mock_urlopen, _mock_ip):
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=MagicMock(read=MagicMock(return_value=b"")))
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+
+        config = NotificationsConfig(
+            enabled=True,
+            webhooks=[WebhookConfig(url="https://hooks.example.com/test", type="generic", name="test")],
+            events=NotificationEventsConfig(),
+            nl_summaries=True,
+        )
+        mgr = NotificationManager(config)
+        mgr.notify("safety_error", {"error": "disk full"})
+
+        time.sleep(0.2)
+
+        mock_urlopen.assert_called_once()
+        req = mock_urlopen.call_args[0][0]
+        payload = json.loads(req.data.decode())
+        self.assertNotIn("summary", payload)
+
+
 if __name__ == "__main__":
     unittest.main()

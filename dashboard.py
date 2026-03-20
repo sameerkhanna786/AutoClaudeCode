@@ -821,12 +821,27 @@ def _load_config(config_path: str) -> Dict[str, Any]:
     return result
 
 
+_MAX_HISTORY_FILE_BYTES = 50 * 1024 * 1024  # 50 MB — same limit as StateManager
+
+
 def load_history(history_path: str) -> List[Dict[str, Any]]:
-    """Load history.json directly (read-only, no StateManager side-effects)."""
+    """Load history.json directly (read-only, no StateManager side-effects).
+
+    Refuses to load files larger than 50 MB to prevent OOM on corrupted
+    or externally modified files, matching StateManager._MAX_HISTORY_FILE_BYTES.
+    """
     p = Path(history_path)
     if not p.exists():
         return []
     try:
+        file_size = p.stat().st_size
+        if file_size > _MAX_HISTORY_FILE_BYTES:
+            logger.warning(
+                "History file too large (%d bytes, limit %d). "
+                "Refusing to load to prevent OOM.",
+                file_size, _MAX_HISTORY_FILE_BYTES,
+            )
+            return []
         text = p.read_text(encoding="utf-8").strip()
         if not text:
             return []

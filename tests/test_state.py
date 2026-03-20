@@ -1772,3 +1772,78 @@ class TestHistoryFileSizeGuard:
         records = state_mgr._load_history()
         assert len(records) == 1
         assert records[0]["task_description"] == "Normal task"
+
+
+class TestEarlyTerminationConsistency:
+    """Verify that get_success_rate_by_type, get_strategy_performance, and
+    get_productive_files all use reverse iteration with early termination,
+    matching the pattern of other StateManager methods."""
+
+    def test_success_rate_by_type_early_termination(self, state_mgr):
+        """Should stop scanning after consecutive old records."""
+        now = time.time()
+        # Add 10 old records (outside the 1-hour lookback)
+        for i in range(10):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 200000 + i,
+                task_description=f"Old task {i}",
+                task_type="old_type",
+                success=True,
+            ))
+        # Add 2 recent records
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Recent A",
+            task_type="recent_type", success=True,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="Recent B",
+            task_type="recent_type", success=False,
+        ))
+        rates = state_mgr.get_success_rate_by_type(lookback_seconds=3600)
+        # Old records should be excluded, only recent_type should appear
+        assert "old_type" not in rates
+        assert "recent_type" in rates
+        assert abs(rates["recent_type"] - 0.5) < 0.01
+
+    def test_strategy_performance_early_termination(self, state_mgr):
+        """Should stop scanning after consecutive old records."""
+        now = time.time()
+        # Add 10 old records
+        for i in range(10):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 200000 + i,
+                task_description=f"Old task {i}",
+                task_type="old_type",
+                success=True, cost_usd=10.0, duration_seconds=500.0,
+            ))
+        # Add 1 recent record
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Recent",
+            task_type="new_type", success=True,
+            cost_usd=1.0, duration_seconds=60.0,
+        ))
+        perf = state_mgr.get_strategy_performance(lookback_seconds=3600)
+        assert "old_type" not in perf
+        assert "new_type" in perf
+        assert perf["new_type"]["total"] == 1
+
+    def test_productive_files_early_termination(self, state_mgr):
+        """Should stop scanning after consecutive old records."""
+        now = time.time()
+        # Add 10 old successful records
+        for i in range(10):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 200000 + i,
+                task_description=f"Fix old_file.py #{i}",
+                success=True,
+                task_descriptions=[f"Fix old_file.py #{i}"],
+            ))
+        # Add 1 recent successful record
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Fix recent_file.py",
+            success=True,
+            task_descriptions=["Fix recent_file.py"],
+        ))
+        files = state_mgr.get_productive_files(lookback_seconds=3600)
+        assert "old_file.py" not in files
+        assert "recent_file.py" in files
