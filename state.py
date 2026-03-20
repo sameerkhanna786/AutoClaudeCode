@@ -279,7 +279,12 @@ class StateManager:
         return records
 
     def record_cycle(self, record: CycleRecord) -> None:
-        """Append a cycle record to history."""
+        """Append a cycle record to history.
+
+        Uses list copy to avoid mutating the in-memory cache before
+        _save_history succeeds — otherwise a failed save would leave
+        the cache in an inconsistent state.
+        """
         records = self._load_history() + [asdict(record)]
         records = self._prune_history(records)
         self._save_history(records)

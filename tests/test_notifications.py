@@ -587,5 +587,39 @@ class TestEnabledNoWebhooksNoPool(unittest.TestCase):
         mgr.shutdown()
 
 
+class TestNotificationManagerDel(unittest.TestCase):
+    """Tests for NotificationManager.__del__ thread pool cleanup."""
+
+    def test_del_shuts_down_pool(self):
+        """__del__ calls shutdown(wait=False) on the thread pool."""
+        config = _make_config(enabled=True)
+        config.webhooks = [WebhookConfig(url="https://hooks.slack.com/test")]
+        mgr = NotificationManager(config)
+        assert mgr._webhook_pool is not None
+        mock_pool = MagicMock()
+        mgr._webhook_pool = mock_pool
+        mgr.__del__()
+        mock_pool.shutdown.assert_called_once_with(wait=False)
+
+    def test_del_no_pool_no_error(self):
+        """__del__ does not raise when _webhook_pool is None."""
+        config = _make_config(enabled=False)
+        mgr = NotificationManager(config)
+        assert mgr._webhook_pool is None
+        # Should not raise
+        mgr.__del__()
+
+    def test_del_suppresses_shutdown_exception(self):
+        """__del__ suppresses exceptions from shutdown to avoid errors during GC."""
+        config = _make_config(enabled=True)
+        config.webhooks = [WebhookConfig(url="https://hooks.slack.com/test")]
+        mgr = NotificationManager(config)
+        mock_pool = MagicMock()
+        mock_pool.shutdown.side_effect = RuntimeError("shutdown failed")
+        mgr._webhook_pool = mock_pool
+        # Should not raise
+        mgr.__del__()
+
+
 if __name__ == "__main__":
     unittest.main()

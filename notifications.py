@@ -309,6 +309,18 @@ class NotificationManager:
         self.shutdown()
         return False
 
+    def __del__(self):
+        """Release thread pool resources on garbage collection.
+
+        Prevents thread leaks when NotificationManager is not used as a
+        context manager and shutdown() is never called explicitly.
+        """
+        if self._webhook_pool is not None:
+            try:
+                self._webhook_pool.shutdown(wait=False)
+            except Exception:
+                pass
+
     @staticmethod
     def _format_generic_payload(
         event: str, details: Dict[str, Any],
