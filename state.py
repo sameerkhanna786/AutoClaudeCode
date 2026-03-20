@@ -313,28 +313,43 @@ class StateManager:
     def get_cycle_count_last_hour(self) -> int:
         """Return number of cycles in the last hour.
 
-        Iterates in reverse since recent records are at the end,
-        but continues past gaps for robustness with unordered timestamps.
+        Iterates in reverse since recent records are at the end.
+        Stops early after seeing several consecutive old records,
+        tolerating minor timestamp disorder from concurrent writes.
         """
         cutoff = time.time() - 3600
         records = self._load_history()
         count = 0
+        consecutive_old = 0
         for r in reversed(records):
             if r.get("timestamp", 0) >= cutoff:
                 count += 1
+                consecutive_old = 0
+            else:
+                consecutive_old += 1
+                if consecutive_old >= 5:
+                    break
         return count
 
     def get_total_cost(self, lookback_seconds: int = 3600) -> float:
         """Return total cost in USD over the lookback period.
 
         Iterates in reverse since recent records are at the end.
+        Stops early after seeing several consecutive old records,
+        tolerating minor timestamp disorder from concurrent writes.
         """
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
         total = 0.0
+        consecutive_old = 0
         for r in reversed(records):
             if r.get("timestamp", 0) >= cutoff:
                 total += r.get("cost_usd", 0.0)
+                consecutive_old = 0
+            else:
+                consecutive_old += 1
+                if consecutive_old >= 5:
+                    break
         return total
 
     def get_consecutive_failures(self) -> int:

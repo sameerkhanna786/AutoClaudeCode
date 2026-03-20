@@ -1573,3 +1573,79 @@ class TestLoadHistoryReturnsCopy:
         assert len(reloaded) == 1, (
             "Clearing load_history() result must not wipe the cache"
         )
+
+
+class TestEarlyTerminationInScans:
+    """get_cycle_count_last_hour and get_total_cost should break early on old records."""
+
+    def test_cycle_count_terminates_early(self, state_mgr):
+        """Records older than cutoff + grace should not be scanned."""
+        now = time.time()
+        # Add old records (2 hours ago) and recent records
+        for i in range(100):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 7200 + i,  # 2 hours ago
+                task_description=f"Old task {i}",
+                success=True,
+            ))
+        for i in range(5):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 60 + i,  # recent
+                task_description=f"Recent task {i}",
+                success=True,
+            ))
+        count = state_mgr.get_cycle_count_last_hour()
+        assert count == 5
+
+    def test_total_cost_terminates_early(self, state_mgr):
+        """Total cost should only sum recent records."""
+        now = time.time()
+        for i in range(50):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 7200 + i,
+                task_description=f"Old task {i}",
+                success=True,
+                cost_usd=1.0,
+            ))
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 30 + i,
+                task_description=f"Recent task {i}",
+                success=True,
+                cost_usd=0.5,
+            ))
+        total = state_mgr.get_total_cost(lookback_seconds=3600)
+        assert total == pytest.approx(1.5)
+
+    def test_out_of_order_records_tolerated(self, state_mgr):
+        """A few out-of-order old records don't cause premature termination."""
+        now = time.time()
+        # Insert: 3 old, 1 recent, 2 old, 3 recent (in insertion order)
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 7200 + i,
+                task_description=f"Old batch1 {i}",
+                success=True, cost_usd=1.0,
+            ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now - 30,
+            task_description="Recent 1",
+            success=True, cost_usd=0.5,
+        ))
+        for i in range(2):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 7200 + i,
+                task_description=f"Old batch2 {i}",
+                success=True, cost_usd=1.0,
+            ))
+        for i in range(3):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 10 + i,
+                task_description=f"Recent {i+2}",
+                success=True, cost_usd=0.5,
+            ))
+        # 4 recent records total; early termination should not skip them
+        count = state_mgr.get_cycle_count_last_hour()
+        assert count == 4
+        total = state_mgr.get_total_cost()
+        assert total == pytest.approx(2.0)

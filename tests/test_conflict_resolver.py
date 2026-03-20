@@ -59,7 +59,7 @@ class TestExtractResolvedContent:
     def test_returns_raw_text_without_code_block(self):
         response = "resolved content here"
         result = ConflictResolver._extract_resolved_content(response)
-        assert result == "resolved content here"
+        assert result == "resolved content here\n"
 
     def test_empty_response_returns_none(self):
         assert ConflictResolver._extract_resolved_content("") is None
@@ -699,3 +699,23 @@ class TestExtractPreservesTrailingNewline:
         result = ConflictResolver._extract_resolved_content(response)
         # Trailing newline is preserved for POSIX-compliant source files
         assert result == 'def foo():\n    pass\n'
+
+    def test_fallback_path_preserves_trailing_newline(self):
+        """When no code block is found, the fallback should still end with a newline."""
+        response = "def foo():\n    pass\n"
+        result = ConflictResolver._extract_resolved_content(response)
+        assert result.endswith("\n"), (
+            "Fallback extraction should preserve trailing newline for POSIX compliance"
+        )
+
+    def test_fallback_path_does_not_double_newline(self):
+        """Fallback should add exactly one trailing newline, not duplicate."""
+        response = "  def foo():\n    pass  "
+        result = ConflictResolver._extract_resolved_content(response)
+        assert result == "def foo():\n    pass\n"
+        assert not result.endswith("\n\n")
+
+    def test_fallback_empty_string_returns_none(self):
+        """Empty or whitespace-only input should return None."""
+        result = ConflictResolver._extract_resolved_content("   \n  ")
+        assert result is None

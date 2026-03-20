@@ -723,5 +723,61 @@ class TestDnsRebindingUrlReplacement(unittest.TestCase):
             self.assertEqual(parsed.path, "/webhook")
 
 
+class TestIPv6AddressBracketing(unittest.TestCase):
+    """IPv6 resolved addresses must be wrapped in brackets in URL netloc."""
+
+    def test_ipv6_address_gets_brackets_in_url(self):
+        """When DNS resolves to an IPv6 address, it must be bracketed in the URL."""
+        from notifications import NotificationManager
+        webhook = WebhookConfig(
+            url="https://hooks.example.com/webhook",
+            type="generic",
+            name="test",
+        )
+        config = _make_config(webhooks=[webhook])
+        mgr = NotificationManager(config)
+
+        with patch("notifications._resolve_and_check_ip", return_value=(False, "2001:db8::1")), \
+             patch("notifications.urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value.__enter__ = MagicMock(
+                return_value=MagicMock(read=MagicMock(return_value=b""))
+            )
+            mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+            mgr._send_webhook(webhook, "test_event", {})
+
+            req = mock_urlopen.call_args[0][0]
+            url = req.full_url
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            # IPv6 must be bracketed in netloc
+            self.assertIn("[2001:db8::1]", parsed.netloc)
+            self.assertEqual(parsed.path, "/webhook")
+
+    def test_ipv4_address_not_bracketed(self):
+        """IPv4 addresses should NOT get brackets."""
+        from notifications import NotificationManager
+        webhook = WebhookConfig(
+            url="https://hooks.example.com/webhook",
+            type="generic",
+            name="test",
+        )
+        config = _make_config(webhooks=[webhook])
+        mgr = NotificationManager(config)
+
+        with patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34")), \
+             patch("notifications.urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value.__enter__ = MagicMock(
+                return_value=MagicMock(read=MagicMock(return_value=b""))
+            )
+            mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+            mgr._send_webhook(webhook, "test_event", {})
+
+            req = mock_urlopen.call_args[0][0]
+            url = req.full_url
+            # IPv4 should not have brackets
+            self.assertNotIn("[", url)
+            self.assertIn("93.184.216.34", url)
+
+
 if __name__ == "__main__":
     unittest.main()

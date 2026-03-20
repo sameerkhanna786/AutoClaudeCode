@@ -242,8 +242,10 @@ class NotificationManager:
         # Replace only the netloc hostname via urlparse/urlunparse to avoid
         # corrupting paths that happen to contain the hostname string.
         if resolved_ip and hostname:
+            # IPv6 addresses must be wrapped in brackets in URL netloc
+            display_ip = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
             safe_parsed = parsed_url._replace(
-                netloc=parsed_url.netloc.replace(hostname, resolved_ip, 1),
+                netloc=parsed_url.netloc.replace(hostname, display_ip, 1),
             )
             safe_url = safe_parsed.geturl()
         else:

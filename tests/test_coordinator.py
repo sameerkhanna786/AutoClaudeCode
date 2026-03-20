@@ -858,3 +858,40 @@ class TestMergeWorkerBranchCleanNoCommit:
         assert "if merge_clean" in source or "if not merge_clean" in source, (
             "_merge_worker_branch should handle clean merge_no_commit separately"
         )
+
+
+class TestCleanupAllWorktreesBranchDeletion:
+    """_cleanup_all_worktrees must also delete orphaned auto-claude/* branches."""
+
+    def test_cleanup_deletes_auto_claude_branches(self, parallel_config):
+        """After removing worktree dirs, auto-claude/* branches should be deleted."""
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator._cleanup_all_worktrees)
+        # The cleanup must attempt to delete auto-claude branches
+        assert "auto-claude" in source, (
+            "_cleanup_all_worktrees should clean up auto-claude/* branches"
+        )
+        assert "delete_branch" in source, (
+            "_cleanup_all_worktrees should call delete_branch for orphaned branches"
+        )
+
+    def test_cleanup_all_worktrees_calls_delete_branch(self, parallel_config):
+        """Verify _cleanup_all_worktrees deletes branches matching auto-claude/*."""
+        coord = ParallelCoordinator(parallel_config)
+        worktree_base = Path(parallel_config.target_dir) / ".worktrees"
+        worktree_base.mkdir(parents=True, exist_ok=True)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "  auto-claude/123-0\n  auto-claude/456-1\n"
+
+        with patch.object(coord.git, "prune_worktrees"), \
+             patch.object(coord.git, "_run", return_value=mock_result) as mock_run, \
+             patch.object(coord.git, "delete_branch") as mock_del:
+            coord._cleanup_all_worktrees()
+
+            # Should have called delete_branch for each branch
+            assert mock_del.call_count == 2
+            mock_del.assert_any_call("auto-claude/123-0", force=True)
+            mock_del.assert_any_call("auto-claude/456-1", force=True)

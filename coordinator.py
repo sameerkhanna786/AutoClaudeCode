@@ -798,6 +798,26 @@ class ParallelCoordinator:
             except Exception:
                 logger.warning("Failed to prune worktrees during cleanup")
 
+            # Clean up orphaned auto-claude branches
+            try:
+                result = self.git._run(
+                    "branch", "--list", "auto-claude/*",
+                    check=False,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    for line in result.stdout.strip().splitlines():
+                        branch = line.strip().lstrip("* ")
+                        if branch:
+                            try:
+                                self.git.delete_branch(branch, force=True)
+                            except Exception:
+                                logger.warning(
+                                    "Failed to delete branch %s during cleanup",
+                                    branch,
+                                )
+            except Exception:
+                logger.warning("Failed to clean up auto-claude branches")
+
         thread = threading.Thread(target=_do_cleanup, daemon=True)
         thread.start()
         thread.join(timeout=self.config.parallel.cleanup_timeout)

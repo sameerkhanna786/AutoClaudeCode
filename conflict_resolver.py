@@ -180,5 +180,7 @@ class ConflictResolver:
                 content = content[1:]
             return content
 
-        # No code block found — return the raw text
-        return response_text.strip()
+        # No code block found — return the raw text.
+        # Preserve a single trailing newline for POSIX compliance.
+        stripped = response_text.strip()
+        return stripped + "\n" if stripped else stripped
