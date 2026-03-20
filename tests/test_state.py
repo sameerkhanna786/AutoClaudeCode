@@ -904,6 +904,28 @@ class TestRecentTaskSummaries:
         # 97 chars of description + "..."
         assert "A" * 97 + "..." in summaries[0]
 
+    def test_early_termination_with_old_records(self, state_mgr):
+        """Should stop early when encountering many consecutive old records."""
+        now = time.time()
+        # Add 10 old records
+        for i in range(10):
+            state_mgr.record_cycle(CycleRecord(
+                timestamp=now - 200000 + i,
+                task_description=f"Old task {i}",
+                success=True,
+            ))
+        # Add 2 recent records
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now, task_description="Recent A", success=True,
+        ))
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=now + 1, task_description="Recent B", success=False,
+        ))
+        summaries = state_mgr.get_recent_task_summaries(lookback_seconds=3600)
+        assert len(summaries) == 2
+        assert "Recent A" in summaries[0]
+        assert "Recent B" in summaries[1]
+
 
 class TestSuccessRateByType:
     def test_empty_history(self, state_mgr):

@@ -67,19 +67,21 @@ def _extract_json_text(raw_output: str) -> str:
             except (json.JSONDecodeError, TypeError):
                 continue
 
-        # Strategy 3: Use raw_decode to find JSON anywhere in the output
+        # Strategy 3: Use raw_decode to find JSON anywhere in the output.
+        # Use str.find() to jump between '{' positions instead of scanning
+        # every character, avoiding O(n) iteration on large outputs.
         decoder = json.JSONDecoder()
-        for i, ch in enumerate(raw_output):
-            if ch != "{":
-                continue
+        idx = raw_output.find("{")
+        while idx != -1:
             try:
-                obj, _ = decoder.raw_decode(raw_output, i)
+                obj, _ = decoder.raw_decode(raw_output, idx)
                 if isinstance(obj, dict):
                     text = _text_from_dict(obj)
                     if text:
                         return text
             except (json.JSONDecodeError, TypeError):
-                continue
+                pass
+            idx = raw_output.find("{", idx + 1)
     except (json.JSONDecodeError, ValueError, TypeError, UnicodeDecodeError) as e:
         logger.debug("JSON extraction failed: %s", e)
 

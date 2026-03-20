@@ -198,5 +198,43 @@ class TestBoundedResponseRead(unittest.TestCase):
         mock_response.read.assert_called_once_with(10 * 1024 * 1024)
 
 
+class TestErrorBodyReadBounded(unittest.TestCase):
+    """HTTP error body reads must be bounded to prevent OOM."""
+
+    @patch("github_integration.urllib.request.urlopen")
+    def test_error_body_read_has_size_limit(self, mock_urlopen):
+        import urllib.error
+
+        config = GitHubConfig(
+            enabled=True,
+            token="ghp_test123",
+            repo_owner="test",
+            repo_name="repo",
+        )
+        client = GitHubClient(config)
+
+        mock_error_fp = MagicMock()
+        mock_error_fp.read = MagicMock(return_value=b"error details")
+        http_error = urllib.error.HTTPError(
+            url="https://api.github.com/test",
+            code=500,
+            msg="Server Error",
+            hdrs=MagicMock(),
+            fp=mock_error_fp,
+        )
+        http_error.read = mock_error_fp.read
+        mock_urlopen.side_effect = http_error
+
+        with self.assertRaises(urllib.error.HTTPError):
+            client._request("GET", "/repos/test/repo")
+
+        # Verify read() was called with a size limit
+        mock_error_fp.read.assert_called_once()
+        args = mock_error_fp.read.call_args
+        assert args is not None
+        assert len(args[0]) > 0, "read() must be called with a size limit"
+        assert args[0][0] == 1024 * 1024  # 1 MB
+
+
 if __name__ == "__main__":
     unittest.main()

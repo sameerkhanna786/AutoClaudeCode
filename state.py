@@ -450,17 +450,29 @@ class StateManager:
         return idle_seconds >= min_idle_seconds
 
     def get_recent_task_summaries(self, lookback_seconds: int = 86400, max_items: int = 20) -> List[str]:
-        """Return human-readable summaries of recent tasks for prompt injection."""
+        """Return human-readable summaries of recent tasks for prompt injection.
+
+        Iterates in reverse since recent records are at the end.
+        Stops early after seeing several consecutive old records,
+        tolerating minor timestamp disorder from concurrent writes.
+        """
         cutoff = time.time() - lookback_seconds
         records = self._load_history()
         summaries = []
-        for r in records:
+        consecutive_old = 0
+        for r in reversed(records):
             if r.get("timestamp", 0) >= cutoff:
+                consecutive_old = 0
                 desc = r.get("task_description", "")
                 if len(desc) > 100:
                     desc = desc[:97] + "..."
                 status = "succeeded" if r.get("success") else "failed"
                 summaries.append(f"- {desc} ({status})")
+            else:
+                consecutive_old += 1
+                if consecutive_old >= 5:
+                    break
+        summaries.reverse()
         return summaries[-max_items:]
 
     def get_success_rate_by_type(self, lookback_seconds: int = 86400) -> Dict[str, float]:

@@ -1013,3 +1013,29 @@ class TestReadFileSnippetPathTraversal:
 
         tasks = discovery._discover_todos()
         assert len(tasks) == 3
+
+
+class TestExtractJsonText:
+    """Tests for _extract_json_text helper."""
+
+    def test_strategy3_finds_json_via_find(self):
+        """Strategy 3 uses str.find() to jump between '{' positions."""
+        from task_discovery import _extract_json_text
+        # Text with no line-aligned JSON but has embedded JSON
+        raw = 'some prefix text {"result": "hello world", "other": 1} trailing'
+        result = _extract_json_text(raw)
+        assert result == "hello world"
+
+    def test_strategy3_skips_invalid_braces(self):
+        """Strategy 3 should skip non-JSON braces and find the valid one."""
+        from task_discovery import _extract_json_text
+        raw = 'text with { invalid json and then {"result": "found it"}'
+        result = _extract_json_text(raw)
+        assert result == "found it"
+
+    def test_returns_raw_when_no_json(self):
+        """Should return raw output when no JSON is found."""
+        from task_discovery import _extract_json_text
+        raw = "no json here at all"
+        result = _extract_json_text(raw)
+        assert result == raw

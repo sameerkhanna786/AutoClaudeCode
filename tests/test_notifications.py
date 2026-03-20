@@ -779,5 +779,30 @@ class TestIPv6AddressBracketing(unittest.TestCase):
             self.assertIn("93.184.216.34", url)
 
 
+class TestWebhookResponseBounded(unittest.TestCase):
+    """Webhook response reads must be bounded to prevent OOM."""
+
+    @patch("notifications._resolve_and_check_ip", return_value=(False, "93.184.216.34"))
+    @patch("notifications.urllib.request.urlopen")
+    def test_response_read_has_size_limit(self, mock_urlopen, _mock_ip):
+        mock_resp = MagicMock()
+        mock_resp.read = MagicMock(return_value=b"ok")
+        mock_urlopen.return_value.__enter__ = MagicMock(return_value=mock_resp)
+        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
+
+        webhook = WebhookConfig(url="https://example.com/hook", type="generic", name="test")
+        config = _make_config(webhooks=[webhook])
+        mgr = NotificationManager(config)
+        mgr._send_webhook(webhook, "test_event", {})
+
+        # Verify read() was called with a size limit argument
+        mock_resp.read.assert_called_once()
+        args = mock_resp.read.call_args
+        assert args is not None
+        # First positional arg should be the max bytes limit
+        assert len(args[0]) > 0, "read() must be called with a size limit"
+        assert args[0][0] == 1024 * 1024  # 1 MB
+
+
 if __name__ == "__main__":
     unittest.main()

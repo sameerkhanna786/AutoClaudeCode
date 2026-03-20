@@ -264,8 +264,9 @@ class NotificationManager:
                     },
                     method="POST",
                 )
+                _MAX_RESP = 1024 * 1024  # 1 MB
                 with urllib.request.urlopen(req, timeout=10) as resp:
-                    resp.read()  # consume response
+                    resp.read(_MAX_RESP)  # consume response
 
                 logger.debug(
                     "Notification sent: event=%s webhook=%s",
