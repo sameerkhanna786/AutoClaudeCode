@@ -345,5 +345,44 @@ class TestExportPrdAtomicWrite(unittest.TestCase):
         )
 
 
+class TestImportPrdSanitization(unittest.TestCase):
+    """PRD task descriptions must be sanitized like feedback files."""
+
+    def test_dangerous_pattern_stripped_from_prd_task(self):
+        """Command substitution in PRD description must be removed."""
+        prd_data = {
+            "tasks": [
+                {"description": "Fix bug $(rm -rf /)", "priority": 1},
+            ]
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".prd.yaml", delete=False
+        ) as f:
+            yaml.dump(prd_data, f)
+            f.flush()
+            tasks = import_prd(f.name)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertNotIn("$(", tasks[0].description)
+        self.assertNotIn("rm -rf", tasks[0].description)
+
+    def test_empty_after_sanitization_skipped(self):
+        """A PRD task that becomes empty after sanitization should be skipped."""
+        prd_data = {
+            "tasks": [
+                {"description": "$(malicious_command)", "priority": 1},
+            ]
+        }
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".prd.yaml", delete=False
+        ) as f:
+            yaml.dump(prd_data, f)
+            f.flush()
+            tasks = import_prd(f.name)
+
+        # Task should be skipped since description is empty after sanitization
+        self.assertEqual(len(tasks), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

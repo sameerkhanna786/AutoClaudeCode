@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from feedback import sanitize_feedback_content
 from task_discovery import Task
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,12 @@ def import_prd(prd_path: str) -> List[Task]:
 
         desc = raw.get("description", raw.get("title", raw.get("name", "")))
         if not desc:
+            continue
+        # Sanitize PRD task descriptions the same way as feedback files
+        # to prevent prompt injection via .prd.yaml/.prd.json files.
+        desc = sanitize_feedback_content(str(desc))
+        if not desc:
+            logger.warning("PRD task %d empty after sanitization, skipping", i)
             continue
 
         try:

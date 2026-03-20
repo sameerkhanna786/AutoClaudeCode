@@ -91,6 +91,10 @@ class StateManager:
                 continue
         return None
 
+    # Maximum history file size to load (50 MB). Prevents OOM on
+    # corrupted or externally modified files that bypass pruning.
+    _MAX_HISTORY_FILE_BYTES = 50 * 1024 * 1024
+
     def _load_history(self) -> List[Dict[str, Any]]:
         if not self.history_file.exists():
             self._cache = []
@@ -100,6 +104,16 @@ class StateManager:
             current_mtime = self.history_file.stat().st_mtime
             if self._cache is not None and current_mtime == self._cache_mtime:
                 return self._cache
+            file_size = self.history_file.stat().st_size
+            if file_size > self._MAX_HISTORY_FILE_BYTES:
+                logger.error(
+                    "History file too large (%d bytes, limit %d). "
+                    "Refusing to load to prevent OOM. Manual cleanup required.",
+                    file_size, self._MAX_HISTORY_FILE_BYTES,
+                )
+                if self._cache is not None:
+                    return self._cache
+                return []
             text = self.history_file.read_text(encoding="utf-8").strip()
             if not text:
                 self._cache = []

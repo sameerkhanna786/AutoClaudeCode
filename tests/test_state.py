@@ -1722,3 +1722,34 @@ class TestEarlyTerminationInScans:
             ))
         # "Target recent" should still be found despite interleaved old records
         assert state_mgr.was_recently_attempted("Target recent", lookback_seconds=3600)
+
+
+class TestHistoryFileSizeGuard:
+    """_load_history must refuse to load oversized files to prevent OOM."""
+
+    def test_oversized_history_returns_empty(self, state_mgr):
+        """A history file exceeding the size limit should not be loaded."""
+        # Write a file that's too large
+        with patch.object(
+            type(state_mgr), '_MAX_HISTORY_FILE_BYTES', 100
+        ):
+            # Write content larger than 100 bytes
+            large_records = [{"timestamp": 1, "task_description": "x" * 200}]
+            Path(state_mgr.history_file).write_text(
+                json.dumps(large_records), encoding="utf-8"
+            )
+            # Invalidate cache
+            state_mgr._cache = None
+            state_mgr._cache_mtime = 0.0
+
+            result = state_mgr._load_history()
+            assert result == []
+
+    def test_normal_sized_history_loads_fine(self, state_mgr):
+        """Files under the size limit should load normally."""
+        state_mgr.record_cycle(CycleRecord(
+            timestamp=time.time(), task_description="Normal task", success=True,
+        ))
+        records = state_mgr._load_history()
+        assert len(records) == 1
+        assert records[0]["task_description"] == "Normal task"
