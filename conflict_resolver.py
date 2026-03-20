@@ -63,9 +63,12 @@ class ConflictResolver:
 
             abs_path = (Path(repo_dir) / filepath).resolve()
             repo_resolved = Path(repo_dir).resolve()
-            # Guard against path traversal: resolved path must stay within repo
-            # Use os.sep suffix to prevent prefix confusion (e.g. /repo vs /repo_evil)
-            if abs_path != repo_resolved and not str(abs_path).startswith(str(repo_resolved) + os.sep):
+            # Guard against path traversal: resolved path must stay within repo.
+            # Uses Path.relative_to() which is immune to prefix confusion
+            # (e.g. /repo vs /repo_evil) unlike str.startswith().
+            try:
+                abs_path.relative_to(repo_resolved)
+            except ValueError:
                 logger.warning("Path traversal detected, rejecting: %s", filepath)
                 return False, self._total_cost
             if not abs_path.exists():
@@ -169,11 +172,12 @@ class ConflictResolver:
         match = _CODE_BLOCK_RE.search(response_text)
         if match:
             content = match.group(1)
-            # Strip leading/trailing newlines from code fence content
+            # Strip only the leading newline from code fence content.
+            # The trailing newline is preserved because source files should
+            # end with a newline (POSIX compliance). The code fence syntax
+            # ```\ncontent\n``` means the trailing \n is part of the content.
             if content.startswith('\n'):
                 content = content[1:]
-            if content.endswith('\n'):
-                content = content[:-1]
             return content
 
         # No code block found — return the raw text

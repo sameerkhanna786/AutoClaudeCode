@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from typing import List, Optional, Protocol, runtime_checkable
 
-from claude_runner import ClaudeResult, ClaudeRunner
+from claude_runner import CircuitBreaker, ClaudeResult, ClaudeRunner
 from config_schema import Config
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,7 @@ class OpenAIRunner:
         self._model = config.claude.resolved_model or config.claude.model
         self._timeout = config.claude.timeout_seconds
         self._base_url = "https://api.openai.com/v1/chat/completions"
+        self.circuit_breaker = CircuitBreaker()
 
     def _sanitize_error(self, message: str) -> str:
         return _sanitize_error(message, self._api_key)
@@ -103,6 +104,13 @@ class OpenAIRunner:
             return ClaudeResult(
                 success=False,
                 error="OpenAI API key not set (check api_key_env config)",
+            )
+
+        if not self.circuit_breaker.allow_request():
+            return ClaudeResult(
+                success=False,
+                error="Circuit breaker is open: too many consecutive API failures. "
+                      "Will automatically retry after recovery timeout.",
             )
 
         if add_dirs:
@@ -146,6 +154,7 @@ class OpenAIRunner:
                     logger.debug("OpenAI transient error %d, retrying in %ds", e.code, delay)
                     time.sleep(delay)
                     continue
+                self.circuit_breaker.record_failure()
                 return ClaudeResult(
                     success=False, error=last_error,
                     duration_seconds=time.time() - start,
@@ -155,11 +164,13 @@ class OpenAIRunner:
                 if attempt < max_attempts - 1:
                     time.sleep(2 ** attempt)
                     continue
+                self.circuit_breaker.record_failure()
                 return ClaudeResult(
                     success=False, error=last_error,
                     duration_seconds=time.time() - start,
                 )
             except Exception as e:
+                self.circuit_breaker.record_failure()
                 return ClaudeResult(
                     success=False,
                     error=self._sanitize_error(f"OpenAI request failed: {e}"),
@@ -170,6 +181,7 @@ class OpenAIRunner:
 
         # Parse response
         if not response_data:
+            self.circuit_breaker.record_failure()
             return ClaudeResult(
                 success=False,
                 error="OpenAI returned empty response",
@@ -182,12 +194,15 @@ class OpenAIRunner:
             result_text = choices[0].get("message", {}).get("content", "")
 
         if not result_text:
+            self.circuit_breaker.record_failure()
             return ClaudeResult(
                 success=False,
                 error="OpenAI returned no content in response",
                 duration_seconds=time.time() - start,
                 raw_json=response_data,
             )
+
+        self.circuit_breaker.record_success()
 
         usage = response_data.get("usage", {})
         input_tokens = usage.get("prompt_tokens", 0)
@@ -223,6 +238,7 @@ class GeminiRunner:
         self._api_key = os.environ.get(api_key_env, "")
         self._model = config.claude.resolved_model or config.claude.model
         self._timeout = config.claude.timeout_seconds
+        self.circuit_breaker = CircuitBreaker()
 
     def _build_url(self) -> str:
         return (
@@ -239,6 +255,13 @@ class GeminiRunner:
             return ClaudeResult(
                 success=False,
                 error="Gemini API key not set (check api_key_env config)",
+            )
+
+        if not self.circuit_breaker.allow_request():
+            return ClaudeResult(
+                success=False,
+                error="Circuit breaker is open: too many consecutive API failures. "
+                      "Will automatically retry after recovery timeout.",
             )
 
         if add_dirs:
@@ -280,6 +303,7 @@ class GeminiRunner:
                     logger.debug("Gemini transient error %d, retrying in %ds", e.code, delay)
                     time.sleep(delay)
                     continue
+                self.circuit_breaker.record_failure()
                 return ClaudeResult(
                     success=False, error=last_error,
                     duration_seconds=time.time() - start,
@@ -289,11 +313,13 @@ class GeminiRunner:
                 if attempt < max_attempts - 1:
                     time.sleep(2 ** attempt)
                     continue
+                self.circuit_breaker.record_failure()
                 return ClaudeResult(
                     success=False, error=last_error,
                     duration_seconds=time.time() - start,
                 )
             except Exception as e:
+                self.circuit_breaker.record_failure()
                 return ClaudeResult(
                     success=False,
                     error=self._sanitize_error(f"Gemini request failed: {e}"),
@@ -304,6 +330,7 @@ class GeminiRunner:
 
         # Parse response
         if not response_data:
+            self.circuit_breaker.record_failure()
             return ClaudeResult(
                 success=False,
                 error="Gemini returned empty response",
@@ -319,12 +346,15 @@ class GeminiRunner:
                 result_text = parts[0].get("text", "")
 
         if not result_text:
+            self.circuit_breaker.record_failure()
             return ClaudeResult(
                 success=False,
                 error="Gemini returned no content in response",
                 duration_seconds=time.time() - start,
                 raw_json=response_data,
             )
+
+        self.circuit_breaker.record_success()
 
         usage = response_data.get("usageMetadata", {})
         input_tokens = usage.get("promptTokenCount", 0)

@@ -699,7 +699,13 @@ class ParallelCoordinator:
         prune_worktrees so that a failure in one step doesn't prevent
         the others from running. Falls back to shutil.rmtree if
         git worktree remove fails or times out.
+
+        Uses a cancel Event to signal the cleanup thread to abort early
+        when the timeout expires, preventing abandoned daemon threads
+        from holding git locks or file handles indefinitely.
         """
+        cancel = threading.Event()
+
         def _do_cleanup():
             main_git = GitManager(self.config.target_dir)
             # Step 1: remove worktree via git
@@ -714,10 +720,16 @@ class ParallelCoordinator:
                 if wt_path.exists():
                     shutil.rmtree(str(wt_path), ignore_errors=True)
 
+            if cancel.is_set():
+                return
+
             # Step 2: force-remove the directory if it still exists
             wt_path = Path(worker.worktree_dir)
             if wt_path.exists():
                 shutil.rmtree(str(wt_path), ignore_errors=True)
+
+            if cancel.is_set():
+                return
 
             # Step 3: delete the branch
             try:
@@ -732,8 +744,9 @@ class ParallelCoordinator:
         thread.start()
         thread.join(timeout=timeout)
         if thread.is_alive():
+            cancel.set()
             logger.warning(
-                "Worker %d: cleanup timed out after %.0fs, abandoning",
+                "Worker %d: cleanup timed out after %.0fs, signalled cancellation",
                 worker.worker_id, timeout,
             )
 

@@ -670,5 +670,37 @@ class TestAddDirsIncludedInPrompt(unittest.TestCase):
         self.assertEqual(sent_content, "Fix bug")
 
 
+class TestProviderRunnerCircuitBreaker(unittest.TestCase):
+    """Test that non-Claude runners have circuit breaker protection."""
+
+    def test_openai_runner_has_circuit_breaker(self):
+        """Verify OpenAI runner has circuit breaker protection."""
+        config = _make_config("openai")
+        runner = OpenAIRunner(config)
+        self.assertTrue(hasattr(runner, 'circuit_breaker'))
+
+    def test_gemini_runner_has_circuit_breaker(self):
+        """Verify Gemini runner has circuit breaker protection."""
+        config = _make_config("gemini")
+        runner = GeminiRunner(config)
+        self.assertTrue(hasattr(runner, 'circuit_breaker'))
+
+    def test_openai_circuit_breaker_blocks_after_failures(self):
+        """OpenAI runner circuit breaker opens after consecutive failures."""
+        config = _make_config("openai")
+        runner = OpenAIRunner(config)
+        for _ in range(runner.circuit_breaker.failure_threshold):
+            runner.circuit_breaker.record_failure()
+        self.assertFalse(runner.circuit_breaker.allow_request())
+
+    def test_gemini_circuit_breaker_blocks_after_failures(self):
+        """Gemini runner circuit breaker opens after consecutive failures."""
+        config = _make_config("gemini")
+        runner = GeminiRunner(config)
+        for _ in range(runner.circuit_breaker.failure_threshold):
+            runner.circuit_breaker.record_failure()
+        self.assertFalse(runner.circuit_breaker.allow_request())
+
+
 if __name__ == "__main__":
     unittest.main()

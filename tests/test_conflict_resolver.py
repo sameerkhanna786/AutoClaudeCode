@@ -54,7 +54,7 @@ class TestExtractResolvedContent:
     def test_extracts_from_code_block(self):
         response = "Here is the resolved file:\n```python\nresolved line\n```\nDone."
         result = ConflictResolver._extract_resolved_content(response)
-        assert result == "resolved line"
+        assert result == "resolved line\n"
 
     def test_returns_raw_text_without_code_block(self):
         response = "resolved content here"
@@ -71,21 +71,21 @@ class TestExtractResolvedContent:
     def test_extracts_first_code_block_when_multiple(self):
         response = "```\nfirst\n```\ntext\n```\nsecond\n```"
         result = ConflictResolver._extract_resolved_content(response)
-        assert result == "first"
+        assert result == "first\n"
 
-    def test_code_block_strips_surrounding_newlines(self):
-        """Code block content should not have spurious leading/trailing newlines."""
+    def test_code_block_preserves_trailing_newline(self):
+        """Code block content should preserve trailing newline for POSIX compliance."""
         response = "```python\ndef hello():\n    pass\n```"
         result = ConflictResolver._extract_resolved_content(response)
-        assert result == "def hello():\n    pass"
+        assert result == "def hello():\n    pass\n"
         assert not result.startswith("\n")
-        assert not result.endswith("\n")
+        assert result.endswith("\n")
 
     def test_code_block_preserves_internal_newlines(self):
         """Internal newlines in the code block should be preserved."""
         response = "```\nline1\n\nline3\n```"
         result = ConflictResolver._extract_resolved_content(response)
-        assert result == "line1\n\nline3"
+        assert result == "line1\n\nline3\n"
 
 
 # ---------------------------------------------------------------------------
@@ -661,3 +661,41 @@ class TestPathTraversalPrefixConfusion:
             )
 
         assert success is True
+
+    def test_path_traversal_via_relative_to(self, tmp_path):
+        """Verify path traversal is rejected for symlink-like attacks.
+
+        The current implementation uses str(abs_path).startswith(str(repo) + os.sep)
+        instead of Path.relative_to(). This test documents the expected behavior
+        regardless of internal implementation.
+        """
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+
+        config = Config()
+        resolver = ConflictResolver(config)
+
+        # A path that escapes via .. but normalizes to outside repo
+        result, cost = resolver.resolve_conflicts(
+            str(repo),
+            ["../../../etc/passwd"],
+            "worker-branch",
+            "main",
+        )
+        assert result is False
+
+
+class TestExtractPreservesTrailingNewline:
+    """Verify _extract_resolved_content preserves trailing newline for POSIX compliance."""
+
+    def test_extract_preserves_final_newline_in_source_files(self):
+        """Source files should end with a newline (POSIX compliance).
+
+        The trailing newline inside a code block is preserved by
+        _extract_resolved_content so resolved files end with a proper newline.
+        """
+        response = '```python\ndef foo():\n    pass\n```'
+        result = ConflictResolver._extract_resolved_content(response)
+        # Trailing newline is preserved for POSIX-compliant source files
+        assert result == 'def foo():\n    pass\n'

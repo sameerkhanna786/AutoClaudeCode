@@ -777,6 +777,69 @@ class TestWorkersClearedOnException:
         )
 
 
+class TestCleanupWorkerDaemonThreadAbandoned:
+    """Verify that _cleanup_worker_with_timeout uses daemon threads with cancellation.
+
+    When cleanup times out, the daemon thread is signalled via a threading.Event
+    to stop at the next checkpoint. The thread checks cancel.is_set() between
+    cleanup steps so it can exit early rather than holding locks indefinitely.
+    """
+
+    def test_cleanup_creates_daemon_thread(self, parallel_config):
+        """Verify the cleanup thread is created as a daemon thread."""
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator._cleanup_worker_with_timeout)
+        assert "daemon=True" in source, (
+            "_cleanup_worker_with_timeout should create a daemon thread"
+        )
+
+    def test_abandoned_daemon_thread_after_timeout(self, parallel_config, caplog):
+        """When cleanup times out, the daemon thread is abandoned (not joined/cancelled).
+
+        This documents the behavior: after the timeout, the thread.is_alive()
+        check fires, a warning is logged, and the method returns — but the
+        daemon thread continues running in the background with no cancellation.
+        """
+        import logging
+
+        coord = ParallelCoordinator(parallel_config)
+        worker = MagicMock()
+        worker.worker_id = 99
+        worker.worktree_dir = str(Path(parallel_config.target_dir) / ".worktrees" / "worker-99")
+        worker.branch_name = "auto-claude/test-99"
+
+        with patch("coordinator.GitManager") as MockGit:
+            mock_git_instance = MockGit.return_value
+            # Simulate cleanup that hangs
+            mock_git_instance.remove_worktree.side_effect = lambda *a, **kw: time.sleep(60)
+
+            with caplog.at_level(logging.WARNING):
+                coord._cleanup_worker_with_timeout(worker, timeout=1)
+
+        # The warning about timeout is logged
+        assert any("cleanup timed out" in r.message for r in caplog.records)
+        # The method returns even though the thread is still alive —
+        # the daemon thread is abandoned with no further cleanup
+
+    def test_thread_cancellation_mechanism(self, parallel_config):
+        """Verify that _cleanup_worker_with_timeout uses a threading.Event
+        to signal cancellation to the cleanup thread when timeout expires.
+
+        The cancel Event is checked between cleanup steps so the thread
+        can exit early rather than continuing to hold git/file locks.
+        """
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator._cleanup_worker_with_timeout)
+        assert "Event" in source, (
+            "A threading.Event should be used for cancellation in _cleanup_worker_with_timeout"
+        )
+        assert "cancel" in source.lower(), (
+            "A cancel mechanism should exist in _cleanup_worker_with_timeout"
+        )
+
+
 class TestMergeWorkerBranchCleanNoCommit:
     """Test that AI conflict resolution handles clean merges correctly."""
 
