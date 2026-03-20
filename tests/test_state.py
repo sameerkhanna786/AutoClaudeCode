@@ -20,6 +20,30 @@ def state_mgr(tmp_path, default_config):
     return StateManager(default_config)
 
 
+class TestLoadHistoryCorruptReturnsListCopy:
+    """_load_history must return a list copy, not the internal cache reference,
+    even when restoring from a corrupt backup."""
+
+    def test_corrupt_restore_returns_copy(self, tmp_path, default_config):
+        """After restoring from a corrupt backup, _load_history should return
+        a copy so callers cannot mutate the internal cache."""
+        default_config.paths.history_file = str(tmp_path / "history.json")
+        mgr = StateManager(default_config)
+
+        # Seed a valid backup
+        backup = tmp_path / "history.json.corrupt.1"
+        backup.write_text(json.dumps([{"task_description": "old", "timestamp": 1.0}]))
+        # Write corrupt data to the main file
+        (tmp_path / "history.json").write_text("{bad json")
+
+        result = mgr._load_history()
+        assert isinstance(result, list)
+        # Mutating the returned list should NOT change the internal cache
+        result.append({"task_description": "injected"})
+        result2 = mgr._load_history()
+        assert len(result2) == 1, "Internal cache was mutated by caller"
+
+
 class TestStateManager:
     def test_record_and_load(self, state_mgr):
         record = CycleRecord(

@@ -87,7 +87,8 @@ class CycleStateWriter:
 
     def clear(self) -> None:
         """Remove the cycle state file (cycle completed)."""
-        self._current = None
+        with self._lock:
+            self._current = None
         try:
             self._path.unlink(missing_ok=True)
         except OSError as e:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -79,7 +80,7 @@ class ContextMonitor:
             return []
 
         # Ensure task has a usable ID for dependency tracking
-        parent_id = task.task_id or f"anon_{id(task)}"
+        parent_id = task.task_id or f"anon_{hashlib.md5(task.description.encode()).hexdigest()[:12]}"
 
         result_text = result.result_text
         if not result_text:

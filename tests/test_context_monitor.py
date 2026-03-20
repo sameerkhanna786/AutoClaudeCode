@@ -369,5 +369,25 @@ class TestExtractSignalsNoneResultText(unittest.TestCase):
         self.assertTrue(signals.result_text_empty)
 
 
+class TestSplitTaskIdDeterminism(unittest.TestCase):
+    """Split task IDs must be deterministic (not depend on object id())."""
+
+    def test_empty_task_id_produces_deterministic_parent_id(self):
+        """Two calls with identical empty-id tasks should produce the same parent_id prefix."""
+        config = _make_config()
+        monitor = ContextMonitor(config)
+        task1 = Task(description="Fix bugs", priority=2, source="feedback", task_id="")
+        task2 = Task(description="Fix bugs", priority=2, source="feedback", task_id="")
+        result = ClaudeResult(success=True, result_text="")
+
+        splits1 = monitor.generate_split_tasks(task1, result)
+        splits2 = monitor.generate_split_tasks(task2, result)
+
+        # Parent IDs embedded in depends_on should be identical for identical tasks
+        self.assertEqual(splits1[0].depends_on, splits2[0].depends_on)
+        # Task IDs should also be identical for identical inputs
+        self.assertEqual(splits1[0].task_id, splits2[0].task_id)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -266,6 +266,63 @@ class TestWriteUnlockedExceptionCleanup:
         assert 'encoding="utf-8"' in source or "encoding='utf-8'" in source
 
 
+class TestCycleStateClearThreadSafety:
+    """clear() must hold the lock to prevent races with concurrent update() calls."""
+
+    def test_clear_holds_lock(self, tmp_path):
+        """clear() should acquire self._lock before setting self._current = None."""
+        import threading
+        writer = CycleStateWriter(str(tmp_path))
+        writer.write(CycleState(phase="executing"))
+
+        # Manually hold the lock; clear() should block
+        writer._lock.acquire()
+        result_holder = []
+
+        def do_clear():
+            writer.clear()
+            result_holder.append("done")
+
+        t = threading.Thread(target=do_clear)
+        t.start()
+        t.join(timeout=0.1)
+        # Thread should be blocked (lock held by us)
+        assert result_holder == [], "clear() should block when lock is held"
+
+        writer._lock.release()
+        t.join(timeout=2.0)
+        assert result_holder == ["done"]
+
+    def test_concurrent_clear_and_update(self, tmp_path):
+        """Concurrent clear() and update() should not corrupt state."""
+        import threading
+        writer = CycleStateWriter(str(tmp_path))
+        writer.write(CycleState(phase="initial"))
+        errors = []
+
+        def do_clears():
+            try:
+                for _ in range(20):
+                    writer.clear()
+            except Exception as e:
+                errors.append(e)
+
+        def do_updates():
+            try:
+                for i in range(20):
+                    writer.update(phase=f"update_{i}")
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=do_clears)
+        t2 = threading.Thread(target=do_updates)
+        t1.start()
+        t2.start()
+        t1.join(timeout=5.0)
+        t2.join(timeout=5.0)
+        assert errors == []
+
+
 class TestCycleStateUpdateSkipsDiskRead:
     """update() should use in-memory state instead of reading from disk."""
 
