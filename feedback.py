@@ -285,8 +285,7 @@ class FeedbackManager:
                             task_id = fm_line[len("task_id:"):].strip().strip('"').strip("'")
                         elif fm_line.startswith("depends_on:"):
                             deps_str = fm_line[len("depends_on:"):].strip()
-                            if deps_str.startswith("[") and deps_str.endswith("]"):
-                                deps_str = deps_str[1:-1]
+                            deps_str = deps_str.strip("[]")
                             depends_on = [
                                 d.strip().strip('"').strip("'")
                                 for d in deps_str.split(",") if d.strip()

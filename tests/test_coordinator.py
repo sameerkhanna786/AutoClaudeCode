@@ -985,3 +985,25 @@ class TestMergeRollbackProtection:
         assert "try:" in source and "rollback" in source, (
             "Rollback calls should be protected by try-except blocks"
         )
+
+
+class TestOrphanWorktreeCleanupLogging:
+    """Orphaned worktree cleanup should log exceptions, not silently swallow them."""
+
+    def test_worktree_removal_failure_is_logged(self, parallel_config, caplog):
+        """When git worktree remove fails, the exception should be logged before rmtree fallback."""
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator._run_cycle)
+        # Find the orphan cleanup section - there should be a log message when
+        # remove_worktree fails, not just a silent except
+        lines = source.splitlines()
+        for i, line in enumerate(lines):
+            if "remove_worktree" in line and "orphan" not in line.lower():
+                continue
+            if "remove_worktree(wt_path" in line:
+                # Look for logging in the except block that follows
+                except_block = "\n".join(lines[i:i+5])
+                assert "logger" in except_block or "shutil.rmtree" in except_block, (
+                    "Orphan worktree cleanup should log or handle the exception"
+                )

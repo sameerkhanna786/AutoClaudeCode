@@ -501,7 +501,7 @@ class ClaudeRunner:
             if proc.returncode != 0:
                 if attempt < self.max_retries:
                     stderr_lower = proc.stderr.lower()
-                    if any(p in stderr_lower for p in ("rate limit", "429", "too many requests", "quota exceeded", "capacity", "overloaded")):
+                    if any(p in stderr_lower for p in ("rate limit", "429", "too many requests", "quota exceeded", "over capacity", "at capacity", "overloaded")):
                         delay = self.rate_limit_base_delay * (self.rate_limit_multiplier ** attempt)
                         logger.warning(
                             "Rate limited (attempt %d/%d), backing off %ds",

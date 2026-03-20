@@ -119,7 +119,8 @@ class ParallelCoordinator:
                     if wt_path:
                         try:
                             self.git.remove_worktree(wt_path, force=True)
-                        except Exception:
+                        except Exception as e:
+                            logger.warning("Failed to git-remove orphaned worktree %s: %s, falling back to rmtree", wt_path, e)
                             shutil.rmtree(wt_path, ignore_errors=True)
                     if branch:
                         try:

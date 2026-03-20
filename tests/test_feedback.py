@@ -889,3 +889,38 @@ class TestBacktickRegexPreservesInlineCode:
         assert "parser.py" in result, (
             f"Legitimate inline code reference was stripped: {result!r}"
         )
+
+
+class TestDependsOnBracketParsing:
+    """YAML frontmatter depends_on parsing should handle malformed brackets."""
+
+    def test_well_formed_brackets(self, fb_mgr):
+        fb_dir = Path(fb_mgr.feedback_dir)
+        (fb_dir / "task.md").write_text(
+            "---\ntask_id: t1\ndepends_on: [t2, t3]\n---\nDo something"
+        )
+        tasks = fb_mgr.get_pending_feedback()
+        assert len(tasks) == 1
+        assert tasks[0].depends_on == ["t2", "t3"]
+
+    def test_malformed_missing_closing_bracket(self, fb_mgr):
+        """A missing closing bracket should not leak '[' into dependency names."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        (fb_dir / "task.md").write_text(
+            "---\ntask_id: t1\ndepends_on: [t2, t3\n---\nDo something"
+        )
+        tasks = fb_mgr.get_pending_feedback()
+        assert len(tasks) == 1
+        for dep in tasks[0].depends_on:
+            assert not dep.startswith("["), f"Bracket leaked into dependency name: {dep!r}"
+
+    def test_malformed_missing_opening_bracket(self, fb_mgr):
+        """A missing opening bracket should not leak ']' into dependency names."""
+        fb_dir = Path(fb_mgr.feedback_dir)
+        (fb_dir / "task.md").write_text(
+            "---\ntask_id: t1\ndepends_on: t2, t3]\n---\nDo something"
+        )
+        tasks = fb_mgr.get_pending_feedback()
+        assert len(tasks) == 1
+        for dep in tasks[0].depends_on:
+            assert not dep.endswith("]"), f"Bracket leaked into dependency name: {dep!r}"

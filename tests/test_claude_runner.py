@@ -984,3 +984,47 @@ class TestTryParseJsonStrategy3Performance:
         result = runner._try_parse_json(text)
         assert result is not None
         assert result["result"] == "ok"
+
+
+class TestRateLimitPatternSpecificity:
+    """Rate limit detection should not false-positive on generic words like 'capacity'."""
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.Popen")
+    def test_generic_capacity_not_treated_as_rate_limit(self, mock_popen, mock_sleep, runner):
+        """Stderr containing 'capacity' in unrelated context should use fixed delays, not rate limit backoff."""
+        mock_popen.side_effect = [
+            _make_popen_mock(returncode=1, stderr="insufficient capacity for model deployment"),
+            _make_popen_mock(returncode=1, stderr="insufficient capacity for model deployment"),
+            _make_popen_mock(returncode=1, stderr="insufficient capacity for model deployment"),
+            _make_popen_mock(returncode=1, stderr="insufficient capacity for model deployment"),
+        ]
+        result = runner.run("Fix the bug")
+        assert result.success is False
+        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        # Should use fixed delays (2, 8, 32), NOT rate limit backoff (5, 15, 45)
+        assert delays == [2, 8, 32]
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.Popen")
+    def test_over_capacity_treated_as_rate_limit(self, mock_popen, mock_sleep, runner):
+        """Stderr containing 'over capacity' should trigger rate limit backoff."""
+        mock_popen.side_effect = [
+            _make_popen_mock(returncode=1, stderr="server is over capacity"),
+            _make_popen_mock(returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}'),
+        ]
+        result = runner.run("Fix the bug")
+        assert result.success is True
+        mock_sleep.assert_called_once_with(5)  # rate limit backoff
+
+    @patch("claude_runner.time.sleep")
+    @patch("claude_runner.subprocess.Popen")
+    def test_at_capacity_treated_as_rate_limit(self, mock_popen, mock_sleep, runner):
+        """Stderr containing 'at capacity' should trigger rate limit backoff."""
+        mock_popen.side_effect = [
+            _make_popen_mock(returncode=1, stderr="service is at capacity"),
+            _make_popen_mock(returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}'),
+        ]
+        result = runner.run("Fix the bug")
+        assert result.success is True
+        mock_sleep.assert_called_once_with(5)
