@@ -30,7 +30,7 @@ _DANGEROUS_PATTERNS = [
     # Shell command injection patterns
     re.compile(r'\$\([^)]+\)'),                    # $() command substitution
     re.compile(r'\$\{[^}]+\}'),                    # ${} variable expansion
-    re.compile(r'`[^`]*(?:\$[\({]|;|&&|\||>[>]?)[^`]*`'),  # backtick with shell metacharacters
+    re.compile(r'`[^`]*\s[^`]*`'),                              # backtick with spaces (likely commands)
     # Null bytes and control characters (excluding newlines/tabs)
     re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]'),
 ]

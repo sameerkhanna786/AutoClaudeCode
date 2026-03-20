@@ -691,10 +691,16 @@ class ParallelCoordinator:
             self._signal_received = True
             logger.info("Received signal %d, shutting down workers...", signum)
             self._running = False
-            # Terminate any running Claude subprocesses in workers
-            # Snapshot the list under lock to avoid iterating while main thread mutates it
-            with self._workers_lock:
+            # Terminate any running Claude subprocesses in workers.
+            # NOTE: Do NOT acquire self._workers_lock here — signal handlers
+            # run in the main thread, which may already hold the lock, causing
+            # a deadlock on non-reentrant threading.Lock. Instead, read the
+            # list directly; the worst case is a stale snapshot, which is
+            # acceptable during shutdown.
+            try:
                 workers_snapshot = list(self._workers)
+            except Exception:
+                return
             for worker in workers_snapshot:
                 runner = worker._claude  # capture to avoid TOCTOU race
                 if runner is not None:

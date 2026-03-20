@@ -89,10 +89,10 @@ class CycleStateWriter:
         """Remove the cycle state file (cycle completed)."""
         with self._lock:
             self._current = None
-        try:
-            self._path.unlink(missing_ok=True)
-        except OSError as e:
-            logger.warning("Failed to clear cycle state: %s", e)
+            try:
+                self._path.unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning("Failed to clear cycle state: %s", e)
 
     def update(self, **kwargs: Any) -> None:
         """Update in-memory state, merge kwargs, and write back.

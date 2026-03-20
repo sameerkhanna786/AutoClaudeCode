@@ -162,7 +162,7 @@ class StateManager:
             # Never return [] when we have cached data — that would cause
             # record_cycle to overwrite the history file with a single entry.
             if self._cache is not None:
-                return self._cache
+                return list(self._cache)
             return []
 
     def _save_history(self, records: List[Dict[str, Any]]) -> None:
@@ -607,7 +607,7 @@ class StateManager:
         """
         records = self._load_history()
         matches: List[Dict[str, Any]] = []
-        for r in records:
+        for r in reversed(records):
             match = r.get("task_description") == task_description
             if not match:
                 match = task_description in r.get("task_descriptions", [])
@@ -620,7 +620,10 @@ class StateManager:
                     "validation_summary": r.get("validation_summary", ""),
                     "timestamp": r.get("timestamp", 0),
                 })
-        return matches[-max_attempts:]
+                if len(matches) >= max_attempts:
+                    break
+        matches.reverse()
+        return matches
 
     def get_strategy_performance_report(self, lookback_seconds: int = 86400) -> str:
         """Return a formatted string showing performance per task type over the lookback period.

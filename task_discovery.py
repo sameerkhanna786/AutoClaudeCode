@@ -225,8 +225,54 @@ class TaskDiscovery:
         self.state_manager = state_manager
         self._last_idea_discovery_time: float = 0.0
 
+    def _walk_python_files(self):
+        """Walk the target directory once and yield (rel_path, content, tree) tuples.
+
+        Caches results in self._py_file_cache so that multiple AST-based
+        discovery methods (quality, imports, complexity, dead code) share a
+        single os.walk + read + ast.parse pass instead of each doing it
+        independently.
+        """
+        if hasattr(self, '_py_file_cache'):
+            yield from self._py_file_cache
+            return
+
+        cache = []
+        target = Path(self.target_dir)
+        exclude_dirs = set(self.config.discovery.exclude_dirs)
+
+        for root, dirs, files in os.walk(target):
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+
+                fpath = Path(root) / fname
+                rel_path = str(fpath.relative_to(target))
+
+                try:
+                    content = fpath.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+
+                try:
+                    tree = ast.parse(content, filename=rel_path)
+                except SyntaxError:
+                    tree = None
+
+                entry = (rel_path, content, tree)
+                cache.append(entry)
+                yield entry
+
+        self._py_file_cache = cache
+
     def discover_all(self) -> List[Task]:
         """Run all enabled discovery strategies and return sorted tasks."""
+        # Clear the shared Python file cache so AST-based methods share
+        # a single walk/read/parse pass within this discovery cycle.
+        if hasattr(self, '_py_file_cache'):
+            del self._py_file_cache
         tasks: List[Task] = []
         dc = self.config.discovery
 
@@ -941,108 +987,89 @@ class TaskDiscovery:
     def _discover_quality_issues(self) -> List[Task]:
         """Review source files for general quality issues."""
         tasks: List[Task] = []
-        target = Path(self.target_dir)
-        exclude_dirs = set(self.config.discovery.exclude_dirs)
 
-        for root, dirs, files in os.walk(target):
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        for rel_path, content, tree in self._walk_python_files():
+            lines = content.split("\n")
+            # Flag very long files
+            if len(lines) > 500:
+                tasks.append(Task(
+                    description=f"Review and potentially refactor {rel_path} ({len(lines)} lines)",
+                    priority=5,
+                    source="quality",
+                    source_file=rel_path,
+                ))
 
-            for fname in files:
-                if not fname.endswith(".py"):
-                    continue
+            if tree is None:
+                continue
 
-                fpath = Path(root) / fname
-                rel_path = str(fpath.relative_to(target))
-
-                try:
-                    content = fpath.read_text(encoding="utf-8", errors="ignore")
-                except OSError:
-                    continue
-
-                lines = content.split("\n")
-                # Flag very long files
-                if len(lines) > 500:
-                    tasks.append(Task(
-                        description=f"Review and potentially refactor {rel_path} ({len(lines)} lines)",
-                        priority=5,
-                        source="quality",
-                        source_file=rel_path,
-                    ))
-
-                # AST-based checks
-                try:
-                    tree = ast.parse(content, filename=rel_path)
-                except SyntaxError:
-                    continue
-
-                # (a) Functions with more than 5 parameters
-                for node in ast.walk(tree):
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        args = node.args
-                        param_count = (
-                            len(args.posonlyargs)
-                            + len(args.args)
-                            + len(args.kwonlyargs)
-                        )
-                        # Exclude 'self' and 'cls' from count
-                        if args.args and args.args[0].arg in ("self", "cls"):
-                            param_count -= 1
-                        if param_count > 5:
-                            tasks.append(Task(
-                                description=(
-                                    f"Reduce parameters in `{node.name}` in "
-                                    f"`{rel_path}:{node.lineno}` ({param_count} params)"
-                                ),
-                                priority=5,
-                                source="quality",
-                                source_file=rel_path,
-                                line_number=node.lineno,
-                            ))
-
-                # (b) Deeply nested code (indentation level > 4)
-                max_indent = 0
-                deepest_line = 0
-                for i, line in enumerate(lines, 1):
-                    stripped = line.lstrip()
-                    if not stripped or stripped.startswith("#"):
-                        continue
-                    indent = len(line) - len(stripped)
-                    # Assume 4-space indentation
-                    level = indent // 4
-                    if level > max_indent:
-                        max_indent = level
-                        deepest_line = i
-                if max_indent > 4:
-                    tasks.append(Task(
-                        description=(
-                            f"Reduce nesting depth in `{rel_path}:{deepest_line}` "
-                            f"(max indentation level {max_indent})"
-                        ),
-                        priority=5,
-                        source="quality",
-                        source_file=rel_path,
-                        line_number=deepest_line,
-                    ))
-
-                # (c) Files with no module-level docstring
-                if tree.body:
-                    first_stmt = tree.body[0]
-                    has_docstring = (
-                        isinstance(first_stmt, ast.Expr)
-                        and isinstance(first_stmt.value, (ast.Constant,))
-                        and isinstance(first_stmt.value.value, str)
+            # (a) Functions with more than 5 parameters
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    args = node.args
+                    param_count = (
+                        len(args.posonlyargs)
+                        + len(args.args)
+                        + len(args.kwonlyargs)
                     )
-                    if not has_docstring:
+                    # Exclude 'self' and 'cls' from count
+                    if args.args and args.args[0].arg in ("self", "cls"):
+                        param_count -= 1
+                    if param_count > 5:
                         tasks.append(Task(
-                            description=f"Add module-level docstring to `{rel_path}`",
+                            description=(
+                                f"Reduce parameters in `{node.name}` in "
+                                f"`{rel_path}:{node.lineno}` ({param_count} params)"
+                            ),
                             priority=5,
                             source="quality",
                             source_file=rel_path,
-                            line_number=1,
+                            line_number=node.lineno,
                         ))
 
-                if len(tasks) >= 5:
-                    return tasks[:5]
+            # (b) Deeply nested code (indentation level > 4)
+            max_indent = 0
+            deepest_line = 0
+            for i, line in enumerate(lines, 1):
+                stripped = line.lstrip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                indent = len(line) - len(stripped)
+                # Assume 4-space indentation
+                level = indent // 4
+                if level > max_indent:
+                    max_indent = level
+                    deepest_line = i
+            if max_indent > 4:
+                tasks.append(Task(
+                    description=(
+                        f"Reduce nesting depth in `{rel_path}:{deepest_line}` "
+                        f"(max indentation level {max_indent})"
+                    ),
+                    priority=5,
+                    source="quality",
+                    source_file=rel_path,
+                    line_number=deepest_line,
+                ))
+
+            # (c) Files with no module-level docstring
+            if tree.body:
+                first_stmt = tree.body[0]
+                has_docstring = (
+                    isinstance(first_stmt, ast.Expr)
+                    and isinstance(first_stmt.value, (ast.Constant,))
+                    and isinstance(first_stmt.value.value, str)
+                )
+                if not has_docstring:
+                    tasks.append(Task(
+                        description=f"Add module-level docstring to `{rel_path}`",
+                        priority=5,
+                        source="quality",
+                        source_file=rel_path,
+                        line_number=1,
+                    ))
+
+            if len(tasks) >= 5:
+                return tasks[:5]
 
         return tasks[:5]
 
@@ -1053,55 +1080,41 @@ class TaskDiscovery:
         Only scans files not in exclude_dirs.
         """
         tasks: List[Task] = []
-        target = Path(self.target_dir)
-        exclude_dirs = set(self.config.discovery.exclude_dirs)
 
-        for root, dirs, files in os.walk(target):
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        for rel_path, source, tree in self._walk_python_files():
+            if tree is None:
+                continue
 
-            for fname in files:
-                if not fname.endswith(".py"):
-                    continue
+            unused = self._find_unused_imports(tree)
+            if unused:
+                import_list = ", ".join(unused[:5])
+                if len(unused) > 5:
+                    import_list += f" (+{len(unused) - 5} more)"
+                desc = (
+                    f"Remove {len(unused)} unused import(s) in "
+                    f"`{rel_path}`: {import_list}"
+                )
+                # Use the line number of the first unused import
+                first_line = None
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.Import, ast.ImportFrom)):
+                        for alias in node.names:
+                            name = alias.asname if alias.asname else alias.name
+                            if name in unused:
+                                first_line = node.lineno
+                                break
+                    if first_line:
+                        break
+                tasks.append(Task(
+                    description=desc,
+                    priority=3,
+                    source="lint",
+                    source_file=rel_path,
+                    line_number=first_line,
+                ))
 
-                fpath = Path(root) / fname
-                rel_path = str(fpath.relative_to(target))
-
-                try:
-                    source = fpath.read_text(encoding="utf-8", errors="ignore")
-                    tree = ast.parse(source, filename=rel_path)
-                except (OSError, SyntaxError):
-                    continue
-
-                unused = self._find_unused_imports(tree)
-                if unused:
-                    import_list = ", ".join(unused[:5])
-                    if len(unused) > 5:
-                        import_list += f" (+{len(unused) - 5} more)"
-                    desc = (
-                        f"Remove {len(unused)} unused import(s) in "
-                        f"`{rel_path}`: {import_list}"
-                    )
-                    # Use the line number of the first unused import
-                    first_line = None
-                    for node in ast.walk(tree):
-                        if isinstance(node, (ast.Import, ast.ImportFrom)):
-                            for alias in node.names:
-                                name = alias.asname if alias.asname else alias.name
-                                if name in unused:
-                                    first_line = node.lineno
-                                    break
-                        if first_line:
-                            break
-                    tasks.append(Task(
-                        description=desc,
-                        priority=3,
-                        source="lint",
-                        source_file=rel_path,
-                        line_number=first_line,
-                    ))
-
-                if len(tasks) >= 10:
-                    return tasks[:10]
+            if len(tasks) >= 10:
+                return tasks[:10]
 
         return tasks[:10]
 
@@ -1163,48 +1176,34 @@ class TaskDiscovery:
     def _discover_complexity_issues(self) -> List[Task]:
         """Scan Python files for functions longer than 50 lines using ast.parse."""
         tasks: List[Task] = []
-        target = Path(self.target_dir)
-        exclude_dirs = set(self.config.discovery.exclude_dirs)
 
-        for root, dirs, files in os.walk(target):
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        for rel_path, source, tree in self._walk_python_files():
+            if tree is None:
+                continue
 
-            for fname in files:
-                if not fname.endswith(".py"):
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
-
-                fpath = Path(root) / fname
-                rel_path = str(fpath.relative_to(target))
-
-                try:
-                    source = fpath.read_text(encoding="utf-8", errors="ignore")
-                    tree = ast.parse(source, filename=rel_path)
-                except (OSError, SyntaxError):
+                start = node.lineno
+                end = node.end_lineno
+                if end is None:
                     continue
+                line_count = end - start + 1
+                if line_count > 50:
+                    desc = (
+                        f"Refactor long function `{node.name}` in "
+                        f"`{rel_path}:{start}` ({line_count} lines)"
+                    )
+                    tasks.append(Task(
+                        description=desc,
+                        priority=5,
+                        source="quality",
+                        source_file=rel_path,
+                        line_number=start,
+                    ))
 
-                for node in ast.walk(tree):
-                    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        continue
-                    start = node.lineno
-                    end = node.end_lineno
-                    if end is None:
-                        continue
-                    line_count = end - start + 1
-                    if line_count > 50:
-                        desc = (
-                            f"Refactor long function `{node.name}` in "
-                            f"`{rel_path}:{start}` ({line_count} lines)"
-                        )
-                        tasks.append(Task(
-                            description=desc,
-                            priority=5,
-                            source="quality",
-                            source_file=rel_path,
-                            line_number=start,
-                        ))
-
-                if len(tasks) >= 5:
-                    return tasks[:5]
+            if len(tasks) >= 5:
+                return tasks[:5]
 
         return tasks[:5]
 
@@ -1217,73 +1216,59 @@ class TaskDiscovery:
         Caps at 5 tasks.
         """
         tasks: List[Task] = []
-        target = Path(self.target_dir)
-        exclude_dirs = set(self.config.discovery.exclude_dirs)
 
-        for root, dirs, files in os.walk(target):
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        for rel_path, source, tree in self._walk_python_files():
+            if tree is None:
+                continue
 
-            for fname in files:
-                if not fname.endswith(".py"):
-                    continue
+            # Collect all defined function/method names
+            defined: dict = {}  # name -> node
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    name = node.name
+                    # Skip private functions and test functions
+                    if name.startswith("_") or name.startswith("test_"):
+                        continue
+                    defined[name] = node
 
-                fpath = Path(root) / fname
-                rel_path = str(fpath.relative_to(target))
+            if not defined:
+                continue
 
-                try:
-                    source = fpath.read_text(encoding="utf-8", errors="ignore")
-                    tree = ast.parse(source, filename=rel_path)
-                except (OSError, SyntaxError):
-                    continue
+            # Collect all names that are called or referenced in the module
+            called: set = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    # Direct call: func_name(...)
+                    if isinstance(node.func, ast.Name):
+                        called.add(node.func.id)
+                    # Method call: self.func_name(...) or obj.func_name(...)
+                    elif isinstance(node.func, ast.Attribute):
+                        called.add(node.func.attr)
+                elif isinstance(node, ast.Attribute):
+                    # Attribute reference without call (e.g., passed as callback)
+                    called.add(node.attr)
+                elif isinstance(node, ast.Name):
+                    # Name reference (e.g., passed as argument)
+                    called.add(node.id)
 
-                # Collect all defined function/method names
-                defined: dict = {}  # name -> node
-                for node in ast.walk(tree):
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        name = node.name
-                        # Skip private functions and test functions
-                        if name.startswith("_") or name.startswith("test_"):
-                            continue
-                        defined[name] = node
+            # Find defined functions never referenced
+            for name, node in defined.items():
+                if name not in called:
+                    desc = (
+                        f"Remove or refactor potentially dead function "
+                        f"`{name}` in `{rel_path}:{node.lineno}` "
+                        f"(defined but never called within the module)"
+                    )
+                    tasks.append(Task(
+                        description=desc,
+                        priority=5,
+                        source="quality",
+                        source_file=rel_path,
+                        line_number=node.lineno,
+                    ))
 
-                if not defined:
-                    continue
-
-                # Collect all names that are called or referenced in the module
-                called: set = set()
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Call):
-                        # Direct call: func_name(...)
-                        if isinstance(node.func, ast.Name):
-                            called.add(node.func.id)
-                        # Method call: self.func_name(...) or obj.func_name(...)
-                        elif isinstance(node.func, ast.Attribute):
-                            called.add(node.func.attr)
-                    elif isinstance(node, ast.Attribute):
-                        # Attribute reference without call (e.g., passed as callback)
-                        called.add(node.attr)
-                    elif isinstance(node, ast.Name):
-                        # Name reference (e.g., passed as argument)
-                        called.add(node.id)
-
-                # Find defined functions never referenced
-                for name, node in defined.items():
-                    if name not in called:
-                        desc = (
-                            f"Remove or refactor potentially dead function "
-                            f"`{name}` in `{rel_path}:{node.lineno}` "
-                            f"(defined but never called within the module)"
-                        )
-                        tasks.append(Task(
-                            description=desc,
-                            priority=5,
-                            source="quality",
-                            source_file=rel_path,
-                            line_number=node.lineno,
-                        ))
-
-                if len(tasks) >= 5:
-                    return tasks[:5]
+            if len(tasks) >= 5:
+                return tasks[:5]
 
         return tasks[:5]
 

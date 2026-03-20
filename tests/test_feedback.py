@@ -724,14 +724,21 @@ class TestBacktickSanitization:
         result = sanitize_feedback_content(content)
         assert "$(whoami)" not in result
 
-    def test_plain_backtick_inline_code_preserved(self):
+    def test_plain_backtick_commands_are_stripped(self):
         from feedback import sanitize_feedback_content
         content = "Fix the bug `rm -rf /` in module"
         result = sanitize_feedback_content(content)
-        # Plain commands without shell metacharacters are safe inline code
-        assert "rm -rf /" in result
+        # All backtick command substitution is now stripped for safety
+        assert "`rm -rf /`" not in result
         assert "Fix the bug" in result
         assert "in module" in result
+
+    def test_single_backtick_preserved(self):
+        from feedback import sanitize_feedback_content
+        content = "Use ` for inline code"
+        result = sanitize_feedback_content(content)
+        # Single backticks (not pairs) are preserved
+        assert result == content
 
 
 class TestAtomicMoveTempFilePermissions:
