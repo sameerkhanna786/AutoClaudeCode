@@ -157,6 +157,7 @@ class SafetyGuard:
         self.state = state_manager
         self._lock_fd: Optional[int] = None
         self.lock_path = Path(config.paths.lock_file)
+        self._last_gc_time: float = 0.0
 
     def acquire_lock(self) -> None:
         """Acquire an exclusive file lock to prevent concurrent runs.
@@ -545,10 +546,18 @@ class SafetyGuard:
         size_mb = total_size / (1024 * 1024)
 
         if size_mb >= max_mb:
+            # Cooldown: only run git gc once per hour
+            gc_cooldown = 3600
+            if (time.time() - self._last_gc_time) < gc_cooldown:
+                logger.debug(
+                    "Git objects %.1f MB exceeds threshold but gc cooldown active", size_mb,
+                )
+                return
             logger.warning(
                 "Git objects directory %.1f MB exceeds threshold %d MB, running git gc",
                 size_mb, max_mb,
             )
+            self._last_gc_time = time.time()
             from process_utils import run_with_group_kill
             try:
                 gc_result = run_with_group_kill(

@@ -746,6 +746,36 @@ class TestGitGcUsesGroupKill:
 
         assert any("timed out" in r.message for r in caplog.records)
 
+    def test_git_gc_cooldown_prevents_repeated_gc(self, guard, tmp_path):
+        """git gc should not run again within the cooldown period."""
+        from process_utils import RunResult
+
+        guard.config.target_dir = str(tmp_path)
+        git_objects = tmp_path / ".git" / "objects"
+        git_objects.mkdir(parents=True)
+        big_file = git_objects / "big.pack"
+        big_file.write_bytes(b"x" * (600 * 1024 * 1024))
+
+        ok_result = RunResult(returncode=0, stdout="", stderr="", timed_out=False)
+        call_count = 0
+
+        def counting_run(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            return ok_result
+
+        with patch("process_utils.run_with_group_kill", side_effect=counting_run):
+            try:
+                guard.check_git_object_growth()  # first call — runs gc
+            except Exception:
+                pass
+            try:
+                guard.check_git_object_growth()  # second call — cooldown skips gc
+            except Exception:
+                pass
+
+        assert call_count == 1, f"Expected gc to run once, ran {call_count} times"
+
 
 class TestAcquireLockFdCleanup:
     """File descriptor must be closed if acquire_lock fails unexpectedly."""
