@@ -100,15 +100,15 @@ class Worker:
                 tasks=self.tasks,
             )
 
+        # Create cycle state writer before try block so finally can always clear it
+        state_dir = str(Path(self.config.paths.state_dir))
+        cycle_state = CycleStateWriter(state_dir, worker_id=self.worker_id)
+
         try:
             # Create worker-local components pointing at the worktree
             self._git = GitManager(self.worktree_dir)
             from provider_runner import create_runner
             self._claude = create_runner(self.config)
-
-            # Create worker-specific cycle state writer
-            state_dir = str(Path(self.config.paths.state_dir))
-            cycle_state = CycleStateWriter(state_dir, worker_id=self.worker_id)
 
             is_batch = len(self.tasks) > 1
 

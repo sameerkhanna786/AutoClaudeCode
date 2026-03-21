@@ -340,15 +340,25 @@ class TestNotificationManagerShutdown(unittest.TestCase):
         mgr = NotificationManager(config)
         mgr.shutdown()  # Should not raise
 
-    def test_shutdown_prevents_new_sends(self):
-        """After shutdown, the pool should reject new work."""
+    def test_shutdown_nullifies_pool(self):
+        """After shutdown, _webhook_pool should be None to prevent post-shutdown use."""
+        config = _make_config()
+        mgr = NotificationManager(config)
+        self.assertIsNotNone(mgr._webhook_pool)
+        mgr.shutdown()
+        self.assertIsNone(mgr._webhook_pool)
+
+    def test_notify_after_shutdown_does_not_raise(self):
+        """Calling notify() after shutdown() must not raise RuntimeError.
+
+        Regression test: previously shutdown() didn't set _webhook_pool = None,
+        so notify() could call submit() on a shut-down pool, raising RuntimeError.
+        """
         config = _make_config()
         mgr = NotificationManager(config)
         mgr.shutdown()
-        # After shutdown, submitting new work should raise RuntimeError
-        import concurrent.futures
-        with self.assertRaises(RuntimeError):
-            mgr._webhook_pool.submit(lambda: None)
+        # This should not raise (notify should silently skip when pool is None)
+        mgr.notify("cycle_success", {"tasks": ["test"]})
 
 
 class TestNotificationShutdownWaits(unittest.TestCase):

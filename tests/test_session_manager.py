@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -238,11 +237,25 @@ class TestOrphanedWorktrees(unittest.TestCase):
 
     @patch("session_manager.run_with_group_kill")
     def test_timeout_returns_empty(self, mock_run):
-        mock_run.side_effect = subprocess.TimeoutExpired(cmd="git", timeout=30)
+        """run_with_group_kill handles timeouts internally (returns RunResult),
+        so the except clause only needs to catch OSError. Verify OSError is caught."""
+        mock_run.side_effect = OSError("process spawn failed")
         with tempfile.TemporaryDirectory() as tmpdir:
             mgr = SessionManager(tmpdir)
             orphaned = mgr.recover_orphaned_worktrees("/tmp/main")
             self.assertEqual(len(orphaned), 0)
+
+    def test_no_subprocess_import(self):
+        """session_manager should not import subprocess (it uses run_with_group_kill).
+
+        Regression test: previously session_manager imported subprocess solely for
+        a dead TimeoutExpired catch that could never trigger.
+        """
+        import session_manager
+        self.assertFalse(
+            hasattr(session_manager, 'subprocess'),
+            "session_manager should not import subprocess"
+        )
 
     @patch("session_manager.run_with_group_kill")
     def test_os_error_returns_empty(self, mock_run):

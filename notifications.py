@@ -349,6 +349,7 @@ class NotificationManager:
         """Shut down the webhook thread pool, waiting for pending sends."""
         if self._webhook_pool is not None:
             self._webhook_pool.shutdown(wait=True)
+            self._webhook_pool = None
 
     def __enter__(self):
         return self

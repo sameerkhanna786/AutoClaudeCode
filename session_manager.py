@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field, asdict
@@ -166,7 +165,7 @@ class SessionManager:
             if current_worktree and current_worktree.get("branch", "").startswith("auto-claude/"):
                 orphaned.append(current_worktree)
 
-        except (subprocess.TimeoutExpired, OSError) as e:
+        except OSError as e:
             logger.warning("Failed to list worktrees: %s", e)
 
         return orphaned

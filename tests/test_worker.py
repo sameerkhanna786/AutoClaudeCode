@@ -127,6 +127,30 @@ class TestWorkerExecute:
         assert result.success is False
         assert "Worktree setup failed" in result.error
 
+    def test_cycle_state_clear_when_create_runner_fails(self, worker_config, tmp_git_repo):
+        """cycle_state.clear() in finally must not crash if create_runner() raises.
+
+        Regression test: previously cycle_state was initialized inside the try block,
+        so if GitManager() or create_runner() raised before that line, the finally
+        block would crash with NameError, masking the original error.
+        """
+        state = MagicMock(spec=LockedStateManager)
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        worker = Worker(worker_config, tasks, state, worker_id=0, main_repo_dir=tmp_git_repo)
+
+        with patch.object(Worker, '_setup_worktree'):
+            worker.worktree_dir = tmp_git_repo
+            with patch('worker.CycleStateWriter') as mock_csw:
+                mock_writer = MagicMock()
+                mock_csw.return_value = mock_writer
+                with patch('worker.GitManager', side_effect=RuntimeError("git init failed")):
+                    result = worker.execute()
+
+        # Should get a clean failure, not a NameError
+        assert result.success is False
+        # cycle_state.clear() should still have been called
+        mock_writer.clear.assert_called_once()
+
 
 class TestWorkerPrompt:
     def test_single_task_prompt(self, worker_config, tmp_git_repo):
