@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -958,3 +959,32 @@ class TestRunPeriodicCleanup:
         fb_mgr._last_cleanup_time = time.time()
         fb_mgr.run_periodic_cleanup()
         assert claimed.exists()  # Not cleaned because rate-limited
+
+
+class TestSanitizationExhaustion:
+    """If sanitization loop exhausts max_passes, content should be rejected."""
+
+    def test_persistent_pattern_rejected(self):
+        """If a dangerous pattern survives all passes, content is rejected."""
+        import feedback
+        from feedback import sanitize_feedback_content
+        from unittest.mock import patch
+
+        class StuckPattern:
+            """Pattern that always matches but substitution is a no-op."""
+            def search(self, s):
+                return re.search(r'A', s)
+            def sub(self, repl, s):
+                return s  # no-op: pattern survives
+
+        with patch.object(feedback, '_DANGEROUS_PATTERNS', [StuckPattern()]):
+            result = sanitize_feedback_content("some A content")
+
+        assert result == "", f"Expected empty for unremovable pattern, got {result!r}"
+
+    def test_normal_patterns_fully_removed(self):
+        """Normal dangerous patterns are fully removed (no false rejection)."""
+        from feedback import sanitize_feedback_content
+        result = sanitize_feedback_content("fix $(echo hack) the bug")
+        assert "$(echo hack)" not in result
+        assert result != "", "Safe content after stripping should not be empty"

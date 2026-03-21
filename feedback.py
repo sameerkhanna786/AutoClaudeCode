@@ -76,6 +76,15 @@ def sanitize_feedback_content(content: str) -> str:
                 found = True
         if not found:
             break
+    else:
+        # Loop exhausted max_passes — check if patterns still remain
+        for pattern in _DANGEROUS_PATTERNS:
+            if pattern.search(content):
+                logger.error(
+                    "Sanitization incomplete after %d passes — rejecting content",
+                    max_passes,
+                )
+                return ""
 
     # Truncate to max length
     if len(content) > MAX_FEEDBACK_CONTENT_LENGTH:
