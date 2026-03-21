@@ -81,9 +81,9 @@ def run_with_group_kill(
         stdout, stderr = proc.communicate(timeout=timeout)
         # Truncate to prevent OOM when a process produces massive output
         if len(stdout) > _MAX_OUTPUT:
-            stdout = stdout[:_MAX_OUTPUT]
+            stdout = stdout[:_MAX_OUTPUT] + "\n[output truncated]"
         if len(stderr) > _MAX_OUTPUT:
-            stderr = stderr[:_MAX_OUTPUT]
+            stderr = stderr[:_MAX_OUTPUT] + "\n[output truncated]"
         return RunResult(
             returncode=proc.returncode,
             stdout=stdout,

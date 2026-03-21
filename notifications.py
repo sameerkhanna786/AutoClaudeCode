@@ -176,7 +176,8 @@ class NotificationManager:
         # Hash the details to bound key size — large payloads would otherwise
         # create arbitrarily long dict keys consuming excessive memory.
         details_hash = hashlib.md5(
-            json.dumps(details, sort_keys=True, default=str).encode()
+            json.dumps(details, sort_keys=True, default=str).encode(),
+            usedforsecurity=False,
         ).hexdigest()
         dedup_key = f"{event}:{details_hash}"
         now = time.time()

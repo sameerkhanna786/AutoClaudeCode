@@ -1889,3 +1889,33 @@ class TestLoadHistorySingleStat:
         )
         assert "st.st_mtime" in source, "Expected st.st_mtime reuse"
         assert "st.st_size" in source, "Expected st.st_size reuse"
+
+
+class TestOversizedFileReturnsCopy:
+    """When history file exceeds size limit, cached data must be returned as a copy."""
+
+    def test_oversized_returns_list_copy_not_cache_reference(self, state_mgr):
+        """If file is too large, _load_history should return list(self._cache), not self._cache."""
+        # Seed the cache with some records
+        state_mgr._cache = [{"task_description": "cached", "timestamp": 1.0}]
+        state_mgr._cache_mtime = 1.0
+
+        # Create a file that exceeds the size limit
+        with patch.object(type(state_mgr), '_MAX_HISTORY_FILE_BYTES', 10):
+            Path(state_mgr.history_file).write_text(
+                json.dumps([{"x": "y" * 100}]), encoding="utf-8"
+            )
+            # Invalidate mtime so stat() is called
+            state_mgr._cache_mtime = 0.0
+
+            result = state_mgr._load_history()
+            # Result should be a copy, not the same object
+            assert result is not state_mgr._cache, (
+                "_load_history must return a copy when file is oversized, "
+                "not the internal cache reference"
+            )
+            # Mutating the returned list should not affect the cache
+            result.append({"task_description": "injected"})
+            assert len(state_mgr._cache) == 1, (
+                "Mutating _load_history() result must not corrupt the cache"
+            )

@@ -1220,7 +1220,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Auto-generate filename if not provided
         if not filename:
             ts = time.strftime("%Y%m%d-%H%M%S")
-            h = hashlib.md5(content.encode()).hexdigest()[:6]
+            h = hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:6]
             filename = f"task-{ts}-{h}.md"
         else:
             # Validate user-provided filename

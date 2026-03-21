@@ -113,7 +113,7 @@ class StateManager:
                     file_size, self._MAX_HISTORY_FILE_BYTES,
                 )
                 if self._cache is not None:
-                    return self._cache
+                    return list(self._cache)
                 return []
             text = self.history_file.read_text(encoding="utf-8").strip()
             if not text:

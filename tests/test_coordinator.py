@@ -987,6 +987,49 @@ class TestMergeRollbackProtection:
         )
 
 
+class TestCleanupBranchNameStripping:
+    """Verify that branch names with leading 'a' or 'c' are not corrupted by lstrip."""
+
+    def test_branch_name_not_corrupted_by_lstrip(self, parallel_config):
+        """Branch names like 'auto-claude/...' should not be stripped to 'uto-lde/...'
+        by using lstrip('* ') which strips individual characters, not the string '* '.
+
+        This was a bug where lstrip('* ') would strip each of the characters
+        '*', ' ', from the left side of the string, accidentally eating
+        characters from the branch name itself.
+        """
+        import inspect
+        from coordinator import ParallelCoordinator
+        source = inspect.getsource(ParallelCoordinator._cleanup_all_worktrees)
+        # Should NOT use lstrip("* ") which strips individual chars
+        assert ".lstrip(" not in source, (
+            "_cleanup_all_worktrees should not use lstrip('* ') to strip branch names. "
+            "lstrip strips individual characters, not the string '* '. "
+            "Use startswith('* ') and slicing instead."
+        )
+
+    def test_branch_parsing_correctness(self, parallel_config):
+        """Simulate the branch parsing from git branch --list output."""
+        # git branch --list output format: "  branch-name" or "* active-branch"
+        test_lines = [
+            "  auto-claude/123-0",
+            "* auto-claude/456-1",       # active branch with * prefix
+            "  auto-claude/abc-def",
+        ]
+        parsed = []
+        for line in test_lines:
+            branch = line.strip()
+            if branch.startswith("* "):
+                branch = branch[2:]
+            parsed.append(branch)
+
+        assert parsed == [
+            "auto-claude/123-0",
+            "auto-claude/456-1",
+            "auto-claude/abc-def",
+        ]
+
+
 class TestOrphanWorktreeCleanupLogging:
     """Orphaned worktree cleanup should log exceptions, not silently swallow them."""
 

@@ -826,7 +826,9 @@ class ParallelCoordinator:
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     for line in result.stdout.strip().splitlines():
-                        branch = line.strip().lstrip("* ")
+                        branch = line.strip()
+                        if branch.startswith("* "):
+                            branch = branch[2:]
                         if branch:
                             try:
                                 self.git.delete_branch(branch, force=True)

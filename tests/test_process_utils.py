@@ -200,7 +200,8 @@ class TestOutputTruncation(unittest.TestCase):
         mock_popen.return_value = mock_proc
 
         result = run_with_group_kill(["echo", "test"])
-        self.assertEqual(len(result.stdout), 1024 * 1024)
+        self.assertTrue(result.stdout.endswith("\n[output truncated]"))
+        self.assertEqual(len(result.stdout), 1024 * 1024 + len("\n[output truncated]"))
         self.assertEqual(result.stderr, "err")
 
     @patch("process_utils.subprocess.Popen")
@@ -214,7 +215,8 @@ class TestOutputTruncation(unittest.TestCase):
 
         result = run_with_group_kill(["echo", "test"])
         self.assertEqual(result.stdout, "out")
-        self.assertEqual(len(result.stderr), 1024 * 1024)
+        self.assertTrue(result.stderr.endswith("\n[output truncated]"))
+        self.assertEqual(len(result.stderr), 1024 * 1024 + len("\n[output truncated]"))
 
     @patch("process_utils.subprocess.Popen")
     def test_small_output_not_truncated(self, mock_popen):

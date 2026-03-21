@@ -42,7 +42,7 @@ def _sanitize_filename(key: str) -> str:
     """
     safe = _SAFE_FILENAME_RE.sub('_', key)
     # Append 8-char hash to distinguish keys that sanitize identically
-    key_hash = hashlib.md5(key.encode()).hexdigest()[:8]
+    key_hash = hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()[:8]
     hash_suffix = f"_{key_hash}"
     # Truncate the safe prefix to ensure the hash suffix is always preserved
     max_prefix_len = MAX_FILENAME_LENGTH - len(hash_suffix)
