@@ -573,6 +573,15 @@ class Orchestrator:
         if not wait:
             if not hasattr(self, "_leaked_executors"):
                 self._leaked_executors: List[concurrent.futures.ThreadPoolExecutor] = []
+            # Cap leaked executors to prevent unbounded growth on repeated timeouts.
+            # Proactively shut down the oldest ones before appending the new one.
+            _MAX_LEAKED_EXECUTORS = 5
+            while len(self._leaked_executors) >= _MAX_LEAKED_EXECUTORS:
+                oldest = self._leaked_executors.pop(0)
+                try:
+                    oldest.shutdown(wait=False)
+                except Exception:
+                    pass
             self._leaked_executors.append(old)
 
     def _run_claude_with_timeout(self, prompt: str, runner: Optional[ProviderRunner] = None) -> ClaudeResult:
@@ -962,7 +971,14 @@ class Orchestrator:
                 ))
                 return
         finally:
-            executor.shutdown(wait=not timed_out)
+            if timed_out:
+                # Track the leaked executor so it can be cleaned up at shutdown
+                executor.shutdown(wait=False)
+                if not hasattr(self, "_leaked_executors"):
+                    self._leaked_executors: List[concurrent.futures.ThreadPoolExecutor] = []
+                self._leaked_executors.append(executor)
+            else:
+                executor.shutdown(wait=True)
             self._active_pipeline = None
 
         total_cost = pipeline_result.total_cost_usd

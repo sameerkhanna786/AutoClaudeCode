@@ -1584,6 +1584,50 @@ class TestClaudeExecutorReuse:
             mock_executor.shutdown.assert_called_with(wait=False)
 
 
+class TestLeakedExecutorsCapped:
+    """_leaked_executors must not grow without bound on repeated timeouts."""
+
+    @pytest.fixture
+    def orch(self, tmp_path):
+        config = Config()
+        config.target_dir = str(tmp_path)
+        config.timeout = 30
+        with patch("orchestrator.GitManager"), \
+             patch("orchestrator.SafetyGuard"), \
+             patch("orchestrator.Validator"), \
+             patch("orchestrator.StateManager"), \
+             patch("orchestrator.FeedbackManager"), \
+             patch("orchestrator.ClaudeRunner"), \
+             patch("orchestrator.TaskDiscovery"), \
+             patch("orchestrator.NotificationManager"):
+            o = Orchestrator(config)
+        return o
+
+    def test_leaked_executors_capped_at_five(self, orch):
+        """After many timeouts, _leaked_executors should not exceed 5."""
+        for i in range(10):
+            executor = MagicMock()
+            orch._claude_executor = executor
+            orch._shutdown_executor(wait=False)
+
+        assert len(orch._leaked_executors) <= 5
+
+    def test_oldest_leaked_executor_shutdown(self, orch):
+        """When cap is reached, oldest executor should be shut down."""
+        executors = []
+        for i in range(7):
+            executor = MagicMock()
+            executors.append(executor)
+            orch._claude_executor = executor
+            orch._shutdown_executor(wait=False)
+
+        # The first 2 executors should have been proactively shut down
+        # (7 total - 5 cap = 2 evicted, but each also gets shutdown(wait=False) initially)
+        for i in range(2):
+            # Oldest executors should have had extra shutdown calls from eviction
+            assert executors[i].shutdown.call_count >= 2
+
+
 class TestCycleStateClearedOnWaitingApproval:
     """Regression: cycle_state left stale when _cycle returns early for pending approval."""
 

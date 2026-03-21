@@ -184,25 +184,15 @@ class TestSafetyGuard:
             guard.check_protected_files(["changed.py"])
         mock_exists.assert_not_called()
 
-    def test_check_protected_files_samefile_false_skips_realpath(self, guard, tmp_path):
-        """When samefile returns False, realpath fallback should be skipped."""
+    def test_check_protected_files_uses_realpath_set(self, guard, tmp_path):
+        """check_protected_files should use pre-computed realpath set (O(n+m))."""
         guard.config.target_dir = str(tmp_path)
-        # Create the changed file and all protected files so samefile can be used
         (tmp_path / "changed.py").write_text("# changed\n")
         for p in guard.config.safety.protected_files:
             (tmp_path / p).write_text("# protected\n")
-        # Track whether realpath is called
-        original_realpath = os.path.realpath
-        realpath_calls = []
 
-        def tracking_realpath(p):
-            realpath_calls.append(p)
-            return original_realpath(p)
-
-        with patch("safety.os.path.realpath", side_effect=tracking_realpath):
-            guard.check_protected_files(["changed.py"])
-        # samefile returned False for all protected files, so realpath should not be called
-        assert len(realpath_calls) == 0
+        # Should not raise for non-protected file
+        guard.check_protected_files(["changed.py"])
 
 
 class TestFailureRecoveryGuard:
@@ -853,6 +843,52 @@ class TestAcquireLockFdLeakAfterPartialAcquire:
 
         assert len(close_calls) >= 1
         assert guard._lock_fd is None
+
+
+class TestCheckProtectedFilesOptimized:
+    """check_protected_files should use pre-computed path set for O(n+m) performance."""
+
+    def test_protected_file_detected(self, guard, tmp_path):
+        """Protected file modification should be caught."""
+        guard.config.target_dir = str(tmp_path)
+        guard.config.safety.protected_files = ["main.py", "config.yaml"]
+        # Create the files
+        (tmp_path / "main.py").write_text("# main")
+        (tmp_path / "config.yaml").write_text("# config")
+        (tmp_path / "safe.py").write_text("# safe")
+
+        with pytest.raises(SafetyError, match="Protected files modified"):
+            guard.check_protected_files(["main.py"])
+
+    def test_unprotected_file_passes(self, guard, tmp_path):
+        """Non-protected file changes should pass."""
+        guard.config.target_dir = str(tmp_path)
+        guard.config.safety.protected_files = ["main.py"]
+        (tmp_path / "main.py").write_text("# main")
+        (tmp_path / "other.py").write_text("# other")
+
+        guard.check_protected_files(["other.py"])  # Should not raise
+
+    def test_multiple_violations(self, guard, tmp_path):
+        """Multiple protected file violations should all be reported."""
+        guard.config.target_dir = str(tmp_path)
+        guard.config.safety.protected_files = ["main.py", "config.yaml"]
+        (tmp_path / "main.py").write_text("# main")
+        (tmp_path / "config.yaml").write_text("# config")
+
+        with pytest.raises(SafetyError, match="main.py") as exc_info:
+            guard.check_protected_files(["main.py", "config.yaml", "safe.py"])
+        assert "config.yaml" in str(exc_info.value)
+
+    def test_symlink_resolved(self, guard, tmp_path):
+        """Symlinks to protected files should be detected."""
+        guard.config.target_dir = str(tmp_path)
+        guard.config.safety.protected_files = ["main.py"]
+        (tmp_path / "main.py").write_text("# main")
+        (tmp_path / "link.py").symlink_to(tmp_path / "main.py")
+
+        with pytest.raises(SafetyError, match="Protected files modified"):
+            guard.check_protected_files(["link.py"])
 
 
 class TestDarwinPageSizeThreadSafety:

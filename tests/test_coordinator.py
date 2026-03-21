@@ -1030,6 +1030,83 @@ class TestCleanupBranchNameStripping:
         ]
 
 
+class TestMergeCircuitBreakerDecay:
+    """Merge circuit breaker must auto-reset after inactivity to prevent deadlock."""
+
+    def test_circuit_breaker_blocks_dispatch(self, parallel_config):
+        """When merge failures exceed threshold, tasks should be skipped."""
+        coord = ParallelCoordinator(parallel_config)
+        coord._consecutive_merge_failures = 100  # Well above threshold
+        coord._last_merge_failure_time = time.time()  # Recent failure
+
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        coord._gather_tasks = MagicMock(return_value=tasks)
+
+        # Mock everything else to prevent actual work
+        coord.safety = MagicMock()
+        coord._check_worktree_disk_space = MagicMock()
+        coord._degradation = MagicMock()
+        coord._degradation.is_degraded = False
+        coord._degradation.check_and_adjust.return_value = {"degraded": False, "level": 0}
+        coord.state = MagicMock()
+        coord.state.get_cycle_count_last_hour.return_value = 0
+        coord.state.get_total_cost.return_value = 0.0
+
+        with patch.object(coord, "_partition_tasks") as mock_partition:
+            coord._run_cycle()
+            # _partition_tasks should NOT be called because circuit breaker blocks
+            mock_partition.assert_not_called()
+
+    def test_circuit_breaker_resets_after_decay(self, parallel_config):
+        """After decay period, circuit breaker should reset and allow dispatch."""
+        coord = ParallelCoordinator(parallel_config)
+        coord._consecutive_merge_failures = 100
+        # Set last failure time to well in the past (> 600 seconds)
+        coord._last_merge_failure_time = time.time() - 700
+
+        tasks = [Task(description="Fix bug", priority=1, source="lint")]
+        coord._gather_tasks = MagicMock(return_value=tasks)
+
+        coord.safety = MagicMock()
+        coord._check_worktree_disk_space = MagicMock()
+        coord._degradation = MagicMock()
+        coord._degradation.is_degraded = False
+        coord._degradation.check_and_adjust.return_value = {"degraded": False, "level": 0}
+        coord.state = MagicMock()
+        coord.state.get_cycle_count_last_hour.return_value = 0
+        coord.state.get_total_cost.return_value = 0.0
+
+        with patch.object(coord, "_partition_tasks", return_value=[]) as mock_partition:
+            coord._run_cycle()
+            # _partition_tasks SHOULD be called because circuit breaker has decayed
+            mock_partition.assert_called_once()
+            # Counter should have been reset
+            assert coord._consecutive_merge_failures == 0
+
+    def test_merge_failure_records_time(self, parallel_config):
+        """When a merge fails, _last_merge_failure_time should be updated."""
+        coord = ParallelCoordinator(parallel_config)
+        coord.state = MagicMock()
+        coord.feedback = MagicMock()
+        coord.git = MagicMock()
+        coord._consecutive_merge_failures = 0
+        coord._last_merge_failure_time = 0.0
+
+        task = Task(description="test", priority=1, source="lint")
+        result = WorkerResult(success=True, branch_name="b", tasks=[task])
+        worker = MagicMock()
+        worker.worker_id = 0
+        worker.tasks = [task]
+
+        with patch.object(coord, "_merge_worker_branch", return_value=False):
+            before = time.time()
+            coord._process_result(result, worker)
+            after = time.time()
+
+        assert coord._consecutive_merge_failures == 1
+        assert before <= coord._last_merge_failure_time <= after
+
+
 class TestOrphanWorktreeCleanupLogging:
     """Orphaned worktree cleanup should log exceptions, not silently swallow them."""
 

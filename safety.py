@@ -382,30 +382,27 @@ class SafetyGuard:
         )
 
     def check_protected_files(self, changed_files: List[str]) -> None:
-        """Ensure no protected files have been modified."""
+        """Ensure no protected files have been modified.
+
+        Pre-computes a set of resolved protected file paths to avoid
+        O(n*m) stat calls when checking many changed files against many
+        protected files.
+        """
         target_dir = self.config.target_dir
+
+        # Pre-compute resolved paths for protected files (O(m) once)
+        protected_resolved: set = set()
+        for p in self.config.safety.protected_files:
+            protected_path = os.path.join(target_dir, p)
+            protected_resolved.add(os.path.normpath(os.path.realpath(protected_path)))
+
         violations = []
         for f in changed_files:
             changed_path = os.path.join(target_dir, f)
-            for p in self.config.safety.protected_files:
-                protected_path = os.path.join(target_dir, p)
-                # Try samefile directly — avoids TOCTOU race from
-                # pre-checking existence before calling samefile.
-                try:
-                    if os.path.samefile(changed_path, protected_path):
-                        violations.append(f)
-                        break
-                except (OSError, FileNotFoundError):
-                    # One or both paths don't exist — fall through to
-                    # normpath comparison below.
-                    pass
-                else:
-                    # samefile returned False — paths are definitively different
-                    continue
-                # Fall back to realpath + normpath comparison (e.g. when file doesn't exist yet)
-                if os.path.normpath(os.path.realpath(changed_path)) == os.path.normpath(os.path.realpath(protected_path)):
-                    violations.append(f)
-                    break
+            changed_resolved = os.path.normpath(os.path.realpath(changed_path))
+            if changed_resolved in protected_resolved:
+                violations.append(f)
+
         if violations:
             raise SafetyError(
                 f"Protected files modified: {', '.join(violations)}"

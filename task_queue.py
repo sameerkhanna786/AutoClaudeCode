@@ -131,11 +131,19 @@ class TaskApprovalQueue:
         if pending_path.exists() or approved_path.exists():
             return None
 
-        # Skip if recently declined
+        # Skip if recently declined, and proactively evict stale entries
         with self._declined_lock:
+            # Evict entries older than 24 hours to prevent unbounded growth
+            # (also runs on decline(), but enqueue() is called more frequently)
+            now = time.time()
+            cutoff = now - 86400
+            if self._declined_keys:
+                self._declined_keys = {
+                    k: v for k, v in self._declined_keys.items() if v > cutoff
+                }
             if task_key in self._declined_keys:
                 declined_at = self._declined_keys[task_key]
-                if cooldown_seconds > 0 and (time.time() - declined_at) < cooldown_seconds:
+                if cooldown_seconds > 0 and (now - declined_at) < cooldown_seconds:
                     return None
                 # Cooldown expired, allow re-enqueue
                 del self._declined_keys[task_key]

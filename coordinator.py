@@ -47,6 +47,7 @@ class ParallelCoordinator:
         self._workers: List[Worker] = []
         self._workers_lock = threading.Lock()
         self._consecutive_merge_failures: int = 0
+        self._last_merge_failure_time: float = 0.0
         self._task_queue = TaskApprovalQueue(str(Path(self.config.paths.state_dir)))
 
     def run(self, once: bool = False) -> None:
@@ -145,16 +146,27 @@ class ParallelCoordinator:
             return
 
         # Circuit breaker: if merges have failed too many times consecutively,
-        # skip dispatching workers to avoid wasting Claude invocations
+        # skip dispatching workers to avoid wasting Claude invocations.
+        # Decay: reset the counter after 10 minutes of inactivity to prevent
+        # permanent deadlock where no workers are dispatched and no merge can
+        # ever succeed to reset the counter.
         merge_threshold = self.config.parallel.max_merge_retries * 2
         if self._consecutive_merge_failures >= merge_threshold:
-            logger.error(
-                "Merge circuit breaker tripped: %d consecutive merge failures "
-                "(threshold %d). Skipping worker dispatch — manual intervention "
-                "or conflict resolution may be needed.",
-                self._consecutive_merge_failures, merge_threshold,
-            )
-            return
+            decay_seconds = 600  # 10 minutes
+            if self._last_merge_failure_time > 0 and (time.time() - self._last_merge_failure_time) >= decay_seconds:
+                logger.info(
+                    "Merge circuit breaker decay: resetting after %ds of inactivity",
+                    decay_seconds,
+                )
+                self._consecutive_merge_failures = 0
+            else:
+                logger.error(
+                    "Merge circuit breaker tripped: %d consecutive merge failures "
+                    "(threshold %d). Skipping worker dispatch — manual intervention "
+                    "or conflict resolution may be needed. Will auto-reset after %ds.",
+                    self._consecutive_merge_failures, merge_threshold, decay_seconds,
+                )
+                return
 
         groups = self._partition_tasks(tasks, degradation=degradation)
         if not groups:
@@ -260,6 +272,7 @@ class ParallelCoordinator:
             else:
                 # Merge failed — record as failure
                 self._consecutive_merge_failures += 1
+                self._last_merge_failure_time = time.time()
                 for task in result.tasks:
                     if task.source == "feedback" and task.source_file:
                         self.feedback.unclaim_feedback(task.source_file)

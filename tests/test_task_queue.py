@@ -378,6 +378,40 @@ class TestDeclinedKeysCleanup(unittest.TestCase):
             self.assertIn("recent_key", queue._declined_keys)
 
 
+class TestDeclinedKeysCleanupOnEnqueue(unittest.TestCase):
+    """Verify stale _declined_keys are cleaned up during enqueue, not only decline."""
+
+    def test_stale_keys_evicted_on_enqueue(self):
+        """Old declined keys should be evicted when enqueue() is called."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = TaskApprovalQueue(tmpdir)
+            # Add stale entries (> 24 hours old)
+            old_time = time.time() - 90000
+            for i in range(20):
+                queue._declined_keys[f"stale_{i}"] = old_time
+
+            # Enqueue a new task (not one of the stale keys)
+            task = Task(description="New fresh task", priority=2, source="lint")
+            queue.enqueue(task)
+
+            # All stale keys should have been evicted
+            stale_remaining = sum(
+                1 for k in queue._declined_keys if k.startswith("stale_")
+            )
+            self.assertEqual(stale_remaining, 0)
+
+    def test_recent_keys_preserved_on_enqueue(self):
+        """Recent declined keys should survive enqueue eviction."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue = TaskApprovalQueue(tmpdir)
+            queue._declined_keys["recent"] = time.time() - 3600  # 1 hour ago
+
+            task = Task(description="Another task", priority=2, source="lint")
+            queue.enqueue(task)
+
+            self.assertIn("recent", queue._declined_keys)
+
+
 class TestDeclinedKeysThreadSafety(unittest.TestCase):
     """Verify _declined_keys is protected by a lock."""
 
