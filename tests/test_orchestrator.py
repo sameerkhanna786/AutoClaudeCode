@@ -89,10 +89,11 @@ class TestOrchestrator:
 
     def test_failed_validation_causes_rollback(self, orch):
         orch.config.orchestrator.max_validation_retries = 0
-        orch.validator.validate.return_value = ValidationResult(
+        failed_result = ValidationResult(
             passed=False,
             steps=[ValidationStep(name="tests", command="pytest", passed=False)],
         )
+        orch.validator.validate.return_value = failed_result
         orch._cycle()
         orch.git.rollback.assert_called_once()
         orch.git.commit.assert_not_called()
@@ -1337,10 +1338,11 @@ class TestTargetedRollback:
     def test_rollback_passes_allowed_dirty(self, orch):
         """Failed validation rollback should pass allowed_dirty=pre_existing_files."""
         orch.config.orchestrator.max_validation_retries = 0
-        orch.validator.validate.return_value = ValidationResult(
+        failed_result = ValidationResult(
             passed=False,
             steps=[ValidationStep(name="tests", command="pytest", passed=False)],
         )
+        orch.validator.validate.return_value = failed_result
         orch.state.record_cycle = MagicMock()
         orch._cycle()
 
@@ -1628,14 +1630,13 @@ class TestLeakedExecutorsCapped:
             assert executors[i].shutdown.call_count >= 2
 
 
-class TestCycleStateClearedOnWaitingApproval:
-    """Regression: cycle_state left stale when _cycle returns early for pending approval."""
+class TestCycleStateWaitingApproval:
+    """Regression: waiting_approval state must persist for dashboard visibility."""
 
-    def test_cycle_state_cleared_after_waiting_approval(self, orch):
-        """When _cycle returns early due to pending approval, cycle_state must be cleared.
-
-        The return at the waiting_approval branch is before the try/finally
-        that calls cycle_state.clear(), leaving stale state on disk.
+    def test_waiting_approval_state_persists(self, orch):
+        """When _cycle returns early due to pending approval, cycle_state must
+        NOT be immediately cleared — the dashboard needs to see the
+        waiting_approval phase until the next cycle updates it.
         """
         orch.discovery.discover_all.return_value = []
         orch._task_queue = MagicMock()
@@ -1645,8 +1646,12 @@ class TestCycleStateClearedOnWaitingApproval:
         orch.cycle_state = MagicMock()
         orch._cycle()
 
-        # cycle_state.clear() must have been called to prevent stale dashboard state
-        orch.cycle_state.clear.assert_called()
+        # update() must have been called with waiting_approval phase
+        orch.cycle_state.update.assert_called_with(
+            phase="waiting_approval", pending_approval_count=3,
+        )
+        # clear() must NOT be called — state should persist for dashboard
+        orch.cycle_state.clear.assert_not_called()
 
 
 class TestPipelineRollbackPreservesDirtyFiles:
@@ -1691,3 +1696,5 @@ class TestPipelineRollbackPreservesDirtyFiles:
         assert len(captured_calls) >= 1
         pipeline_rollback_call = captured_calls[0]
         assert pipeline_rollback_call[1].get("allowed_dirty") == pre_existing
+
+

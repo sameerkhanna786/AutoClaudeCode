@@ -673,7 +673,6 @@ class Orchestrator:
                     phase="waiting_approval",
                     pending_approval_count=pending_count,
                 )
-                self.cycle_state.clear()
                 return
 
             dc = self.config.discovery

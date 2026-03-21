@@ -262,6 +262,7 @@ class ClaudeRunner:
         self._current_process: subprocess.Popen | None = None
         self._process_lock = threading.Lock()
         self._terminated = False  # Set by terminate() to stop retry loop
+        self._terminate_event = threading.Event()  # Interruptible sleep
         self.circuit_breaker = CircuitBreaker(
             on_open=self._on_circuit_breaker_open,
         )
@@ -315,6 +316,14 @@ class ClaudeRunner:
         stderr_lower = stderr.lower()
         return any(pat in stderr_lower for pat in _CB_ERROR_PATTERNS)
 
+    def _retry_wait(self, delay: float) -> None:
+        """Sleep between retries, interruptible by terminate().
+
+        Uses threading.Event so terminate() can wake up the thread
+        immediately instead of blocking for up to ``delay`` seconds.
+        """
+        self._terminate_event.wait(delay)
+
     def terminate(self) -> None:
         """Terminate any currently running Claude subprocess.
 
@@ -323,6 +332,7 @@ class ClaudeRunner:
         from spawning new processes after the kill.
         """
         self._terminated = True
+        self._terminate_event.set()  # Wake up any sleeping retry
         with self._process_lock:
             proc = self._current_process
         if proc is not None:
@@ -404,6 +414,7 @@ class ClaudeRunner:
             add_dirs: Optional[List[str]] = None) -> ClaudeResult:
         """Run Claude CLI with the given prompt and return parsed result."""
         self._terminated = False  # Reset on each new run
+        self._terminate_event.clear()
         cmd = self._build_command(prompt)
         # Always use the main project dir as cwd (macOS sandbox restriction:
         # sandbox_apply fails with exit 71 when cwd is outside the project).
@@ -476,7 +487,7 @@ class ClaudeRunner:
                         "Claude CLI timed out (attempt %d/%d), retrying in %ds",
                         attempt + 1, self.max_retries + 1, delay,
                     )
-                    time.sleep(delay)
+                    self._retry_wait(delay)
                     continue
                 self.circuit_breaker.record_failure()
                 return ClaudeResult(
@@ -495,7 +506,7 @@ class ClaudeRunner:
                         "Claude CLI OS error (attempt %d/%d): %s, retrying in %ds",
                         attempt + 1, self.max_retries + 1, e, delay,
                     )
-                    time.sleep(delay)
+                    self._retry_wait(delay)
                     continue
                 return ClaudeResult(
                     success=False,
@@ -517,7 +528,7 @@ class ClaudeRunner:
                             "Claude CLI exited with code %d (attempt %d/%d), retrying in %ds",
                             proc.returncode, attempt + 1, self.max_retries + 1, delay,
                         )
-                    time.sleep(delay)
+                    self._retry_wait(delay)
                     continue
                 # All retries exhausted — update circuit breaker if the error
                 # matches rate-limit or server-error patterns.
@@ -540,7 +551,7 @@ class ClaudeRunner:
                         "Output appears truncated (attempt %d/%d), retrying in %ds",
                         attempt + 1, self.max_retries + 1, delay,
                     )
-                    time.sleep(delay)
+                    self._retry_wait(delay)
                     continue
                 return ClaudeResult(
                     success=False,

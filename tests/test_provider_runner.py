@@ -748,5 +748,46 @@ class TestBoundedResponseRead(unittest.TestCase):
         mock_response.read.assert_called_once_with(10 * 1024 * 1024)
 
 
+class TestEstimateCostProviderDefaults(unittest.TestCase):
+    """_estimate_cost should use provider-specific defaults for known models."""
+
+    def test_openai_gpt4o_uses_correct_pricing(self):
+        from provider_runner import _estimate_cost
+        config = _make_config("openai")
+        config.claude.model = "gpt-4o"
+        config.claude.resolved_model = "gpt-4o"
+        cost = _estimate_cost(config, "openai", 1_000_000, 0)
+        self.assertAlmostEqual(cost, 2.5, places=2)
+
+    def test_gemini_flash_uses_correct_pricing(self):
+        from provider_runner import _estimate_cost
+        config = _make_config("gemini")
+        config.claude.model = "gemini-2.0-flash"
+        config.claude.resolved_model = "gemini-2.0-flash"
+        cost = _estimate_cost(config, "gemini", 1_000_000, 0)
+        self.assertAlmostEqual(cost, 0.075, places=3)
+
+    def test_unknown_model_returns_zero_with_warning(self):
+        from provider_runner import _estimate_cost
+        config = _make_config("openai")
+        config.claude.model = "unknown-model-xyz"
+        config.claude.resolved_model = "unknown-model-xyz"
+        import logging
+        with self.assertLogs("provider_runner", level="WARNING") as cm:
+            cost = _estimate_cost(config, "openai", 1_000_000, 0)
+        self.assertEqual(cost, 0.0)
+        self.assertTrue(any("No pricing found" in msg for msg in cm.output))
+
+    def test_user_config_overrides_provider_default(self):
+        from provider_runner import _estimate_cost
+        config = _make_config("openai")
+        config.claude.model = "gpt-4o"
+        config.claude.resolved_model = "gpt-4o"
+        # User sets custom pricing for gpt-4o
+        config.pricing.cost_per_million_input_tokens["gpt-4o"] = 99.0
+        cost = _estimate_cost(config, "openai", 1_000_000, 0)
+        self.assertAlmostEqual(cost, 99.0, places=2)
+
+
 if __name__ == "__main__":
     unittest.main()

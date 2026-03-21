@@ -53,13 +53,31 @@ def _estimate_cost(config: Config, provider: str, input_tokens: int, output_toke
     pricing = config.pricing.cost_per_million_input_tokens
     model = (config.claude.resolved_model or config.claude.model).lower()
 
-    # Map provider models to pricing tiers
-    if provider == "openai":
-        cost_per_m_input = pricing.get(model, pricing.get("sonnet", 3.0))
-    elif provider == "gemini":
-        cost_per_m_input = pricing.get(model, pricing.get("haiku", 0.25))
-    else:
-        cost_per_m_input = pricing.get(model, 0.0)
+    # Provider-specific default pricing ($ per million input tokens)
+    _PROVIDER_DEFAULTS = {
+        "openai": {
+            "gpt-4o": 2.5, "gpt-4o-mini": 0.15,
+            "gpt-4-turbo": 10.0, "gpt-4": 30.0,
+            "o1": 15.0, "o1-mini": 3.0, "o3-mini": 1.1,
+        },
+        "gemini": {
+            "gemini-2.0-flash": 0.075, "gemini-1.5-flash": 0.075,
+            "gemini-1.5-pro": 1.25, "gemini-2.0-pro": 1.25,
+        },
+    }
+
+    # Lookup: user config first, then provider defaults, then warn
+    cost_per_m_input = pricing.get(model)
+    if cost_per_m_input is None:
+        provider_defaults = _PROVIDER_DEFAULTS.get(provider, {})
+        cost_per_m_input = provider_defaults.get(model)
+    if cost_per_m_input is None:
+        logger.warning(
+            "No pricing found for model %r (provider=%s); cost tracking "
+            "will be inaccurate. Add the model to pricing config.",
+            model, provider,
+        )
+        cost_per_m_input = 0.0
 
     if cost_per_m_input <= 0:
         return 0.0

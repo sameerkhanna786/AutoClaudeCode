@@ -285,10 +285,11 @@ class TestRun:
 
 
 class TestRetryLogic:
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_retry_on_timeout(self, mock_popen, mock_sleep, runner):
+    def test_retry_on_timeout(self, mock_popen, runner):
         """Retries on TimeoutExpired, succeeds on third attempt."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300)),
             _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300)),
@@ -298,14 +299,14 @@ class TestRetryLogic:
         assert result.success is True
         assert result.result_text == "Done"
         assert mock_popen.call_count == 3
-        assert mock_sleep.call_count == 2
-        mock_sleep.assert_any_call(2)
-        mock_sleep.assert_any_call(8)
+        assert mock_retry.call_count == 2
+        mock_retry.assert_any_call(2)
+        mock_retry.assert_any_call(8)
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_retry_on_nonzero_exit(self, mock_popen, mock_sleep, runner):
+    def test_retry_on_nonzero_exit(self, mock_popen, runner):
         """Retries on non-zero exit code, succeeds on third attempt."""
+        runner._retry_wait = MagicMock()
         mock_popen.side_effect = [
             _make_popen_mock(returncode=1, stderr="rate limited"),
             _make_popen_mock(returncode=1, stderr="rate limited"),
@@ -316,21 +317,23 @@ class TestRetryLogic:
         assert result.result_text == "Fixed"
         assert mock_popen.call_count == 3
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_no_retry_on_file_not_found(self, mock_popen, mock_sleep, runner):
+    def test_no_retry_on_file_not_found(self, mock_popen, runner):
         """FileNotFoundError is not retryable — returns immediately."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = FileNotFoundError()
         result = runner.run("Fix the bug")
         assert result.success is False
         assert "not found" in result.error
         assert mock_popen.call_count == 1
-        mock_sleep.assert_not_called()
+        mock_retry.assert_not_called()
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_no_retry_on_json_parse_failure(self, mock_popen, mock_sleep, runner):
+    def test_no_retry_on_json_parse_failure(self, mock_popen, runner):
         """JSON parse failure is not retryable — CLI ran fine, output was bad."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.return_value = _make_popen_mock(
             returncode=0,
             stdout="Not JSON at all",
@@ -339,12 +342,13 @@ class TestRetryLogic:
         assert result.success is False
         assert "parse" in result.error.lower()
         assert mock_popen.call_count == 1
-        mock_sleep.assert_not_called()
+        mock_retry.assert_not_called()
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_all_retries_exhausted(self, mock_popen, mock_sleep, runner):
+    def test_all_retries_exhausted(self, mock_popen, runner):
         """All retries exhausted returns failure."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300))
             for _ in range(4)
@@ -353,24 +357,26 @@ class TestRetryLogic:
         assert result.success is False
         assert "timed out" in result.error
         assert mock_popen.call_count == 4  # 1 initial + 3 retries
-        assert mock_sleep.call_count == 3
+        assert mock_retry.call_count == 3
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_retry_delays_are_exponential(self, mock_popen, mock_sleep, runner):
+    def test_retry_delays_are_exponential(self, mock_popen, runner):
         """Verify exponential backoff delays: 2, 8, 32."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="claude", timeout=300))
             for _ in range(4)
         ]
         runner.run("Fix the bug")
-        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        delays = [call.args[0] for call in mock_retry.call_args_list]
         assert delays == [2, 8, 32]
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_retry_on_os_error(self, mock_popen, mock_sleep, runner):
+    def test_retry_on_os_error(self, mock_popen, runner):
         """Retries on OSError, succeeds on second attempt."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             OSError("Connection reset"),
             _make_popen_mock(returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}'),
@@ -378,14 +384,15 @@ class TestRetryLogic:
         result = runner.run("Fix the bug")
         assert result.success is True
         assert mock_popen.call_count == 2
-        mock_sleep.assert_called_once_with(2)
+        mock_retry.assert_called_once_with(2)
 
 
 class TestRateLimitBackoff:
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_rate_limit_exponential_backoff(self, mock_popen, mock_sleep, runner):
+    def test_rate_limit_exponential_backoff(self, mock_popen, runner):
         """Rate limit errors should use exponential backoff (5, 15, 45) not fixed delays."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             _make_popen_mock(returncode=1, stderr="rate limit exceeded"),
             _make_popen_mock(returncode=1, stderr="rate limit exceeded"),
@@ -394,14 +401,15 @@ class TestRateLimitBackoff:
         ]
         result = runner.run("Fix the bug")
         assert result.success is False
-        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        delays = [call.args[0] for call in mock_retry.call_args_list]
         # Exponential: 5 * 3^0 = 5, 5 * 3^1 = 15, 5 * 3^2 = 45
         assert delays == [5, 15, 45]
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_non_rate_limit_uses_fixed_delays(self, mock_popen, mock_sleep, runner):
+    def test_non_rate_limit_uses_fixed_delays(self, mock_popen, runner):
         """Non-rate-limit errors should still use the fixed delays (2, 8, 32)."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             _make_popen_mock(returncode=1, stderr="some other error"),
             _make_popen_mock(returncode=1, stderr="some other error"),
@@ -410,20 +418,21 @@ class TestRateLimitBackoff:
         ]
         result = runner.run("Fix the bug")
         assert result.success is False
-        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        delays = [call.args[0] for call in mock_retry.call_args_list]
         assert delays == [2, 8, 32]
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_rate_limit_429_detected(self, mock_popen, mock_sleep, runner):
+    def test_rate_limit_429_detected(self, mock_popen, runner):
         """429 in stderr should trigger rate limit backoff."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             _make_popen_mock(returncode=1, stderr="HTTP 429 Too Many Requests"),
             _make_popen_mock(returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}'),
         ]
         result = runner.run("Fix the bug")
         assert result.success is True
-        mock_sleep.assert_called_once_with(5)  # 5 * 3^0 = 5
+        mock_retry.assert_called_once_with(5)  # 5 * 3^0 = 5
 
 
 class TestCostParsing:
@@ -989,10 +998,11 @@ class TestTryParseJsonStrategy3Performance:
 class TestRateLimitPatternSpecificity:
     """Rate limit detection should not false-positive on generic words like 'capacity'."""
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_generic_capacity_not_treated_as_rate_limit(self, mock_popen, mock_sleep, runner):
+    def test_generic_capacity_not_treated_as_rate_limit(self, mock_popen, runner):
         """Stderr containing 'capacity' in unrelated context should use fixed delays, not rate limit backoff."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             _make_popen_mock(returncode=1, stderr="insufficient capacity for model deployment"),
             _make_popen_mock(returncode=1, stderr="insufficient capacity for model deployment"),
@@ -1001,33 +1011,35 @@ class TestRateLimitPatternSpecificity:
         ]
         result = runner.run("Fix the bug")
         assert result.success is False
-        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        delays = [call.args[0] for call in mock_retry.call_args_list]
         # Should use fixed delays (2, 8, 32), NOT rate limit backoff (5, 15, 45)
         assert delays == [2, 8, 32]
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_over_capacity_treated_as_rate_limit(self, mock_popen, mock_sleep, runner):
+    def test_over_capacity_treated_as_rate_limit(self, mock_popen, runner):
         """Stderr containing 'over capacity' should trigger rate limit backoff."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             _make_popen_mock(returncode=1, stderr="server is over capacity"),
             _make_popen_mock(returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}'),
         ]
         result = runner.run("Fix the bug")
         assert result.success is True
-        mock_sleep.assert_called_once_with(5)  # rate limit backoff
+        mock_retry.assert_called_once_with(5)  # rate limit backoff
 
-    @patch("claude_runner.time.sleep")
     @patch("claude_runner.subprocess.Popen")
-    def test_at_capacity_treated_as_rate_limit(self, mock_popen, mock_sleep, runner):
+    def test_at_capacity_treated_as_rate_limit(self, mock_popen, runner):
         """Stderr containing 'at capacity' should trigger rate limit backoff."""
+        mock_retry = MagicMock()
+        runner._retry_wait = mock_retry
         mock_popen.side_effect = [
             _make_popen_mock(returncode=1, stderr="service is at capacity"),
             _make_popen_mock(returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}'),
         ]
         result = runner.run("Fix the bug")
         assert result.success is True
-        mock_sleep.assert_called_once_with(5)
+        mock_retry.assert_called_once_with(5)
 
 
 class TestCBErrorPatternsNoFalsePositives:
@@ -1055,3 +1067,54 @@ class TestCBErrorPatternsNoFalsePositives:
         lower = error.lower()
         matched = any(pat in lower for pat in _CB_ERROR_PATTERNS)
         assert matched, "Rate limit error should be matched"
+
+
+class TestTerminateInterruptsRetrySleep:
+    """terminate() should immediately wake up any sleeping retry via Event."""
+
+    def test_terminate_sets_event(self, runner):
+        """terminate() sets _terminate_event so _retry_wait wakes up."""
+        assert not runner._terminate_event.is_set()
+        runner.terminate()
+        assert runner._terminate_event.is_set()
+        assert runner._terminated is True
+
+    def test_retry_wait_returns_immediately_when_terminated(self, runner):
+        """_retry_wait should return quickly when the event is already set."""
+        runner._terminate_event.set()
+        import time as time_mod
+        start = time_mod.monotonic()
+        runner._retry_wait(100)  # Would block 100s if not interrupted
+        elapsed = time_mod.monotonic() - start
+        assert elapsed < 1.0, f"_retry_wait blocked for {elapsed}s despite event being set"
+
+    def test_run_resets_event(self, runner):
+        """run() should clear the terminate event on each new invocation."""
+        runner._terminate_event.set()
+        runner._terminated = True
+        with patch("claude_runner.subprocess.Popen") as mock_popen:
+            mock_popen.return_value = _make_popen_mock(
+                returncode=0, stdout='{"result": "Done", "cost_usd": 0.01}',
+            )
+            runner.run("Fix")
+        assert not runner._terminate_event.is_set()
+
+    @patch("claude_runner.subprocess.Popen")
+    def test_terminate_during_retry_aborts(self, mock_popen, runner):
+        """If terminate() is called during retry sleep, next iteration exits."""
+        call_count = 0
+
+        def side_effect_fn(delay):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                runner.terminate()  # Simulate external termination
+
+        mock_popen.side_effect = [
+            _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="c", timeout=1)),
+            _make_popen_mock(communicate_effect=subprocess.TimeoutExpired(cmd="c", timeout=1)),
+        ]
+        with patch.object(runner, '_retry_wait', side_effect=side_effect_fn):
+            result = runner.run("Fix")
+        assert result.success is False
+        assert "Terminated" in result.error
