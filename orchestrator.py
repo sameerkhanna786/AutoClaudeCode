@@ -707,6 +707,12 @@ class Orchestrator:
                     ", ".join(enabled_methods) if enabled_methods else "none",
                     "yes" if has_feedback else "no",
                 )
+            self.state.record_cycle(CycleRecord(
+                timestamp=time.time(),
+                task_description="No actionable tasks found",
+                success=True,
+                no_tasks=True,
+            ))
             return
 
         is_batch = len(tasks) > 1 and self.config.orchestrator.batch_mode

@@ -789,5 +789,99 @@ class TestEstimateCostProviderDefaults(unittest.TestCase):
         self.assertAlmostEqual(cost, 99.0, places=2)
 
 
+class TestRetrySleepIsInterruptible(unittest.TestCase):
+    """Retry sleeps must use threading.Event.wait() for shutdown responsiveness.
+
+    ClaudeRunner uses _terminate_event.wait(delay) for interruptible retries,
+    but OpenAIRunner and GeminiRunner used blocking time.sleep() which ignores
+    shutdown signals. Both should now use an event-based wait.
+    """
+
+    def test_openai_retry_uses_event_wait(self):
+        """OpenAIRunner retry delay should use _terminate_event.wait(), not time.sleep()."""
+        import inspect
+        source = inspect.getsource(OpenAIRunner.run)
+        # Should NOT contain time.sleep for retry delays
+        self.assertNotIn("time.sleep", source,
+                         "OpenAIRunner.run should use _terminate_event.wait() instead of time.sleep()")
+        # Should contain event-based wait
+        self.assertIn("_terminate_event", source,
+                      "OpenAIRunner.run should use _terminate_event for interruptible retry")
+
+    def test_gemini_retry_uses_event_wait(self):
+        """GeminiRunner retry delay should use _terminate_event.wait(), not time.sleep()."""
+        import inspect
+        source = inspect.getsource(GeminiRunner.run)
+        self.assertNotIn("time.sleep", source,
+                         "GeminiRunner.run should use _terminate_event.wait() instead of time.sleep()")
+        self.assertIn("_terminate_event", source,
+                      "GeminiRunner.run should use _terminate_event for interruptible retry")
+
+    def test_openai_has_terminate_event(self):
+        """OpenAIRunner should have a _terminate_event attribute."""
+        config = _make_config("openai")
+        runner = OpenAIRunner(config)
+        self.assertTrue(hasattr(runner, '_terminate_event'))
+
+    def test_gemini_has_terminate_event(self):
+        """GeminiRunner should have a _terminate_event attribute."""
+        config = _make_config("gemini")
+        runner = GeminiRunner(config)
+        self.assertTrue(hasattr(runner, '_terminate_event'))
+
+    def test_openai_terminate_sets_event(self):
+        """OpenAIRunner.terminate() should set the _terminate_event."""
+        config = _make_config("openai")
+        runner = OpenAIRunner(config)
+        self.assertFalse(runner._terminate_event.is_set())
+        runner.terminate()
+        self.assertTrue(runner._terminate_event.is_set())
+
+    def test_gemini_terminate_sets_event(self):
+        """GeminiRunner.terminate() should set the _terminate_event."""
+        config = _make_config("gemini")
+        runner = GeminiRunner(config)
+        self.assertFalse(runner._terminate_event.is_set())
+        runner.terminate()
+        self.assertTrue(runner._terminate_event.is_set())
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_openai_aborts_retry_on_terminate(self, mock_urlopen):
+        """OpenAI retry loop should exit early when terminate event is set."""
+        import urllib.error
+        config = _make_config("openai")
+        runner = OpenAIRunner(config)
+        runner._api_key = "test-key"
+
+        # All attempts fail with retryable error
+        err = urllib.error.HTTPError("url", 429, "rate limited", {}, None)
+        err.read = lambda n=512: b"rate limited"
+        mock_urlopen.side_effect = err
+
+        # Set terminate event before run — retry waits should exit immediately
+        runner._terminate_event.set()
+        result = runner.run("Hello")
+        self.assertFalse(result.success)
+        # Should have aborted after first attempt, not all 3
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+    @patch("provider_runner.urllib.request.urlopen")
+    def test_gemini_aborts_retry_on_terminate(self, mock_urlopen):
+        """Gemini retry loop should exit early when terminate event is set."""
+        import urllib.error
+        config = _make_config("gemini")
+        runner = GeminiRunner(config)
+        runner._api_key = "test-key"
+
+        err = urllib.error.HTTPError("url", 503, "unavailable", {}, None)
+        err.read = lambda n=512: b"unavailable"
+        mock_urlopen.side_effect = err
+
+        runner._terminate_event.set()
+        result = runner.run("Hello")
+        self.assertFalse(result.success)
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

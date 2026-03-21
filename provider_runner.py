@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -112,6 +113,7 @@ class OpenAIRunner:
         self._timeout = config.claude.timeout_seconds
         self._base_url = "https://api.openai.com/v1/chat/completions"
         self.circuit_breaker = CircuitBreaker()
+        self._terminate_event = threading.Event()
 
     def _sanitize_error(self, message: str) -> str:
         return _sanitize_error(message, self._api_key)
@@ -171,7 +173,11 @@ class OpenAIRunner:
                 if e.code in _RETRYABLE_STATUS_CODES and attempt < max_attempts - 1:
                     delay = (2 ** attempt)
                     logger.debug("OpenAI transient error %d, retrying in %ds", e.code, delay)
-                    time.sleep(delay)
+                    if self._terminate_event.wait(delay):
+                        return ClaudeResult(
+                            success=False, error="Terminated during retry wait",
+                            duration_seconds=time.time() - start,
+                        )
                     continue
                 self.circuit_breaker.record_failure()
                 return ClaudeResult(
@@ -181,7 +187,11 @@ class OpenAIRunner:
             except urllib.error.URLError as e:
                 last_error = self._sanitize_error(f"OpenAI connection error: {e.reason}")
                 if attempt < max_attempts - 1:
-                    time.sleep(2 ** attempt)
+                    if self._terminate_event.wait(2 ** attempt):
+                        return ClaudeResult(
+                            success=False, error="Terminated during retry wait",
+                            duration_seconds=time.time() - start,
+                        )
                     continue
                 self.circuit_breaker.record_failure()
                 return ClaudeResult(
@@ -244,8 +254,8 @@ class OpenAIRunner:
         )
 
     def terminate(self) -> None:
-        """No subprocess to terminate for API-based runner."""
-        pass
+        """Signal the runner to abort any in-progress retry waits."""
+        self._terminate_event.set()
 
 
 class GeminiRunner:
@@ -258,6 +268,7 @@ class GeminiRunner:
         self._model = config.claude.resolved_model or config.claude.model
         self._timeout = config.claude.timeout_seconds
         self.circuit_breaker = CircuitBreaker()
+        self._terminate_event = threading.Event()
 
     def _build_url(self) -> str:
         return (
@@ -321,7 +332,11 @@ class GeminiRunner:
                 if e.code in _RETRYABLE_STATUS_CODES and attempt < max_attempts - 1:
                     delay = (2 ** attempt)
                     logger.debug("Gemini transient error %d, retrying in %ds", e.code, delay)
-                    time.sleep(delay)
+                    if self._terminate_event.wait(delay):
+                        return ClaudeResult(
+                            success=False, error="Terminated during retry wait",
+                            duration_seconds=time.time() - start,
+                        )
                     continue
                 self.circuit_breaker.record_failure()
                 return ClaudeResult(
@@ -331,7 +346,11 @@ class GeminiRunner:
             except urllib.error.URLError as e:
                 last_error = self._sanitize_error(f"Gemini connection error: {e.reason}")
                 if attempt < max_attempts - 1:
-                    time.sleep(2 ** attempt)
+                    if self._terminate_event.wait(2 ** attempt):
+                        return ClaudeResult(
+                            success=False, error="Terminated during retry wait",
+                            duration_seconds=time.time() - start,
+                        )
                     continue
                 self.circuit_breaker.record_failure()
                 return ClaudeResult(
@@ -397,8 +416,8 @@ class GeminiRunner:
         )
 
     def terminate(self) -> None:
-        """No subprocess to terminate for API-based runner."""
-        pass
+        """Signal the runner to abort any in-progress retry waits."""
+        self._terminate_event.set()
 
 
 def create_runner(config: Config) -> ProviderRunner:

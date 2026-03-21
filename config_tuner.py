@@ -185,11 +185,18 @@ class ConfigTuner:
         if len(recent) < 5:
             return recs
 
-        # Count cycles with no tasks (error mentions "No tasks" or "No actionable tasks")
+        # Count cycles with no tasks — use dedicated 'no_tasks' field first
+        # (the orchestrator returns early without recording a CycleRecord when
+        # no tasks are found, so error-string matching alone never fires).
+        # Fall back to error-string matching for backwards compatibility with
+        # any manually-recorded records.
         no_task_count = sum(
             1 for r in recent
-            if not r.get("success") and re.search(
-                r'\bno\s+(?:actionable\s+)?tasks?\b', r.get("error") or "", re.IGNORECASE
+            if r.get("no_tasks") or (
+                not r.get("success") and re.search(
+                    r'\bno\s+(?:actionable\s+)?tasks?\b',
+                    r.get("error") or "", re.IGNORECASE,
+                )
             )
         )
 

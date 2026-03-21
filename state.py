@@ -47,6 +47,7 @@ class CycleRecord:
     push_succeeded: Optional[bool] = None
     task_source_files: List[str] = field(default_factory=list)
     task_line_numbers: List[Optional[int]] = field(default_factory=list)
+    no_tasks: bool = False
 
 
 class StateManager:

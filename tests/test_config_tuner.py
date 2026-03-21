@@ -210,3 +210,59 @@ class TestRetryAnalysisNoDeadCode:
         assert "avg_retries" not in source, (
             "avg_retries was dead code and should have been removed"
         )
+
+
+class TestAnalyzeLoopIntervalNoTaskSource:
+    """The orchestrator returns early (no CycleRecord) when no tasks are found.
+
+    This means _analyze_loop_interval's no-task detection via error field
+    matching can never fire from real orchestrator data — the detection
+    should use a dedicated 'no_tasks' field instead of parsing error strings.
+    """
+
+    def _make_config(self):
+        from unittest.mock import MagicMock
+        config = MagicMock()
+        config.orchestrator.loop_interval_seconds = 60
+        return config
+
+    def test_no_task_detection_uses_dedicated_field(self):
+        """_analyze_loop_interval should detect no-task cycles via 'no_tasks'
+        field, not by parsing the error string."""
+        import time
+        config = self._make_config()
+        tuner = ConfigTuner("/tmp/test")
+
+        # Simulate records with the dedicated no_tasks=True field
+        records = [
+            {"timestamp": time.time(), "success": True, "error": "",
+             "no_tasks": True}
+            for _ in range(15)
+        ] + [
+            {"timestamp": time.time(), "success": True, "error": ""}
+            for _ in range(5)
+        ]
+
+        recs = tuner._analyze_loop_interval(records, config)
+        # Should produce a recommendation since 15/20 cycles had no tasks
+        assert len(recs) == 1
+        assert "interval" in recs[0].field.lower() or "loop" in recs[0].field.lower()
+
+    def test_no_task_count_zero_without_field_or_error(self):
+        """Records without 'no_tasks' field and without 'no tasks' in error
+        should not count as no-task cycles."""
+        import time
+        config = self._make_config()
+        tuner = ConfigTuner("/tmp/test")
+
+        # Normal successful records — no no_tasks field, no error string
+        records = [
+            {"timestamp": time.time(), "success": True, "error": ""}
+            for _ in range(20)
+        ]
+
+        recs = tuner._analyze_loop_interval(records, config)
+        # No recommendation to increase interval
+        no_task_recs = [r for r in recs if "interval" in r.field.lower()]
+        # Should recommend decreasing if current > 60, but our config is 60
+        assert all("increas" not in r.reason.lower() for r in no_task_recs)
